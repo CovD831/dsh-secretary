@@ -1,8 +1,9 @@
-// DEPS: src/constants, src/events, src/host-types (仅类型)
+// DEPS: src/constants, src/events, src/host-types, src/speech-config (仅类型)
 // RESPONSIBILITY: 校验一句话并落秘书说话事件
 // MODULE: secretary
 // ---
-import { KINDS, MAX_LINE_LENGTH, MOODS, TOOL_NAMES } from './constants.js'
+import { KINDS, TOOL_NAMES } from './constants.js'
+import { MAX_LINE_LENGTH, MOODS } from './speech-config.js'
 import { LogWriter, pluginEvent } from './events.js'
 import type { Agent } from './host-types.js'
 

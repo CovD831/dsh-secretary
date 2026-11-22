@@ -1,19 +1,20 @@
-// DEPS: node:crypto | src/constants, src/events
+// DEPS: node:crypto | src/constants, src/dispatch-config, src/events
 // RESPONSIBILITY: 单工作区注册、幂等派发与只读事件投影
 // MODULE: secretary
 // ---
 import { randomUUID } from 'node:crypto'
-import { DISPATCH_TOOL_NAMES, KINDS, MAX_ACCEPTANCE_LENGTH, MAX_SUMMARY_LENGTH, MAX_TASK_LENGTH, WORKSPACE_MISSING, WORKSPACE_STORAGE_SPEC } from './constants.js'
+import { DISPATCH_TOOL_NAMES, KINDS, WORKSPACE_MISSING, WORKSPACE_STORAGE_SPEC } from './constants.js'
+import { MAX_ACCEPTANCE_LENGTH, MAX_SUMMARY_LENGTH, MAX_TASK_LENGTH } from './dispatch-config.js'
 import { createEnvelope, EventEnvelope, LogWriter, readRecentEvents } from './events.js'
 
 export interface Workspace { id: string; cwd: string }
-interface SessionController {
+export interface SessionController {
   create(request: { cwd: string }): Promise<{ sessionId: string }>
   prompt(request: {
     requestId: string; sessionId: string; mode: 'queue'; content: Array<{ type: 'text'; text: string }>
   }, signal: AbortSignal): Promise<{ accepted: true }>
 }
-interface StorageDomain {
+export interface StorageDomain {
   open(spec: unknown): Promise<{
     table(name: string): { get(key: string): string | undefined; put(key: string, value: string): Promise<void>; entries(): Iterable<[string, unknown]> }
     close(): Promise<void>

@@ -1,9 +1,10 @@
-// DEPS: node:crypto | src/constants, src/events
+// DEPS: node:crypto | src/approval-options, src/constants, src/events
 // RESPONSIBILITY: 从日志投影待裁队首，串行记录裁决并恢复原流程
 // MODULE: secretary
 // ---
 import { randomUUID } from 'node:crypto'
-import { APPROVAL_OPTIONS, KINDS } from './constants.js'
+import { KINDS } from './constants.js'
+import { APPROVAL_OPTIONS } from './approval-options.js'
 import { createEnvelope, EventEnvelope, LogWriter, readRecentEvents } from './events.js'
 
 export type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
@@ -21,7 +22,7 @@ export interface DecisionResult { accepted: true; pendingId: string; decisionId:
 export interface DecisionActions {
   answerApproval(pending: PendingView, outcome: 'allowed-once' | 'rejected'): Promise<void>
   promptSecretary(pending: PendingView, text: string): Promise<void>
-  closeApprovals?(): Promise<void>
+  closeApprovals(): Promise<void>
 }
 
 function closePending(pending: PendingView[], id: string): void {
@@ -119,8 +120,8 @@ export class Decider {
 
   async dispose(): Promise<void> {
     this.closing = true
-    await this.actions.closeApprovals?.()
+    await this.actions.closeApprovals()
     await this.operation
-    await this.actions.closeApprovals?.()
+    await this.actions.closeApprovals()
   }
 }

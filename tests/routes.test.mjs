@@ -61,7 +61,7 @@ test('Host 的 ask 裁决经 sessionController.prompt 投递回秘书会话', as
   const effects = []
   const prompts = []
   const ctx = {
-    on(name, listener) { listeners.set(name, listener) },
+    on(name, listener) { listeners.set(name, [...(listeners.get(name) ?? []), listener]) },
     inject(_services, setup) { setup(ctx) },
     effect(setup) { effects.push(setup) },
     connection: { fetch: { register(route) { routes.set(route.path, route) } } },
@@ -74,7 +74,7 @@ test('Host 的 ask 裁决经 sessionController.prompt 投递回秘书会话', as
     session: { header: { agentPreset: 'secretary' }, snapshotEvents: () => [] },
     ctx: { tools: { register() {}, restrict() {} } },
   }
-  listeners.get('agent/created')({ agent: secretary })
+  for (const listener of listeners.get('agent/created')) listener({ agent: secretary })
   const { eventId } = await ask(writer, secretary, {
     text: '是否继续？', allowNote: true,
     options: [{ id: 'yes', label: '继续', consequence: '继续执行', recommended: true }],
@@ -101,7 +101,7 @@ test('启动时取消日志中没有本进程 resolver 的孤儿审批', async (
   const listeners = new Map()
   const effects = []
   const ctx = {
-    on(name, listener) { listeners.set(name, listener) },
+    on(name, listener) { listeners.set(name, [...(listeners.get(name) ?? []), listener]) },
     inject(_services, setup) { setup(ctx) },
     effect(setup) { effects.push(setup) },
     connection: { fetch: { register() {} } },
@@ -125,7 +125,7 @@ test('未配置工作区时插件照常注册工具，说话可用而派发返�
   const listeners = new Map()
   const tools = new Map()
   const ctx = {
-    on(name, listener) { listeners.set(name, listener) },
+    on(name, listener) { listeners.set(name, [...(listeners.get(name) ?? []), listener]) },
     inject(_services, setup) { setup(ctx) },
     effect() {},
     connection: { fetch: { register() {} } },
@@ -138,7 +138,7 @@ test('未配置工作区时插件照常注册工具，说话可用而派发返�
     id: 'secretary-live', session: session({ agentPreset: 'secretary' }),
     ctx: { tools: { register(tool) { tools.set(tool.name, tool) }, restrict() {} } },
   }
-  listeners.get('agent/created')({ agent: secretary })
+  for (const listener of listeners.get('agent/created')) listener({ agent: secretary })
   assert.deepEqual([...tools.keys()].sort(), ['secretary_ask', 'secretary_dispatch', 'secretary_handover', 'secretary_say', 'secretary_status'])
   assert.deepEqual(await tools.get('secretary_say').execute({ line: '工作区还没配好。', mood: 'concerned' }, { agent: secretary }), { accepted: true })
   assert.deepEqual(await tools.get('secretary_status').execute({}, { agent: secretary }), { status: 'unknown', events: [] })
@@ -146,7 +146,7 @@ test('未配置工作区时插件照常注册工具，说话可用而派发返�
     tools.get('secretary_dispatch').execute({ dispatchKey: 'k1', task: '做点事。', acceptance: '有回执。' }, { agent: secretary }),
     /尚未配置工作区，请在插件配置中设置 workspace\.cwd/,
   )
-  listeners.get('agent/created')({ agent: { ...secretary, id: 'other', session: session({ agentPreset: 'standard' }) } })
+  for (const listener of listeners.get('agent/created')) listener({ agent: { ...secretary, id: 'other', session: session({ agentPreset: 'standard' }) } })
   assert.equal(tools.size, 5)
 })
 
@@ -155,7 +155,7 @@ test('秘书回投失败写失败事件并由 GET 显式暴露', async () => {
   const routes = new Map()
   const listeners = new Map()
   const ctx = {
-    on(name, listener) { listeners.set(name, listener) },
+    on(name, listener) { listeners.set(name, [...(listeners.get(name) ?? []), listener]) },
     inject(_services, setup) { setup(ctx) },
     effect() {},
     connection: { fetch: { register(route) { routes.set(route.path, route) } } },
@@ -167,7 +167,7 @@ test('秘书回投失败写失败事件并由 GET 显式暴露', async () => {
     id: 'secretary-live', session: { header: { agentPreset: 'secretary' }, snapshotEvents: () => [] },
     ctx: { tools: { register() {}, restrict() {} } },
   }
-  listeners.get('agent/created')({ agent: secretary })
+  for (const listener of listeners.get('agent/created')) listener({ agent: secretary })
   const { eventId } = await ask(writer, secretary, {
     text: '继续吗？', allowNote: false,
     options: [{ id: 'yes', label: '继续', consequence: '继续执行', recommended: true }],

@@ -33,8 +33,12 @@ export interface Agent {
 export interface ToolExecution {
   callId: string
   name: string
+  arguments: unknown
+  signal: AbortSignal
   agent?: Agent
 }
+
+export type PreToolDecision = { kind: 'allow' } | { kind: 'deny'; reason: string }
 
 export interface ToolResult {
   isError: boolean
@@ -43,10 +47,11 @@ export interface ToolResult {
 }
 
 export interface Context {
-  on(event: 'agent/created', listener: (payload: { agent: Agent }) => undefined): unknown
+  on(event: string, listener: (...args: any[]) => any, options?: { prepend: true }): unknown
   on(event: 'session/event', listener: (session: Session, event: SessionEvent) => undefined): unknown
   on(event: 'tools/result', listener: (exec: ToolExecution, result: ToolResult) => undefined): unknown
   on(event: 'agent/status', listener: (payload: { agent: Agent; status: 'idle' | 'running' }) => undefined): unknown
+  on(event: 'tools/pre-execute', listener: (exec: ToolExecution, next: () => Promise<PreToolDecision>) => Promise<PreToolDecision>, options?: { prepend: true }): unknown
   inject(services: string[], setup: (ctx: never) => unknown): unknown
   effect(setup: () => (() => void) | Promise<() => void>): unknown
 }

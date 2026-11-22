@@ -1,13 +1,15 @@
-// DEPS: node:crypto | src/constants, src/contracts, src/decisions, src/events
+// DEPS: node:crypto | src/constants, src/contracts, src/decisions, src/events, src/workspace
 // RESPONSIBILITY: 只截获管辖会话审批，异步应答并在卸载时拒绝挂起项
 // MODULE: secretary
 // ---
 import { randomUUID } from 'node:crypto'
-import { KINDS, PRESET_NAME, WORKSPACE_STORAGE_SPEC, WORKSPACE_TABLE } from './constants.js'
+import { KINDS, PRESET_NAME } from './constants.js'
 import type { Agent, Context, SessionEvent } from './contracts.js'
 import type { ApprovalOutcome, PendingView } from './decisions.js'
 import { projectPending } from './decisions.js'
+import type { StorageDomain } from './dispatch.js'
 import { createEnvelope, LogWriter, readRecentEvents } from './events.js'
+import { workspaceOf } from './workspace.js'
 
 export interface ApprovalRequest {
   agent: Agent
@@ -15,12 +17,6 @@ export interface ApprovalRequest {
   callId?: string
   reason?: string
   signal?: AbortSignal
-}
-export interface StorageDomain {
-  open(spec: unknown): Promise<{
-    table(name: string): { entries(): Iterable<[string, unknown]> }
-    close(): Promise<void>
-  }>
 }
 export interface ApprovalContext extends Omit<Context, 'on'> {
   on(event: 'agent/created', listener: (payload: { agent: Agent }) => undefined): unknown
@@ -47,22 +43,10 @@ export function registerApprovalQueue(ctx: ApprovalContext, writer: LogWriter, s
     return undefined
   })
 
-  async function workspaceOf(agent: Agent): Promise<string | null> {
-    const domain = await storage.open(WORKSPACE_STORAGE_SPEC)
-    try {
-      for (const [workspaceId, sessionId] of domain.table(WORKSPACE_TABLE).entries()) {
-        if (sessionId === agent.id) return workspaceId
-      }
-      return null
-    } finally {
-      await domain.close()
-    }
-  }
-
   ctx.on('approval/request', async (request, next) => {
     const approvalId = approvalIdOf(request)
     const secretary = secretaries.has(request.agent.id)
-    const workspaceId = secretary ? null : await workspaceOf(request.agent)
+    const workspaceId = secretary ? null : await workspaceOf(request.agent, storage)
     if (disposed || (!secretary && workspaceId === null)) return await next()
     if (request.signal?.aborted) return 'cancelled'
     const event = createEnvelope({
