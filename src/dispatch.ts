@@ -3,7 +3,7 @@
 // MODULE: secretary
 // ---
 import { randomUUID } from 'node:crypto'
-import { DISPATCH_TOOL_NAMES, KINDS, MAX_ACCEPTANCE_LENGTH, MAX_SUMMARY_LENGTH, MAX_TASK_LENGTH } from './constants.js'
+import { DISPATCH_TOOL_NAMES, KINDS, MAX_ACCEPTANCE_LENGTH, MAX_SUMMARY_LENGTH, MAX_TASK_LENGTH, WORKSPACE_STORAGE_SPEC } from './constants.js'
 import { createEnvelope, EventEnvelope, LogWriter, readRecentEvents } from './events.js'
 
 export interface Workspace { id: string; cwd: string }
@@ -15,27 +15,13 @@ interface SessionController {
 }
 interface StorageDomain {
   open(spec: unknown): Promise<{
-    table(name: string): { get(key: string): string | undefined; put(key: string, value: string): Promise<void> }
+    table(name: string): { get(key: string): string | undefined; put(key: string, value: string): Promise<void>; entries(): Iterable<[string, unknown]> }
     close(): Promise<void>
   }>
 }
 export interface DispatchArgs { dispatchKey: string; task: string; acceptance: string }
 export interface DispatchResult { accepted: true; dispatchKey: string; targetSessionId: string; duplicate: boolean }
 export interface StatusResult { status: 'idle' | 'running' | 'unknown'; events: unknown[] }
-
-const STORAGE_SPEC = {
-  name: 'dsh_secretary', version: 0,
-  tables: {
-    workspaces: {
-      valueSchema: {
-        parse(value: unknown): string {
-          if (typeof value !== 'string' || value.length === 0) throw new Error('工作区存储的 sessionId 无效。')
-          return value
-        },
-      },
-    },
-  },
-}
 
 export function validateWorkspaces(workspaces: Workspace[]): Workspace {
   if (workspaces.length !== 1) throw new Error('第一阶段只能配置一个工作区。')
@@ -83,7 +69,7 @@ async function dispatchOnce(
   }
   const previous = await acceptedResult(writer, secretary.id, workspace.id, args.dispatchKey)
   if (previous !== null) return previous
-  const domain = await storageDomain.open(STORAGE_SPEC)
+  const domain = await storageDomain.open(WORKSPACE_STORAGE_SPEC)
   let targetSessionId: string
   try {
     targetSessionId = domain.table('workspaces').get(workspace.id) ?? ''

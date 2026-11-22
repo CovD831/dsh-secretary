@@ -1,12 +1,16 @@
-// DEPS: src/constants, src/contracts, src/dispatch, src/events, src/normalize, src/say
-// RESPONSIBILITY: 以唯一日志写者组合秘书工具、原生事件与只读投影
+// DEPS: node:crypto | src/approvals, src/constants, src/contracts, src/decisions, src/dispatch, src/events, src/normalize, src/routes, src/say
+// RESPONSIBILITY: 以唯一日志写者组合秘书工具、派发、审批截获与待裁接口
 // MODULE: secretary
 // ---
+import { randomUUID } from 'node:crypto'
+import { registerApprovalQueue, ApprovalContext } from './approvals.js'
 import { PRESET_NAME } from './constants.js'
 import type { Context } from './contracts.js'
+import { Decider } from './decisions.js'
 import { createDispatchTool, createStatusTool, Workspace } from './dispatch.js'
 import { readRecentEvents } from './events.js'
 import { observeEvents } from './normalize.js'
+import { registerDecisionRoutes } from './routes.js'
 import { createSpeechTools } from './say.js'
 
 interface ConnectionContext extends Context {
@@ -14,16 +18,27 @@ interface ConnectionContext extends Context {
     fetch: { register(route: { path: string; methods: string[]; requestBody: string; fetch(request: Request): Promise<Response> }): unknown }
   }
 }
-interface DispatchContext extends Context {
-  sessionController: Parameters<typeof createDispatchTool>[1]
+interface DecisionContext extends ApprovalContext {
   storageDomain: Parameters<typeof createDispatchTool>[2]
+  sessionController: Parameters<typeof createDispatchTool>[1]
 }
 
 export function apply(ctx: Context, writer: import('./events.js').LogWriter, workspace: Workspace): void {
   observeEvents(ctx, writer, workspace.id)
-  ctx.inject(['sessionController', 'storageDomain'], ((dispatchCtx: DispatchContext) => {
-    const dispatchTool = createDispatchTool(writer, dispatchCtx.sessionController, dispatchCtx.storageDomain, workspace)
+  ctx.inject(['storageDomain', 'sessionController', 'connection'], ((decisionCtx: DecisionContext & ConnectionContext) => {
+    const dispatchTool = createDispatchTool(writer, decisionCtx.sessionController, decisionCtx.storageDomain, workspace)
     const statusTool = createStatusTool(writer, workspace)
+    const approvals = registerApprovalQueue(decisionCtx, writer, decisionCtx.storageDomain)
+    const decider = new Decider(writer, {
+      answerApproval: approvals.respond,
+      closeApprovals: approvals.dispose,
+      promptSecretary: async (pending, text) => {
+        await decisionCtx.sessionController.prompt({
+          requestId: `boss-decision-${randomUUID()}`, sessionId: pending.sessionId, mode: 'queue',
+          content: [{ type: 'text', text }],
+        }, new AbortController().signal)
+      },
+    })
     ctx.on('agent/created', ({ agent }) => {
       if (agent.session.header.agentPreset !== PRESET_NAME) return undefined
       for (const tool of createSpeechTools(writer)) agent.ctx.tools.register(tool)
@@ -31,6 +46,13 @@ export function apply(ctx: Context, writer: import('./events.js').LogWriter, wor
       agent.ctx.tools.register(statusTool)
       agent.ctx.tools.restrict({ allow: [] })
       return undefined
+    })
+    registerDecisionRoutes(decisionCtx, writer, decider)
+    const recovered = approvals.recover().catch(error => console.error('启动时取消孤儿审批失败：', error))
+    void decisionCtx.effect(async () => async () => {
+      await recovered
+      await decider.dispose()
+      await approvals.dispose()
     })
   }) as never)
   ctx.inject(['connection'], ((connectionCtx: ConnectionContext) => {
