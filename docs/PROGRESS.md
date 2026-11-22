@@ -21,11 +21,12 @@
 - [x] 1.5 插件骨架：preset、工具注册、事件归一化落盘 — 隔离正式安装、固定流原生轮次、client 与卸载已通过 scripts/replay.sh
 
 ## 阶段 2：秘书与派发
-- [~] 2.1 说话工具 secretary_ask / secretary_handover（worktree card-2.1）
+- [x] 2.1 说话工具 secretary_ask / secretary_handover — 已合入（7 测试通过）
 - [~] 2.3 单工作区注册 + secretary_dispatch / secretary_status（worktree card-2.3）
-- [ ] 2.2 待裁队列（ask + DSH 权限审批）+ 老板裁决入口（依赖 2.1）
+- [~] 2.2a 待裁队列后端：投影、审批截获（仅管辖会话）、裁决接口（worktree card-2.2）
+- [ ] 2.2b 前端最小裁决表单（依赖 2.2a 接口）
 - [ ] 2.4 合并后端到端回放 + 秘书人设提示词
 
 ## 当前工作
-正在做：2.1 与 2.3 并行；记忆仿脑调研（文档）
-下一步：合并 2.1/2.3 → 2.2
+正在做：2.2a 与 2.3 并行；记忆仿脑调研
+下一步：合并 2.3/2.2a → 2.2b → 2.4
