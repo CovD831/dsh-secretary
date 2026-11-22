@@ -5,10 +5,13 @@
         id: secretary
         name: 秘书
         order: 1
-        plugins: []
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: !!js >-
+                process.getBuiltinModule('node:fs').readFileSync(process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-secretary/package.json')), 'prompts/secretary.md'), 'utf8')
+              complete: true
+              includeRuntimeContext: false
     - id: dsh-secretary
       name: 'dsh-secretary'
-      config:
-        workspace:
-          id: default-workspace
-          cwd: /Users/abab/Desktop/dsh-secretary-workspace

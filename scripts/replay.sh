@@ -40,6 +40,8 @@ npm --prefix "$ROOT" test
 npm pack "$ROOT" --pack-destination "$ROOT/.local/packages" > /dev/null
 cp "$ROOT/.local/packages/dsh-secretary-0.1.0.tgz" "$PACK"
 ! tar -tzf "$PACK" | grep -q 'dist/agent.js'
+tar -tzf "$PACK" | grep -q 'package/prompts/secretary.md'
+! tar -xOf "$PACK" package/cordis.patch.yml | grep -q '/Users/'
 ! tar -xOf "$PACK" package/dist/client.js | grep -Eq '^import |^export '
 "$DSH" --profile "$PROFILE" --from-default-profile web --dump-config > "$OUT/base.yml" 2> "$OUT/base.stderr.log"
 python3 -I - "$DSH_HOME/profiles/$PROFILE/cordis.patch.yml" "$DSH_HOME/evidence" <<'PY'
@@ -83,6 +85,7 @@ const out = process.argv[2]
 const tools = JSON.parse(fs.readFileSync(`${out}/tools-view.json`, 'utf8'))
 assert.deepEqual(tools.tools, ['secretary_ask', 'secretary_dispatch', 'secretary_handover', 'secretary_say', 'secretary_status'])
 assert.equal(tools.result.type, 'tool/result')
+assert.equal(tools.promptPresent, true, '秘书会话系统提示词应包含 persona 文件内容')
 const events = fs.readFileSync(`${process.env.DSH_HOME}/plugins/dsh-secretary/event-log/events.jsonl`, 'utf8').trim().split('\n').map(JSON.parse)
 for (const event of events) {
   assert.equal(event.v, '0')
@@ -101,7 +104,8 @@ assert.ok(events.some(event => event.kind === 'dsh.agent-status' && event.payloa
 assert.equal(new Set(events.map(event => event.id)).size, events.length)
 const dispatches = events.filter(event => event.kind === 'dispatch')
 assert.deepEqual(dispatches.map(event => event.payload.phase), ['prepared', 'accepted'])
-assert.equal(dispatches[0].payload.requestId, null)
+assert.ok(dispatches[0].payload.requestId, 'prepared 应带 requestId')
+assert.equal(dispatches[0].payload.requestId, dispatches[1].payload.requestId)
 assert.equal(dispatches[1].causedBy, dispatches[0].id)
 const targetSessionId = dispatches[1].payload.targetSessionId
 const delivered = events.find(event => event.kind === 'dsh.session' && event.sessionId === targetSessionId

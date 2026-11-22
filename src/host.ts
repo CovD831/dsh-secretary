@@ -23,8 +23,8 @@ interface DecisionContext extends ApprovalContext {
   sessionController: Parameters<typeof createDispatchTool>[1]
 }
 
-export function apply(ctx: Context, writer: import('./events.js').LogWriter, workspace: Workspace): void {
-  observeEvents(ctx, writer, workspace.id)
+export function apply(ctx: Context, writer: import('./events.js').LogWriter, workspace: Workspace | undefined): void {
+  observeEvents(ctx, writer, workspace?.id ?? null)
   ctx.inject(['storageDomain', 'sessionController', 'connection'], ((decisionCtx: DecisionContext & ConnectionContext) => {
     const dispatchTool = createDispatchTool(writer, decisionCtx.sessionController, decisionCtx.storageDomain, workspace)
     const statusTool = createStatusTool(writer, workspace)

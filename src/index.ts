@@ -13,7 +13,7 @@ import { runSelfTest } from './selftest.js'
 export const name = 'dsh-secretary'
 export const inject = ['tools']
 
-interface Config { selfTestDirectory?: string; workspace: Workspace | Workspace[] }
+interface Config { selfTestDirectory?: string; workspace?: Workspace | Workspace[] }
 interface SelfTestContext extends Context {
   llm: { registerAdapter(providers: string[], value: unknown): unknown }
   sessionController: {
@@ -23,8 +23,10 @@ interface SelfTestContext extends Context {
   agents: { get(sessionId: string): Agent | undefined }
 }
 
-export function apply(ctx: Context, config: Config): void {
-  const workspace = validateWorkspaces(Array.isArray(config.workspace) ? config.workspace : [config.workspace])
+export function apply(ctx: Context, config: Config = {}): void {
+  const declared = config.workspace === undefined ? []
+    : Array.isArray(config.workspace) ? config.workspace : [config.workspace]
+  const workspace = declared.length === 0 ? undefined : validateWorkspaces(declared)
   // 与 rc.5 packages/util/home-paths/src/index.ts resolveDshHome 同规则；无 Cordis 路径服务。
   const configured = process.env.DSH_HOME
   const home = resolve(configured !== undefined && configured.trim().length > 0 ? configured : join(homedir(), '.dsh'))

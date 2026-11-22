@@ -8,10 +8,12 @@
   },
   "exports": {
     ".": "./dist/index.js",
-    "./client": "./dist/client.js"
+    "./client": "./dist/client.js",
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
+    "prompts",
     "cordis.patch.yml"
   ],
   "dsh": {

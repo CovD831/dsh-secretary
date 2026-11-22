@@ -209,7 +209,7 @@ ask 进入待裁队列；handover 进入文件浮层。
 | `dispatchKey` | string | 业务幂等键；同 key 重投不重复派发，直接返回首次结果 |
 | `phase` | string | `prepared`（落盘待投）/ `accepted`（prompt 回执入队）/ `failed`（投递失败，更正事件） |
 | `targetSessionId` | string | 工作区根会话 id |
-| `requestId` | string \| null | prompt 的 requestId（SessionRequestId），accepted 时必填 |
+| `requestId` | string \| null | prompt 的 requestId（SessionRequestId）；写 prepared 前即生成，prepared/accepted/failed 三相同，accepted 起必填 |
 | `summary` | string | 任务一句话摘要，prompt 全文不进日志 |
 
 注意：accepted 仅表示入队，不表示模型完成（SKILL §3 实测注记）。v0 不设 outcome=unknown 状态，投递结果不确定时如实记 failed 并附原因，由秘书查状态收敛。
@@ -247,4 +247,4 @@ ask 进入待裁队列；handover 进入文件浮层。
 
 1. `dsh.approval` 的 `approvalId`：`approval/request` waterfall 的 req 不含宿主审计 id（types.ts:63-76），需经会话事件 `approval/asked` 按 `(sessionId, callId)` 就近配对，待 spike 实测确认配对可靠性。
 2. `dsh.session` 的 `summary` 生成规则：各 sessionType 的摘要取法（尤其 assistant/message 的截断长度）待实现时定，不进 schema 冻结面。
-3. `dispatch` 的 `requestId` 在 prepared 阶段尚不存在（prompt 调用后才分配），accepted 以 causedBy 关联 prepared 的写法待 spike-02 复跑确认。
+3. ~~`dispatch` 的 `requestId` 在 prepared 阶段尚不存在~~ — 已解决：调用方自带 requestId（rc.5 `sessionController.prompt` 入参），写 prepared 前生成即写入，三阶段同 id，causedBy 仍关联 prepared。

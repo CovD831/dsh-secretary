@@ -120,6 +120,36 @@ test('启动时取消日志中没有本进程 resolver 的孤儿审批', async (
   assert.equal(answered.payload.reason, '插件重启，原审批已失效')
 })
 
+test('未配置工作区时插件照常注册工具，说话可用而派发返回中文错误', async () => {
+  const writer = new LogWriter(join(await mkdtemp(join(tmpdir(), 'secretary-no-workspace-')), 'events.jsonl'))
+  const listeners = new Map()
+  const tools = new Map()
+  const ctx = {
+    on(name, listener) { listeners.set(name, listener) },
+    inject(_services, setup) { setup(ctx) },
+    effect() {},
+    connection: { fetch: { register() {} } },
+    storageDomain: { open: async () => ({ table: () => ({ entries: () => [] }), close: async () => {} }) },
+    sessionController: { prompt: async () => ({ accepted: true }) },
+  }
+  apply(ctx, writer, undefined)
+  const session = header => ({ header, snapshotEvents: () => [] })
+  const secretary = {
+    id: 'secretary-live', session: session({ agentPreset: 'secretary' }),
+    ctx: { tools: { register(tool) { tools.set(tool.name, tool) }, restrict() {} } },
+  }
+  listeners.get('agent/created')({ agent: secretary })
+  assert.deepEqual([...tools.keys()].sort(), ['secretary_ask', 'secretary_dispatch', 'secretary_handover', 'secretary_say', 'secretary_status'])
+  assert.deepEqual(await tools.get('secretary_say').execute({ line: '工作区还没配好。', mood: 'concerned' }, { agent: secretary }), { accepted: true })
+  assert.deepEqual(await tools.get('secretary_status').execute({}, { agent: secretary }), { status: 'unknown', events: [] })
+  await assert.rejects(
+    tools.get('secretary_dispatch').execute({ dispatchKey: 'k1', task: '做点事。', acceptance: '有回执。' }, { agent: secretary }),
+    /尚未配置工作区，请在插件配置中设置 workspace\.cwd/,
+  )
+  listeners.get('agent/created')({ agent: { ...secretary, id: 'other', session: session({ agentPreset: 'standard' }) } })
+  assert.equal(tools.size, 5)
+})
+
 test('秘书回投失败写失败事件并由 GET 显式暴露', async () => {
   const writer = new LogWriter(join(await mkdtemp(join(tmpdir(), 'secretary-prompt-failure-')), 'events.jsonl'))
   const routes = new Map()

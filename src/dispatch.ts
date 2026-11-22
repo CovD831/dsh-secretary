@@ -3,7 +3,7 @@
 // MODULE: secretary
 // ---
 import { randomUUID } from 'node:crypto'
-import { DISPATCH_TOOL_NAMES, KINDS, MAX_ACCEPTANCE_LENGTH, MAX_SUMMARY_LENGTH, MAX_TASK_LENGTH, WORKSPACE_STORAGE_SPEC } from './constants.js'
+import { DISPATCH_TOOL_NAMES, KINDS, MAX_ACCEPTANCE_LENGTH, MAX_SUMMARY_LENGTH, MAX_TASK_LENGTH, WORKSPACE_MISSING, WORKSPACE_STORAGE_SPEC } from './constants.js'
 import { createEnvelope, EventEnvelope, LogWriter, readRecentEvents } from './events.js'
 
 export interface Workspace { id: string; cwd: string }
@@ -49,7 +49,7 @@ let dispatchQueue: Promise<void> = Promise.resolve()
 
 export async function dispatch(
   writer: LogWriter, controller: SessionController, storageDomain: StorageDomain,
-  secretary: { id: string }, workspace: Workspace, args: DispatchArgs,
+  secretary: { id: string }, workspace: Workspace | undefined, args: DispatchArgs,
 ): Promise<DispatchResult> {
   const result = dispatchQueue.then(() => dispatchOnce(writer, controller, storageDomain, secretary, workspace, args))
   dispatchQueue = result.then(() => undefined, () => undefined)
@@ -58,8 +58,9 @@ export async function dispatch(
 
 async function dispatchOnce(
   writer: LogWriter, controller: SessionController, storageDomain: StorageDomain,
-  secretary: { id: string }, workspace: Workspace, args: DispatchArgs,
+  secretary: { id: string }, workspace: Workspace | undefined, args: DispatchArgs,
 ): Promise<DispatchResult> {
+  if (workspace === undefined) throw new Error(WORKSPACE_MISSING)
   if (typeof args.dispatchKey !== 'string' || args.dispatchKey.length === 0) throw new Error('派发键 dispatchKey 不能为空。')
   if (typeof args.task !== 'string' || args.task.length < 1 || args.task.length > MAX_TASK_LENGTH) {
     throw new Error(`任务须为 1 至 ${MAX_TASK_LENGTH} 字。`)
@@ -80,11 +81,11 @@ async function dispatchOnce(
   } finally {
     await domain.close()
   }
+  const requestId = randomUUID()
   const prepared = dispatchEvent(secretary.id, workspace.id, null, {
-    dispatchKey: args.dispatchKey, phase: 'prepared', targetSessionId, requestId: null, summary: args.task.slice(0, MAX_SUMMARY_LENGTH),
+    dispatchKey: args.dispatchKey, phase: 'prepared', targetSessionId, requestId, summary: args.task.slice(0, MAX_SUMMARY_LENGTH),
   })
   await writer.append(prepared, true)
-  const requestId = randomUUID()
   try {
     await controller.prompt({
       requestId, sessionId: targetSessionId, mode: 'queue',
@@ -92,7 +93,7 @@ async function dispatchOnce(
     }, new AbortController().signal)
   } catch (error) {
     await writer.append(dispatchEvent(secretary.id, workspace.id, prepared.id, {
-      dispatchKey: args.dispatchKey, phase: 'failed', targetSessionId, requestId: null, summary: args.task.slice(0, MAX_SUMMARY_LENGTH),
+      dispatchKey: args.dispatchKey, phase: 'failed', targetSessionId, requestId, summary: args.task.slice(0, MAX_SUMMARY_LENGTH),
       reason: error instanceof Error ? error.message : String(error),
     }), true)
     throw new Error('任务投递失败，已记录失败事件。', { cause: error })
@@ -119,7 +120,7 @@ export async function status(writer: LogWriter, workspaceId: string, limit: numb
   return projectStatus(events, String(registered.payload.targetSessionId), limit)
 }
 
-export function createDispatchTool(writer: LogWriter, controller: SessionController, storageDomain: StorageDomain, workspace: Workspace): unknown {
+export function createDispatchTool(writer: LogWriter, controller: SessionController, storageDomain: StorageDomain, workspace: Workspace | undefined): unknown {
   return {
     name: DISPATCH_TOOL_NAMES.dispatch,
     description: '把带验收标准的任务派给唯一工作区；accepted 仅表示入队，不等待执行完成。',
@@ -146,7 +147,7 @@ export function createDispatchTool(writer: LogWriter, controller: SessionControl
   }
 }
 
-export function createStatusTool(writer: LogWriter, workspace: Workspace): unknown {
+export function createStatusTool(writer: LogWriter, workspace: Workspace | undefined): unknown {
   return {
     name: DISPATCH_TOOL_NAMES.status,
     description: '从事件日志读取工作区 idle/running 状态与最近事件摘要，不等待工作区。',
@@ -163,6 +164,6 @@ export function createStatusTool(writer: LogWriter, workspace: Workspace): unkno
       },
       render: (_args: unknown, value: StatusResult) => [{ type: 'text', text: `工作区状态：${value.status}；最近事件 ${value.events.length} 条。` }],
     },
-    execute: (args: { limit?: number }) => status(writer, workspace.id, args.limit ?? 10),
+    execute: (args: { limit?: number }) => workspace === undefined ? { status: 'unknown', events: [] } : status(writer, workspace.id, args.limit ?? 10),
   }
 }

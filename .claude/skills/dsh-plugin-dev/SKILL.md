@@ -156,3 +156,6 @@ Web 复跑：`dsh --profile <p> --patch … --host 127.0.0.1 --port <n> --no-ope
 - storageDomain 名字有字符限制（用下划线，如 dsh_secretary）。
 - 宿主启动会自行写 profile patch（默认模型、欢迎设置）：卸载断言只断言插件项不存在，不要求整份配置逐字节不变；基准快照须在首次 reset 之后采集。
 - 插件数据目录按宿主 resolveDshHome 规则（DSH_HOME 非空优先，否则 ~/.dsh）解析，不能强制要求 DSH_HOME。
+- 预设级系统提示词只有一个正规入口：在 preset 的 `plugins` 里挂 `@deepseek-ai/dsh-persona`（`prefix`/`suffix`/`complete`/`includeRuntimeContext`）；`dsh-system-prompt` 的 `personaPrefix` 是部署级，preset 里没有 persona 行就永远改不了身份。
+- patch 里用 `!!js` 读包内文件：`createRequire(baseUrl).resolve('包名/package.json')` 要求该包 `exports` 显式导出 `"./package.json"`，否则报 `ERR_PACKAGE_PATH_NOT_EXPORTED`；读取的文件须写进 `package.json` 的 `files`，npm pack 才带上。
+- `system/message` 是派生事件（surface 节点 0，内容随 prompt 渲染产生），可用 `agent.session.snapshotEvents()` 读取其 `data.message.content` 作为「提示词已生效」的非模型证据。

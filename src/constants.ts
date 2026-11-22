@@ -24,6 +24,7 @@ export const MAX_TASK_LENGTH = 2000
 export const MAX_ACCEPTANCE_LENGTH = 1000
 export const MAX_SUMMARY_LENGTH = 200
 export const PRESET_NAME = 'secretary'
+export const WORKSPACE_MISSING = '尚未配置工作区，请在插件配置中设置 workspace.cwd'
 export const MOODS = ['neutral', 'working', 'happy', 'concerned'] as const
 export const MAX_LINE_LENGTH = 40
 export const PANEL_ID = 'dsh-secretary'

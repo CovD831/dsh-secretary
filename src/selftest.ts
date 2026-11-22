@@ -9,6 +9,8 @@ import { DISPATCH_TOOL_NAMES, PRESET_NAME, TOOL_NAMES } from './constants.js'
 import type { Agent } from './contracts.js'
 
 const PROVIDER = 'secretary-selftest'
+// 取自 prompts/secretary.md 的身份句，用于证明 preset 已把提示词送进会话。
+const PROMPT_MARKER = '你永不亲自执行任何事'
 let sessionCalls = 0
 
 const adapter = {
@@ -86,7 +88,14 @@ export function runSelfTest(selfTest: SelfTest): void {
     if (results.length !== 3 || results.some(event => (event.data as { message?: { isError?: boolean } }).message?.isError !== false)) {
       throw new Error('说话、派发或提问工具未在原生 Agent Loop 成功完成。')
     }
-    await writeFile(join(selfTest.directory, 'tools-view.json'), `${JSON.stringify({ created, tools, result }, null, 2)}\n`)
+    const systems = events.filter(event => event.type === 'system/message')
+    const systemText = systems.map(event => {
+      const message = (event.data as { message?: { content?: Array<{ type?: string; text?: string }> } }).message
+      return (message?.content ?? []).map(block => block.text ?? '').join('')
+    }).join('\n')
+    const promptPresent = systemText.includes(PROMPT_MARKER)
+    if (!promptPresent) throw new Error('秘书会话的系统提示词未包含 persona 文件内容。')
+    await writeFile(join(selfTest.directory, 'tools-view.json'), `${JSON.stringify({ created, tools, result, promptPresent }, null, 2)}\n`)
     console.info('秘书工具清单恰好五项且真实派发已通过；固定流已走完原生 Agent Loop。')
   }
   void report().catch(error => console.error(`秘书无模型自检失败：${String(error)}`))

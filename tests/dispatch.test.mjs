@@ -58,10 +58,23 @@ test('正常派发产生 prepared 与 accepted，causedBy 关联且工作区收�
   assert.equal(controller.calls[1].request.content[0].text, '任务：修复登录回归。\n验收标准：独立重跑登录测试并通过。')
   const events = (await readFile(writer.path, 'utf8')).trim().split('\n').map(JSON.parse)
   assert.deepEqual(events.map(event => event.payload.phase), ['prepared', 'accepted'])
-  assert.equal(events[0].payload.requestId, null)
+  assert.ok(events[0].payload.requestId)
+  assert.equal(events[0].payload.requestId, events[1].payload.requestId)
   assert.equal(events[1].causedBy, events[0].id)
   assert.equal(events[1].payload.requestId, controller.calls[1].request.requestId)
   assert.equal(events[0].workspaceId, 'ws')
+})
+
+test('未配置工作区时派发被拒绝，不建会话也不落事件', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'secretary-dispatch-no-workspace-'))
+  const writer = new LogWriter(join(root, 'events.jsonl'))
+  const { controller, storageDomain } = fixture()
+  await assert.rejects(
+    dispatch(writer, controller, storageDomain, { id: 'session-secretary' }, undefined, args),
+    /尚未配置工作区，请在插件配置中设置 workspace\.cwd/,
+  )
+  assert.equal(controller.calls.length, 0)
+  await assert.rejects(readFile(writer.path, 'utf8'), { code: 'ENOENT' })
 })
 
 test('同 dispatchKey 已有 accepted 时不重复投递', async () => {
@@ -102,6 +115,12 @@ test('同 dispatchKey 并发派发只投递一次', async () => {
 test('多个工作区被拒绝', () => {
   const root = join(tmpdir(), 'secretary-multiple-workspaces')
   assert.throws(() => validateWorkspaces([{ id: 'a', cwd: root }, { id: 'b', cwd: root }]), /第一阶段只能配置一个工作区/)
+})
+
+test('未配置工作区时查状态返回 unknown 且不报错', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'secretary-status-no-workspace-'))
+  const writer = new LogWriter(join(root, 'events.jsonl'))
+  assert.deepEqual(await status(writer, '', 10), { status: 'unknown', events: [] })
 })
 
 test('查状态只投影目标工作区日志并返回 idle', async () => {
