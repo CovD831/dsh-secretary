@@ -17,9 +17,9 @@
 - [x] 1.1 开发规范 docs/STANDARDS.md
 - [x] 1.2 子代理协作规范 docs/AGENTS-WORKFLOW.md
 - [x] 1.3 事件日志 schema v0 docs/EVENT-LOG-v0.md — 待核 3 项见其 §7
-- [ ] 1.4 全局地图 docs/MAP.md（随骨架落地）
-- [ ] 1.5 插件骨架：preset、工具注册、事件归一化落盘
+- [x] 1.4 全局地图 docs/MAP.md（随骨架落地）
+- [x] 1.5 插件骨架：preset、工具注册、事件归一化落盘 — 隔离正式安装、固定流原生轮次、client 与卸载已通过 scripts/replay.sh
 
 ## 当前工作
-正在做：1.5 插件骨架（待派工）
-下一步：1.4/1.5 骨架
+正在做：阶段 2 拆卡（秘书与派发）
+下一步：阶段 2 首张卡

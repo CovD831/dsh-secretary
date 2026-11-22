@@ -1,0 +1,11 @@
+- insert:
+    - id: preset-secretary
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: secretary
+        name: 秘书
+        order: 1
+        plugins: []
+    - id: dsh-secretary
+      name: 'dsh-secretary'
+      config: {}
