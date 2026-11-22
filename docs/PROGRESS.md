@@ -20,6 +20,12 @@
 - [x] 1.4 全局地图 docs/MAP.md（随骨架落地）
 - [x] 1.5 插件骨架：preset、工具注册、事件归一化落盘 — 隔离正式安装、固定流原生轮次、client 与卸载已通过 scripts/replay.sh
 
+## 阶段 2：秘书与派发
+- [~] 2.1 说话工具 secretary_ask / secretary_handover（worktree card-2.1）
+- [~] 2.3 单工作区注册 + secretary_dispatch / secretary_status（worktree card-2.3）
+- [ ] 2.2 待裁队列（ask + DSH 权限审批）+ 老板裁决入口（依赖 2.1）
+- [ ] 2.4 合并后端到端回放 + 秘书人设提示词
+
 ## 当前工作
-正在做：阶段 2 拆卡（秘书与派发）
-下一步：阶段 2 首张卡
+正在做：2.1 与 2.3 并行；记忆仿脑调研（文档）
+下一步：合并 2.1/2.3 → 2.2
