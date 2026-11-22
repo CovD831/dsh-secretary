@@ -17,10 +17,11 @@ function gate(judge, id = 'dispatch.fake') {
 function execution(agent) {
   return { agent, name: 'bash', arguments: { command: 'pwd' }, callId: 'call-1', signal: new AbortController().signal }
 }
-async function setup(registry, workspaces = { workspace1: 'workspace-session' }) {
+async function setup(registry, workspaces = { workspace1: 'workspace-session' }, rootOf) {
   gateRegistry.splice(0, gateRegistry.length, ...registry)
   const listeners = []
   const ctx = {
+    get: name => name === 'subagents' && rootOf !== undefined ? { rootOf } : undefined,
     on(name, listener, options) { listeners.push({ name, listener, options }) },
     storageDomain: { open: async () => ({ table: () => ({ entries: () => Object.entries(workspaces) }), close: async () => {} }) },
   }
@@ -39,6 +40,21 @@ test('空注册表放行且非管辖会话不运行 gate', async t => {
   const fake = gate(() => { throw new Error('不应调用') })
   const scoped = await setup([fake], { workspace1: 'workspace-session' })
   assert.deepEqual(await scoped.hook.listener(execution(agent('other')), async () => ({ kind: 'allow' })), { kind: 'allow' })
+  t.after(() => gateRegistry.splice(0))
+})
+
+test('工作区 teammate 受 gate 管辖，非工作区树不拦截', async t => {
+  const { hook } = await setup([gate(() => ({ verdict: 'deny', reason: '树内应拦截。', evidence: {} }))],
+    { workspace1: 'workspace-root' }, () => agent('workspace-root'))
+  const result = await hook.listener(execution(agent('workspace-teammate')), async () => ({ kind: 'allow' }))
+  assert.deepEqual(result, { kind: 'deny', reason: '树内应拦截。' })
+  t.after(() => gateRegistry.splice(0))
+})
+
+test('非工作区 teammate 树交给后续钩子', async t => {
+  const { hook } = await setup([gate(() => { throw new Error('树外不应调用') })],
+    { workspace1: 'workspace-root' }, () => agent('other-root'))
+  assert.deepEqual(await hook.listener(execution(agent('other-teammate')), async () => ({ kind: 'allow' })), { kind: 'allow' })
   t.after(() => gateRegistry.splice(0))
 })
 

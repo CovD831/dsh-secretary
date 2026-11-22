@@ -47,6 +47,7 @@ export interface ToolResult {
 }
 
 export interface Context {
+  get<T = unknown>(name: string): T | undefined
   on(event: string, listener: (...args: any[]) => any, options?: { prepend: true }): unknown
   on(event: 'session/event', listener: (session: Session, event: SessionEvent) => undefined): unknown
   on(event: 'tools/result', listener: (exec: ToolExecution, result: ToolResult) => undefined): unknown

@@ -32,7 +32,7 @@ dist/client.js → main keyed 插槽 → GET /api/dsh-secretary.events → 最�
 - `src/normalize-module.ts`、`src/event-routes.ts`：事件归一化与只读事件路由装配。
 - `src/gates/registry.ts`：gate 条目、六插入点、三态判定及红绿 fixture 契约。
 - `src/gates/index.ts`：唯一 gate 注册表，当前为空。
-- `src/gates/runner.ts`：仅管辖工作区会话的 pre-execute prepend；异常转 unmeasured，deny/unmeasured 拒绝并先落 `gate.verdict`。
+- `src/gates/runner.ts`：以 `ctx.get('subagents').rootOf` 管辖工作区整棵 teammate 树的 pre-execute prepend；服务缺失退回根会话映射，异常转 unmeasured，deny/unmeasured 拒绝并先落 `gate.verdict`。
 - `src/workspace.ts`：审批与 gate 共用的持久工作区会话判定。
 - `src/contracts.ts`：从 rc.5 源码核对的最小宿主结构，仅编译期使用。
 - `src/host-types.ts`：宿主契约的统一类型出口。

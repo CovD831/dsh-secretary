@@ -31,7 +31,9 @@ export async function judgeGate(gate: GateDefinition, ctx: Parameters<GateDefini
 export const install: Install = (ctx, { writer }) => {
   ctx.on('tools/pre-execute', async (exec, next) => {
     if (exec.agent === undefined) return await next()
-    const workspaceId = await workspaceOf(exec.agent, ctx.storageDomain)
+    const subagents = ctx.get<{ rootOf(agent: typeof exec.agent): typeof exec.agent }>('subagents')
+    const root = subagents?.rootOf(exec.agent) ?? exec.agent
+    const workspaceId = await workspaceOf(root, ctx.storageDomain)
     if (workspaceId === null) return await next()
     for (const gate of gateRegistry) {
       if (!gate.matches(exec.name, exec.arguments)) continue
