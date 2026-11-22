@@ -1,0 +1,12 @@
+{
+  "source": "构造（完全一致是最基本的正例；语料中 gate 的 ok 记录为 0，故只能构造）",
+  "input": {
+    "declaredPaths": ["src/core/retry.ts", "scripts/retry.test.mjs"],
+    "sessionDiffPaths": ["src/core/retry.ts", "scripts/retry.test.mjs"],
+    "gitDirtyPaths": ["src/core/retry.ts", "scripts/retry.test.mjs"],
+    "sawShellWrite": false,
+    "sawUnmeasuredTool": false
+  },
+  "expected": "allow",
+  "why": "声明面与会话面完全一致，无未声明写入、无写入缺失。"
+}

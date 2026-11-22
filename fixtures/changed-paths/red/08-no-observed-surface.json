@@ -1,0 +1,12 @@
+{
+  "source": "构造（对应 SPEC §4：观察面自身缺失时必须 unmeasured）",
+  "input": {
+    "declaredPaths": ["src/core/health.ts"],
+    "sessionDiffPaths": [],
+    "gitDirtyPaths": null,
+    "sawShellWrite": false,
+    "sawUnmeasuredTool": false
+  },
+  "expected": "unmeasured",
+  "why": "git 面读不到（null）而会话面为空：没有任何面能证实或否定声明，观测不足即不放行。"
+}

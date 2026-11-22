@@ -1,0 +1,12 @@
+{
+  "source": "构造（对应 f-0010 的成因 i：写入发生在别的会话，由 git 面作证）",
+  "input": {
+    "declaredPaths": ["src/core/session.ts", "lib/core/session.js"],
+    "sessionDiffPaths": [],
+    "gitDirtyPaths": ["src/core/session.ts", "lib/core/session.js"],
+    "sawShellWrite": false,
+    "sawUnmeasuredTool": false
+  },
+  "expected": "allow",
+  "why": "本会话无写入但工作区确实脏了这两条：并集口径足以证实声明，不应误判为虚报。"
+}

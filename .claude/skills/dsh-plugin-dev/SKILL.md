@@ -161,3 +161,7 @@ Web 复跑：`dsh --profile <p> --patch … --host 127.0.0.1 --port <n> --no-ope
 - `system/message` 是派生事件（surface 节点 0，内容随 prompt 渲染产生），可用 `agent.session.snapshotEvents()` 读取其 `data.message.content` 作为「提示词已生效」的非模型证据。
 - 本仓 `scripts/build.mjs` 必须递归转译 `src` 子目录并保留层级；`typecheck` 不会检查构建产物路径，gate 等子目录漏构建只会在 Node 导入时暴露 `ERR_MODULE_NOT_FOUND`。
 - 可选服务必须 `ctx.get('subagents')`；直接访问 `ctx.subagents` 即使代码有可选链也会由代理抛 `cannot get property "subagents" without inject`，导致所有 pre-execute 工具失败。出处：`R/packages/AGENTS.md`、隔离 replay 工具错误。
+- `desktop` 是 CLI 保留 profile：`dsh --profile desktop --dump-config`（以及任何 boot 路径）直接报 `profile "desktop" is managed exclusively by the Electron application`；`dsh plugin --profile desktop ...` 只有 Desktop 自带 carrier（`runtime/cli/bin/dsh`，`manageDesktopProfile: true`）能执行。验证 desktop 配置须用同 package.json/patch + `node_modules` 符号链接的临时镜像 profile 跑 dump。
+- `--from-default-profile desktop` 同样被保留名拒绝；演练要先用别的名字（如 `desktop-init`）派生，再把目录改名为 `desktop`、补 `package.json.name`。
+- `npm run build` 只做 `transpileModule`，不做类型检查；源码语法/类型错误仍能打包成功，直到 Node 导入时 `SyntaxError` 或 fiber 失败。正式安装前必须另跑 `npm run typecheck` 或对产物 `node --check`。
+- pnpm 安装/卸载会正则化 manifest：卸载后常删除空 `dependencies: {}`，并留下只有 `importers: .: {}` 的空 `pnpm-lock.yaml`；比对安装前备份时要把它当作可区分的归一化差异（空 lock 可安全删除）。

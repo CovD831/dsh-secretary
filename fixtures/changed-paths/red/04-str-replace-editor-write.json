@@ -1,0 +1,12 @@
+{
+  "source": "构造（02 号地图 §1 dispatch 行：str_replace_editor 无 presentationMeta，无 diffs）",
+  "input": {
+    "declaredPaths": ["src/core/config.ts", "src/core/config-types.ts"],
+    "sessionDiffPaths": [],
+    "gitDirtyPaths": ["src/core/config.ts", "src/core/config-types.ts"],
+    "sawShellWrite": false,
+    "sawUnmeasuredTool": true
+  },
+  "expected": "unmeasured",
+  "why": "str_replace_editor 不产 meta.diffs，会话写入历史不完整；有 git 面也不能补足归属，判 unmeasured。"
+}

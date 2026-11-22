@@ -1,0 +1,12 @@
+{
+  "source": "构造（旧判据接受形如 ../secrets 的逃逸路径与否未覆盖；新仓需要 D 臂）",
+  "input": {
+    "declaredPaths": ["src/core/hooks.ts", "../outside/report.md"],
+    "sessionDiffPaths": ["src/core/hooks.ts"],
+    "gitDirtyPaths": ["src/core/hooks.ts"],
+    "sawShellWrite": false,
+    "sawUnmeasuredTool": false
+  },
+  "expected": "deny",
+  "why": "声明含工作区外的相对路径，无法与任何观察面比较，属不可审计路径，必须拒。"
+}

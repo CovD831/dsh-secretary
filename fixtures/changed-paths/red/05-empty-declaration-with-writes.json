@@ -1,0 +1,12 @@
+{
+  "source": "真实：旧仓 .agent-teams/frictions/f-0081/f-0083/f-0085/f-0105/f-0154/f-0158 同形（声明面缺席）",
+  "input": {
+    "declaredPaths": [],
+    "sessionDiffPaths": ["src/tools/shared/entities.ts", "src/tools/delivery.ts"],
+    "gitDirtyPaths": ["src/tools/shared/entities.ts", "src/tools/delivery.ts", "lib/tools/delivery.js"],
+    "sawShellWrite": false,
+    "sawUnmeasuredTool": false
+  },
+  "expected": "deny",
+  "why": "声明了约定的 changedPaths 后确确实实改了文件却报空清单，等于没声明；完成时声明面不得为空。"
+}

@@ -1,0 +1,17 @@
+{
+  "native_size": [
+    48,
+    64
+  ],
+  "footprint_tiles_32x16": [
+    1,
+    1
+  ],
+  "anchor": "bottom_center",
+  "anchor_px": [
+    24,
+    63
+  ],
+  "palette_colors": 32,
+  "mean_oklab_error": 0.0256
+}

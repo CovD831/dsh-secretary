@@ -1,0 +1,12 @@
+{
+  "source": "构造（语料中未找到确认的漏报样本；旧判据的 concealed 分支在 466 条记录里触发 0 次）",
+  "input": {
+    "declaredPaths": ["src/core/parser.ts"],
+    "sessionDiffPaths": ["src/core/parser.ts", "scripts/parser-regression.test.mjs"],
+    "gitDirtyPaths": ["src/core/parser.ts", "scripts/parser-regression.test.mjs"],
+    "sawShellWrite": false,
+    "sawUnmeasuredTool": false
+  },
+  "expected": "deny",
+  "why": "会话里真实写了组测试，声明面漏了它；观察面多出的路径必须逐条出现在声明里。"
+}

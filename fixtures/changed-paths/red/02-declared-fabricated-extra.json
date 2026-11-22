@@ -1,0 +1,12 @@
+{
+  "source": "真实：旧仓 .agent-teams/frictions/f-0036.json（改写成新 schema）",
+  "input": {
+    "declaredPaths": ["src/core/gates.ts", "lib/core/gates.js", "lib/types/core/gates.d.ts", "scripts/gate-overlap.test.mjs"],
+    "sessionDiffPaths": [],
+    "gitDirtyPaths": ["lib/git-artifact-stamp.json"],
+    "sawShellWrite": false,
+    "sawUnmeasuredTool": false
+  },
+  "expected": "deny",
+  "why": "四条声明路径在两个观察面都不存在（git 面只有构建戳）；完成时仍如此即虚报。"
+}

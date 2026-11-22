@@ -1,0 +1,12 @@
+{
+  "source": "构造（生成物容差：需要一份可解释的忽略清单）",
+  "input": {
+    "declaredPaths": ["src/core/events.ts", "src/core/events-types.ts"],
+    "sessionDiffPaths": ["src/core/events.ts", "src/core/events-types.ts"],
+    "gitDirtyPaths": ["src/core/events.ts", "src/core/events-types.ts", "lib/core/events.js", "lib/types/core/events.d.ts", "node_modules/.cache/tsbuildinfo"],
+    "sawShellWrite": false,
+    "sawUnmeasuredTool": false
+  },
+  "expected": "allow",
+  "why": "lib/ 编译产物与构建缓存由构建命令按源文件派生，不属于成员手工改动面，按忽略清单排除。"
+}

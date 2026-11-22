@@ -1,0 +1,12 @@
+{
+  "source": "构造（路径规范化：Windows 分隔符、重复斜杠、点段）",
+  "input": {
+    "declaredPaths": ["./src/core/queue.ts", "src\\core\\queue-test.mjs"],
+    "sessionDiffPaths": ["src/core/queue.ts", "src/core/queue-test.mjs"],
+    "gitDirtyPaths": ["src//core/queue.ts"],
+    "sawShellWrite": false,
+    "sawUnmeasuredTool": false
+  },
+  "expected": "allow",
+  "why": "规范化去掉 ./、反斜杠、重复斜杠与点段后再比较；规范化后三面一致。"
+}

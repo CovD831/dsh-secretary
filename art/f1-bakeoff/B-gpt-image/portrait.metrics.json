@@ -1,0 +1,16 @@
+{
+  "orig_size": [
+    1024,
+    1024
+  ],
+  "pixels": 23621,
+  "colors_used": 39,
+  "mean_oklab_err": 0.0346,
+  "semi_alpha_cleared": 345,
+  "corner_alpha": [
+    0,
+    0,
+    0,
+    0
+  ]
+}

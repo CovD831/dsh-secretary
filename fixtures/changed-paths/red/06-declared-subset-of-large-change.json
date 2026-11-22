@@ -1,0 +1,12 @@
+{
+  "source": "真实：旧仓 f-0051.json（30 条声明，git 面 114 条脏）",
+  "input": {
+    "declaredPaths": ["src/tools.ts", "src/tools/claim.ts", "src/tools/amend-task.ts", "src/tools/create-task.ts"],
+    "sessionDiffPaths": ["src/tools.ts"],
+    "gitDirtyPaths": ["src/tools.ts", "src/tools/claim.ts", "lib/tools.js", "lib/tools/claim.js", "lib/types/tools.d.ts", "scripts/verify.mjs", "package.json"],
+    "sawShellWrite": false,
+    "sawUnmeasuredTool": false
+  },
+  "expected": "deny",
+  "why": "大批源文件改了（含 lib 产物与 package.json），声明漏掉；观察面多出的每一条都要能解释。"
+}

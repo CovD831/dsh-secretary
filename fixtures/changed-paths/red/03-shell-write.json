@@ -1,0 +1,12 @@
+{
+  "source": "构造（PRD §5 明确要求的盲区验收；语料中 unmeasured 触发 0 次）",
+  "input": {
+    "declaredPaths": ["src/core/scheduler.ts"],
+    "sessionDiffPaths": [],
+    "gitDirtyPaths": ["src/core/scheduler.ts"],
+    "sawShellWrite": true,
+    "sawUnmeasuredTool": false
+  },
+  "expected": "unmeasured",
+  "why": "会话出现 shell 写入时，git 脏面只能证明文件变了、不能证明是本成员改的，观测不完整，不放行。"
+}
