@@ -16,7 +16,7 @@ export interface PendingView {
   payload: Record<string, unknown>
   options: Array<{ id: string; label: string; consequence: string; recommended: boolean }>
 }
-export interface QueueView { current: PendingView | null; remaining: number; total: number }
+export interface QueueView { current: PendingView | null; remaining: number; total: number; deliveryFailure: string | null }
 export interface DecisionResult { accepted: true; pendingId: string; decisionId: string }
 export interface DecisionActions {
   answerApproval(pending: PendingView, outcome: 'allowed-once' | 'rejected'): Promise<void>
@@ -50,8 +50,12 @@ export function projectPending(events: EventEnvelope[]): PendingView[] {
 }
 
 export async function readQueue(writer: LogWriter): Promise<QueueView> {
-  const pending = projectPending(await readRecentEvents(writer.path, Number.MAX_SAFE_INTEGER))
-  return { current: pending[0] ?? null, remaining: Math.max(0, pending.length - 1), total: pending.length }
+  const events = await readRecentEvents(writer.path, Number.MAX_SAFE_INTEGER)
+  const pending = projectPending(events)
+  const deliveryFailure = events.findLast(event => event.kind === KINDS.dispatch
+    && event.payload.phase === 'failed' && event.payload.purpose === 'boss-decision')
+  return { current: pending[0] ?? null, remaining: Math.max(0, pending.length - 1), total: pending.length,
+    deliveryFailure: deliveryFailure === undefined ? null : '老板裁决已记录，但回投秘书失败；未自动重试，请检查秘书会话。' }
 }
 
 export class Decider {
@@ -100,6 +104,14 @@ export class Decider {
         await this.actions.promptSecretary(pending, `老板选了「${option?.label ?? input.optionId}」（${input.optionId}）${note}`)
       }
     } catch (error) {
+      if (pending.kind === KINDS.secretaryAsk) {
+        await this.writer.append(createEnvelope({
+          id: `plugin:${randomUUID()}`, kind: KINDS.dispatch, sessionId: pending.sessionId,
+          workspaceId: pending.workspaceId, source: 'plugin', causedBy: decision.id,
+          payload: { phase: 'failed', purpose: 'boss-decision', targetSessionId: pending.sessionId,
+            requestId: null, summary: '老板裁决回投失败', reason: error instanceof Error ? error.message : String(error) },
+        }), true)
+      }
       throw new Error('裁决已落日志，但恢复原流程失败；请检查原会话与事件日志。', { cause: error })
     }
     return { accepted: true, pendingId: pending.pendingId, decisionId: decision.id }

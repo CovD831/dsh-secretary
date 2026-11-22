@@ -68,7 +68,7 @@ test('Host 的 ask 裁决经 sessionController.prompt 投递回秘书会话', as
     storageDomain: { open: async () => ({ table: () => ({ entries: () => [] }), close: async () => {} }) },
     sessionController: { prompt: async request => { prompts.push(request); return { accepted: true } } },
   }
-  apply(ctx, writer)
+  apply(ctx, writer, { id: 'workspace', cwd: '/tmp/workspace' })
   const secretary = {
     id: 'secretary-live',
     session: { header: { agentPreset: 'secretary' }, snapshotEvents: () => [] },
@@ -89,4 +89,66 @@ test('Host 的 ask 裁决经 sessionController.prompt 投递回秘书会话', as
   assert.match(prompts[0].requestId, /^boss-decision-/)
   assert.match(prompts[0].content[0].text, /附言：保持范围/)
   assert.ok(prompts[0] !== undefined)
+})
+
+test('启动时取消日志中没有本进程 resolver 的孤儿审批', async () => {
+  const writer = new LogWriter(join(await mkdtemp(join(tmpdir(), 'secretary-orphan-')), 'events.jsonl'))
+  await writer.append({
+    v: '0', id: 'plugin:orphan-approval', ts: new Date().toISOString(), kind: 'dsh.approval',
+    sessionId: 'workspace-session', workspaceId: 'workspace', source: 'plugin', causedBy: null,
+    payload: { phase: 'pending', toolName: 'bash', callId: 'call-1', reason: '测试', outcome: null, approvalId: null },
+  }, true)
+  const listeners = new Map()
+  const effects = []
+  const ctx = {
+    on(name, listener) { listeners.set(name, listener) },
+    inject(_services, setup) { setup(ctx) },
+    effect(setup) { effects.push(setup) },
+    connection: { fetch: { register() {} } },
+    storageDomain: { open: async () => ({ table: () => ({ entries: () => [] }), close: async () => {} }) },
+    sessionController: { prompt: async () => ({ accepted: true }) },
+  }
+  apply(ctx, writer, { id: 'workspace', cwd: '/tmp/workspace' })
+  for (const setup of effects) await (await setup())()
+  const events = (await import('../dist/events.js')).readRecentEvents
+    ? await (await import('../dist/events.js')).readRecentEvents(writer.path, Number.MAX_SAFE_INTEGER)
+    : []
+  const answered = events.find(event => event.kind === 'dsh.approval' && event.payload.phase === 'answered')
+  assert.ok(answered, '孤儿审批没有 answered 事件')
+  assert.equal(answered.causedBy, 'plugin:orphan-approval')
+  assert.equal(answered.payload.outcome, 'cancelled')
+  assert.equal(answered.payload.reason, '插件重启，原审批已失效')
+})
+
+test('秘书回投失败写失败事件并由 GET 显式暴露', async () => {
+  const writer = new LogWriter(join(await mkdtemp(join(tmpdir(), 'secretary-prompt-failure-')), 'events.jsonl'))
+  const routes = new Map()
+  const listeners = new Map()
+  const ctx = {
+    on(name, listener) { listeners.set(name, listener) },
+    inject(_services, setup) { setup(ctx) },
+    effect() {},
+    connection: { fetch: { register(route) { routes.set(route.path, route) } } },
+    storageDomain: { open: async () => ({ table: () => ({ entries: () => [] }), close: async () => {} }) },
+    sessionController: { prompt: async () => { throw new Error('秘书会话已失效') } },
+  }
+  apply(ctx, writer, { id: 'workspace', cwd: '/tmp/workspace' })
+  const secretary = {
+    id: 'secretary-live', session: { header: { agentPreset: 'secretary' }, snapshotEvents: () => [] },
+    ctx: { tools: { register() {}, restrict() {} } },
+  }
+  listeners.get('agent/created')({ agent: secretary })
+  const { eventId } = await ask(writer, secretary, {
+    text: '继续吗？', allowNote: false,
+    options: [{ id: 'yes', label: '继续', consequence: '继续执行', recommended: true }],
+  })
+  const response = await routes.get('/api/dsh-secretary.decision').fetch(new Request('http://local/api/dsh-secretary.decision', {
+    method: 'POST', body: JSON.stringify({ pendingId: eventId, optionId: 'yes' }),
+  }))
+  assert.equal(response.status, 500)
+  const { readRecentEvents } = await import('../dist/events.js')
+  const events = await readRecentEvents(writer.path, Number.MAX_SAFE_INTEGER)
+  assert.ok(events.some(event => event.kind === 'dispatch' && event.payload.phase === 'failed' && event.causedBy !== null))
+  const pending = await (await routes.get('/api/dsh-secretary.pending').fetch(new Request('http://local/api/dsh-secretary.pending'))).json()
+  assert.match(pending.writeFailure, /秘书|投递|失败/)
 })

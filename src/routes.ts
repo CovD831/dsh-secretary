@@ -17,7 +17,8 @@ export function registerDecisionRoutes(ctx: RouteContext, writer: LogWriter, dec
     path: ROUTES.pending, methods: ['GET'], requestBody: 'buffered',
     fetch: async () => {
       try {
-        return Response.json({ ...await readQueue(writer), writeFailure: writer.failure === null ? null : '事件日志写入失败，读数可能不完整' })
+        const queue = await readQueue(writer)
+        return Response.json({ ...queue, writeFailure: writer.failure === null ? queue.deliveryFailure : '事件日志写入失败，读数可能不完整' })
       } catch {
         return Response.json({ error: '待裁队列读取失败。' }, { status: 500 })
       }

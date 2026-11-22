@@ -6,7 +6,8 @@ import { randomUUID } from 'node:crypto'
 import { KINDS, PRESET_NAME, WORKSPACE_STORAGE_SPEC, WORKSPACE_TABLE } from './constants.js'
 import type { Agent, Context, SessionEvent } from './contracts.js'
 import type { ApprovalOutcome, PendingView } from './decisions.js'
-import { createEnvelope, LogWriter } from './events.js'
+import { projectPending } from './decisions.js'
+import { createEnvelope, LogWriter, readRecentEvents } from './events.js'
 
 export interface ApprovalRequest {
   agent: Agent
@@ -35,6 +36,7 @@ interface HeldApproval {
 
 export function registerApprovalQueue(ctx: ApprovalContext, writer: LogWriter, storage: StorageDomain): {
   respond(pending: PendingView, outcome: 'allowed-once' | 'rejected'): Promise<void>
+  recover(): Promise<void>
   dispose(): Promise<void>
 } {
   const secretaries = new Set<string>()
@@ -58,6 +60,7 @@ export function registerApprovalQueue(ctx: ApprovalContext, writer: LogWriter, s
   }
 
   ctx.on('approval/request', async (request, next) => {
+    const approvalId = approvalIdOf(request)
     const secretary = secretaries.has(request.agent.id)
     const workspaceId = secretary ? null : await workspaceOf(request.agent)
     if (disposed || (!secretary && workspaceId === null)) return await next()
@@ -66,7 +69,7 @@ export function registerApprovalQueue(ctx: ApprovalContext, writer: LogWriter, s
       id: `plugin:${randomUUID()}`, kind: KINDS.approval, sessionId: request.agent.id,
       workspaceId, source: 'plugin', causedBy: null,
       payload: { phase: 'pending', toolName: request.toolName, callId: request.callId ?? null,
-        reason: request.reason ?? null, outcome: null, approvalId: approvalIdOf(request) },
+        reason: request.reason ?? null, outcome: null, approvalId },
     })
     await writer.append(event, true)
     const deferred = Promise.withResolvers<ApprovalOutcome>()
@@ -102,6 +105,15 @@ export function registerApprovalQueue(ctx: ApprovalContext, writer: LogWriter, s
   }
 
   return {
+    recover: async () => {
+      const events = await readRecentEvents(writer.path, Number.MAX_SAFE_INTEGER)
+      for (const pending of projectPending(events)) {
+        if (pending.kind === KINDS.approval && !held.has(pending.pendingId)) {
+          await writeAnswer(writer, { id: pending.pendingId, sessionId: pending.sessionId, workspaceId: pending.workspaceId },
+            'cancelled', '插件重启，原审批已失效')
+        }
+      }
+    },
     respond: async (pending, outcome) => {
       if (!held.has(pending.pendingId)) {
         await writeAnswer(writer, { id: pending.pendingId, sessionId: pending.sessionId, workspaceId: pending.workspaceId }, outcome)
@@ -121,12 +133,15 @@ export function registerApprovalQueue(ctx: ApprovalContext, writer: LogWriter, s
 }
 
 function approvalIdOf(request: ApprovalRequest): string | null {
+  if (request.callId === undefined) return null
   const events: SessionEvent[] = request.agent.session.snapshotEvents()
+  const decided = new Set(events.filter(event => event.type === 'approval/decided')
+    .map(event => (event.data as Record<string, unknown>).id))
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]!
     if (event.type !== 'approval/asked' || typeof event.data !== 'object' || event.data === null) continue
     const data = event.data as Record<string, unknown>
-    if (data.toolName !== request.toolName || (data.callId ?? null) !== (request.callId ?? null)) continue
+    if (data.toolName !== request.toolName || data.callId !== request.callId || decided.has(data.id)) continue
     return typeof data.id === 'string' ? data.id : null
   }
   return null
@@ -134,10 +149,11 @@ function approvalIdOf(request: ApprovalRequest): string | null {
 
 async function writeAnswer(
   writer: LogWriter, pending: { id: string; sessionId: string; workspaceId: string | null }, outcome: ApprovalOutcome,
+  reason: string | null = null,
 ): Promise<void> {
   await writer.append(createEnvelope({
     id: `plugin:${randomUUID()}`, kind: KINDS.approval, sessionId: pending.sessionId,
     workspaceId: pending.workspaceId, source: 'plugin', causedBy: pending.id,
-    payload: { phase: 'answered', toolName: null, callId: null, reason: null, outcome, approvalId: null },
+    payload: { phase: 'answered', toolName: null, callId: null, reason, outcome, approvalId: null },
   }), true)
 }

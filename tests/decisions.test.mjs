@@ -53,7 +53,7 @@ async function fixture(workspaces = {}) {
 test('非管辖会话审批交给宿主原生 waterfall', async () => {
   const { writer, ctx } = await fixture()
   assert.equal(await ctx.request({ agent: agent('user-session'), toolName: 'bash' }), 'native')
-  assert.deepEqual(await readQueue(writer), { current: null, remaining: 0, total: 0 })
+  assert.deepEqual(await readQueue(writer), { current: null, remaining: 0, total: 0, deliveryFailure: null })
 })
 
 test('工作区审批截获，allow 裁决后返回 allowed-once 并写完整因果链', async () => {
@@ -70,6 +70,36 @@ test('工作区审批截获，allow 裁决后返回 allowed-once 并写完整因
   const events = projectPendingForTest(writer)
   assert.equal(events.find(event => event.kind === 'boss.decision').payload.approvalOutcome, 'allowed-once')
   assert.equal(events.find(event => event.kind === 'dsh.approval' && event.payload.phase === 'answered').causedBy, queue.current.pendingId)
+})
+
+test('无 callId 时 approvalId 为 null，不猜同工具的其他审计 id', async () => {
+  const { writer, ctx, approvals } = await fixture({ workspace1: 'workspace-session' })
+  const request = agent('workspace-session')
+  request.session.snapshotEvents = () => [
+    { type: 'approval/asked', data: { id: 'audit-A', toolName: 'bash' } },
+    { type: 'approval/asked', data: { id: 'audit-B', toolName: 'bash' } },
+  ]
+  const pending = ctx.request({ agent: request, toolName: 'bash' })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal((await readQueue(writer)).current.payload.approvalId, null)
+  await approvals.dispose()
+  assert.equal(await pending, 'rejected')
+})
+
+test('带 callId 精确匹配未决 approval/asked，排除已 decided', async () => {
+  const { writer, ctx, approvals } = await fixture({ workspace1: 'workspace-session' })
+  const request = agent('workspace-session')
+  request.session.snapshotEvents = () => [
+    { type: 'approval/asked', data: { id: 'audit-old', toolName: 'bash', callId: 'call-target' } },
+    { type: 'approval/decided', data: { id: 'audit-old', outcome: 'allowed-once' } },
+    { type: 'approval/asked', data: { id: 'audit-other', toolName: 'bash', callId: 'call-other' } },
+    { type: 'approval/asked', data: { id: 'audit-new', toolName: 'bash', callId: 'call-target' } },
+  ]
+  const pending = ctx.request({ agent: request, toolName: 'bash', callId: 'call-target' })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal((await readQueue(writer)).current.payload.approvalId, 'audit-new')
+  await approvals.dispose()
+  assert.equal(await pending, 'rejected')
 })
 
 test('秘书 preset 审批属于管辖会话', async () => {
