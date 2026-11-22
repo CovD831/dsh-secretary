@@ -150,3 +150,9 @@ Web 复跑：`dsh --profile <p> --patch … --host 127.0.0.1 --port <n> --no-ope
 - `--dump-config` 不是激活证据，必须真实启动看 apply() 副作用。
 - 卸载：`dsh plugin --profile <p> remove <包名>`。
 - 未解决：已安装包的 client 资产 URL 返回 404，浏览器端加载待验。
+
+## 已知坑（开工前必读，撞到新坑就追加）
+- 固定流自检：适配器须实现 listModels，否则「Select an available model」；工具调用流须有限（首轮调工具、次轮停止），否则 Agent Loop 不停；自动标题请求也会走适配器。
+- storageDomain 名字有字符限制（用下划线，如 dsh_secretary）。
+- 宿主启动会自行写 profile patch（默认模型、欢迎设置）：卸载断言只断言插件项不存在，不要求整份配置逐字节不变；基准快照须在首次 reset 之后采集。
+- 插件数据目录按宿主 resolveDshHome 规则（DSH_HOME 非空优先，否则 ~/.dsh）解析，不能强制要求 DSH_HOME。
