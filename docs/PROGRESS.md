@@ -27,6 +27,13 @@
 - [x] 2.2b 前端最小裁决表单 — 已合入（浏览器实测：展示→附言→推荐选项提交→秘书收到回投）
 - [x] 2.4 秘书人设提示词 + 派发遗留修复 — 已合入（31 测试 + replay 通过：persona 经 `!!js` 读包内 prompts/secretary.md，自检断言 system/message 含提示词；工作区未配置时派发回中文错误、其余工具照常；prepared 即写 requestId、accepted 同 id；包内不含用户路径）
 
+## 阶段 3：判局层
+- [x] 3.0 装配解耦 + gate 注册表骨架（空注册表、唯一 pre-execute、红绿 fixture 运行器含禁用变异、管辖整个工作区会话树）— 实现在 a2004c3 + 288557d，39 测试 + replay 通过
+- [~] 3.a changed-paths 样本与判据（探索）
+- [x] 3.b verify-rerun 机制探索 + 队长裁定（docs/design/gate-verify-rerun.md）
+- [ ] 3.1 changed-paths gate 实现（fixture 字段统一为 verdict）
+- [ ] 3.2 verify-rerun gate 实现 + workspace_report_done + acceptance verify 块结构化
+
 ## 当前工作
-正在做：无（2.4 已完成）
-下一步：装进老板桌面端做真实模型试用（待老板同意）
+正在做：3.a 收尾、桌面安装脚本演练、F1 生图对比
+下一步：3.1 与 3.2 并行实现
