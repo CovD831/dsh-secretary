@@ -14,12 +14,12 @@
 - [~] 0.7 正式安装链路（打包→plugin add→激活），在隔离 DSH_HOME 验证；真实桌面安装等首个可用版本
 
 ## 阶段 1：架构与开发规范 + 骨架
-- [~] 1.1 开发规范 docs/STANDARDS.md
-- [~] 1.2 子代理协作规范 docs/AGENTS-WORKFLOW.md
-- [~] 1.3 事件日志 schema v0 docs/EVENT-LOG-v0.md
+- [x] 1.1 开发规范 docs/STANDARDS.md
+- [x] 1.2 子代理协作规范 docs/AGENTS-WORKFLOW.md
+- [x] 1.3 事件日志 schema v0 docs/EVENT-LOG-v0.md — 待核 3 项见其 §7
 - [ ] 1.4 全局地图 docs/MAP.md（随骨架落地）
 - [ ] 1.5 插件骨架：preset、工具注册、事件归一化落盘
 
 ## 当前工作
-正在做：1.1–1.3 规范起草（子代理并行）+ 0.7 隔离安装验证
+正在做：0.7 隔离安装验证（子代理运行中）
 下一步：1.4/1.5 骨架
