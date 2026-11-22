@@ -6,7 +6,7 @@ import { PRESET_NAME } from './constants.js'
 import type { Context } from './contracts.js'
 import { readRecentEvents } from './events.js'
 import { observeEvents } from './normalize.js'
-import { createSayTool } from './say.js'
+import { createSpeechTools } from './say.js'
 
 interface ConnectionContext extends Context {
   connection: {
@@ -18,7 +18,7 @@ export function apply(ctx: Context, writer: import('./events.js').LogWriter): vo
   observeEvents(ctx, writer)
   ctx.on('agent/created', ({ agent }) => {
     if (agent.session.header.agentPreset !== PRESET_NAME) return undefined
-    agent.ctx.tools.register(createSayTool(writer))
+    for (const tool of createSpeechTools(writer)) agent.ctx.tools.register(tool)
     agent.ctx.tools.restrict({ allow: [] })
     return undefined
   })

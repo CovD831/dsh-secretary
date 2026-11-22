@@ -57,7 +57,8 @@ export function runSelfTest(selfTest: SelfTest): void {
     const agent = selfTest.get(created.sessionId)
     if (agent === undefined) throw new Error('真实秘书会话创建后不可读取。')
     const tools = agent.ctx.tools.schemas(agent).map(tool => tool.name).sort()
-    if (tools.length !== 1 || tools[0] !== TOOL_NAMES.say) throw new Error('秘书工具清单不止 secretary_say。')
+    const expectedTools = Object.values(TOOL_NAMES).sort()
+    if (JSON.stringify(tools) !== JSON.stringify(expectedTools)) throw new Error('秘书工具清单不是恰好三个说话工具。')
     await selfTest.selectModel({ sessionId: created.sessionId, provider: PROVIDER, model: 'fixed' })
     agent.followup({
       id: randomUUID(), role: 'user', source: { kind: 'user' },
@@ -68,7 +69,7 @@ export function runSelfTest(selfTest: SelfTest): void {
     const result = events.find(event => event.type === 'tool/result')
     if (result === undefined) throw new Error('原生 Agent Loop 未产生工具结果。')
     await writeFile(join(selfTest.directory, 'tools-view.json'), `${JSON.stringify({ created, tools, result }, null, 2)}\n`)
-    console.info('秘书工具清单仅 secretary_say；固定流已走完原生 Agent Loop。')
+    console.info('秘书工具清单恰好为三个说话工具；固定流已走完原生 Agent Loop。')
   }
   void report().catch(error => console.error(`秘书无模型自检失败：${String(error)}`))
 }

@@ -83,7 +83,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const out = process.argv[2]
 const tools = JSON.parse(fs.readFileSync(`${out}/tools-view.json`, 'utf8'))
-assert.deepEqual(tools.tools, ['secretary_say'])
+assert.deepEqual(tools.tools, ['secretary_ask', 'secretary_handover', 'secretary_say'])
 assert.equal(tools.result.type, 'tool/result')
 const events = fs.readFileSync(`${process.env.DSH_HOME}/plugins/dsh-secretary/event-log/events.jsonl`, 'utf8').trim().split('\n').map(JSON.parse)
 for (const event of events) {
@@ -102,7 +102,7 @@ assert.ok(events.some(event => event.kind === 'dsh.agent-status' && event.payloa
 assert.ok(events.some(event => event.kind === 'dsh.agent-status' && event.payload.status === 'idle'))
 assert.equal(new Set(events.map(event => event.id)).size, events.length)
 fs.writeFileSync(`${out}/assertions.json`, `${JSON.stringify({ tools: tools.tools, kinds: [...kinds].sort(), eventCount: events.length }, null, 2)}\n`)
-console.log('真实激活、唯一工具、原生轮次、四类事件、v0 信封及幂等 id 均通过断言。')
+console.log('真实激活、三个说话工具、原生轮次、四类事件、v0 信封及幂等 id 均通过断言。')
 JS
 "$DSH" plugin --profile "$PROFILE" remove dsh-secretary > "$OUT/remove.stdout.log" 2> "$OUT/remove.stderr.log"
 installed=false
