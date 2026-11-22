@@ -32,11 +32,20 @@ try {
     await notice.click()
     await notice.waitFor({ state: 'hidden' })
   }
+  const pending = page.locator('#secretary-pending')
+  await pending.getByText('是否继续用隔离工作区验证派发？', { exact: true }).waitFor({ timeout: 30000 })
+  await pending.getByText('还有 0 件', { exact: true }).waitFor({ timeout: 10000 })
+  await page.screenshot({ path: `${out}/pending.png`, fullPage: true })
+  await pending.locator('#secretary-pending-note').fill('按推荐继续')
+  await pending.getByRole('button', { name: /继续验证/ }).click()
+  await pending.getByText('暂无待裁事项', { exact: true }).waitFor({ timeout: 30000 })
+  await page.screenshot({ path: `${out}/pending-done.png`, fullPage: true })
   assert.deepEqual(errors, [])
   assert.ok(responses.some(item => item.status === 200 && item.url.includes('dsh-secretary/client.js')))
+  assert.ok(responses.some(item => item.status === 200 && item.url.includes('dsh-secretary.decision')))
   await page.screenshot({ path: `${out}/client.png`, fullPage: true })
   await writeFile(`${out}/browser.json`, JSON.stringify({ errors, responses }, null, 2))
-  console.log('client 资产 200；默认主面板和派发只读投影已实测。')
+  console.log('client 资产 200；主面板待裁表单：展示、附言、推荐选项提交与清空已实测。')
 } finally {
   await browser.close()
 }

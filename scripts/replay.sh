@@ -107,6 +107,23 @@ const targetSessionId = dispatches[1].payload.targetSessionId
 const delivered = events.find(event => event.kind === 'dsh.session' && event.sessionId === targetSessionId
   && event.payload.sessionType === 'user/message' && event.payload.dataRef.seq >= 0)
 assert.ok(delivered, '工作区会话未收到派发 prompt。')
+const ask = events.find(event => event.kind === 'secretary.ask')
+assert.ok(ask, '缺少待裁的 secretary.ask')
+assert.equal(ask.payload.text, '是否继续用隔离工作区验证派发？')
+assert.equal(ask.payload.options.length, 2)
+assert.equal(ask.payload.options[0].recommended, true)
+const decision = events.find(event => event.kind === 'boss.decision')
+assert.ok(decision, '缺少 boss.decision')
+assert.equal(decision.causedBy, ask.id)
+assert.equal(decision.payload.choiceId, 'keep')
+assert.equal(decision.payload.note, '按推荐继续')
+const reprompt = events.find(event => event.kind === 'dsh.session' && event.sessionId === ask.sessionId
+  && event.payload.sessionType === 'user/message' && event.payload.seq > (() => {
+    const askCall = events.find(item => item.kind === 'dsh.session' && item.sessionId === ask.sessionId
+      && item.payload.sessionType === 'tool/call' && item.payload.summary === '工具：secretary_ask')
+    return askCall === undefined ? -1 : askCall.payload.seq
+  })())
+assert.ok(reprompt, '秘书会话未收到裁决回投 prompt')
 const workspaceCwd = fs.readFileSync(`${out}/patch.before.yml`, 'utf8').match(/^      cwd: (.+)$/m)?.[1]
 assert.ok(workspaceCwd && fs.statSync(workspaceCwd).isDirectory())
 fs.writeFileSync(`${out}/dispatch-assertions.json`, `${JSON.stringify({ targetSessionId, delivered, dispatches }, null, 2)}\n`)

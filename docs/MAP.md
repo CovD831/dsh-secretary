@@ -31,7 +31,7 @@ dist/client.js → main keyed 插槽 → GET /api/dsh-secretary.events → 最�
 - `src/normalize.ts`：`session/event`、`tools/result`、`agent/status` 归一化。
 - `src/events.ts`：v0 信封、串行幂等写入、失败 outbox、最近事件读取。
 - `src/selftest.ts`：隔离自检；固定适配器不访问网络、不读取凭据。
-- `src/client.ts`：默认主面板，标题和只读事件投影。
+- `src/client.ts`：默认主面板，队首待裁表单与只读事件投影。
 
 ## 构建与验收
 

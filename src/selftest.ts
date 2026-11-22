@@ -40,6 +40,15 @@ const adapter = {
     })
     yield { type: 'block-start', index: 1, blockType: 'tool-call' }
     yield { type: 'block-end', index: 1, block: { type: 'tool-call', id: 'secretary-selftest-dispatch', name: DISPATCH_TOOL_NAMES.dispatch, arguments: dispatchArgs } }
+    const askArgs = JSON.stringify({
+      text: '是否继续用隔离工作区验证派发？', allowNote: true,
+      options: [
+        { id: 'keep', label: '继续验证', consequence: '再跑一次派发确认', recommended: true },
+        { id: 'stop', label: '先停下', consequence: '稍后再验证派发', recommended: false },
+      ],
+    })
+    yield { type: 'block-start', index: 2, blockType: 'tool-call' }
+    yield { type: 'block-end', index: 2, block: { type: 'tool-call', id: 'secretary-selftest-ask', name: TOOL_NAMES.ask, arguments: askArgs } }
     yield { type: 'finish', reason: { kind: 'tool-calls' } }
   },
 }
@@ -74,8 +83,8 @@ export function runSelfTest(selfTest: SelfTest): void {
     const events = agent.session.snapshotEvents()
     const result = events.find(event => event.type === 'tool/result')
     const results = events.filter(event => event.type === 'tool/result')
-    if (results.length !== 2 || results.some(event => (event.data as { message?: { isError?: boolean } }).message?.isError !== false)) {
-      throw new Error('说话或派发工具未在原生 Agent Loop 成功完成。')
+    if (results.length !== 3 || results.some(event => (event.data as { message?: { isError?: boolean } }).message?.isError !== false)) {
+      throw new Error('说话、派发或提问工具未在原生 Agent Loop 成功完成。')
     }
     await writeFile(join(selfTest.directory, 'tools-view.json'), `${JSON.stringify({ created, tools, result }, null, 2)}\n`)
     console.info('秘书工具清单恰好五项且真实派发已通过；固定流已走完原生 Agent Loop。')
