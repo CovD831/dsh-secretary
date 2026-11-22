@@ -8,4 +8,7 @@
         plugins: []
     - id: dsh-secretary
       name: 'dsh-secretary'
-      config: {}
+      config:
+        workspace:
+          id: default-workspace
+          cwd: /Users/abab/Desktop/dsh-secretary-workspace

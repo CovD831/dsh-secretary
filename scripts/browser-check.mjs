@@ -14,6 +14,7 @@ try {
   const errors = []
   const responses = []
   page.on('pageerror', error => errors.push(error.message))
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
   page.on('response', response => {
     if (response.url().includes('dsh-secretary')) {
       responses.push({ status: response.status(), url: response.url().replace(/([?&](?:token|rev)=)[^&]+/g, '$1已隐藏') })
@@ -21,7 +22,11 @@ try {
   })
   await page.goto(url, { waitUntil: 'networkidle', timeout: 90000 })
   await page.getByRole('heading', { name: 'dsh-secretary', exact: true }).waitFor({ timeout: 30000 })
-  await page.waitForFunction(() => document.querySelector('#secretary-events')?.textContent?.includes('secretary.say'), { timeout: 30000 })
+  await page.waitForFunction(() => document.querySelector('#secretary-events')?.textContent?.includes('secretary_dispatch'), null, { timeout: 30000 }).catch(async error => {
+    await page.screenshot({ path: `${out}/client-failure.png`, fullPage: true })
+    await writeFile(`${out}/browser-failure.json`, JSON.stringify({ errors, responses, text: await page.locator('body').innerText() }, null, 2))
+    throw error
+  })
   const notice = page.getByRole('button', { name: 'Continue', exact: true })
   if (await notice.isVisible().catch(() => false)) {
     await notice.click()
@@ -31,7 +36,7 @@ try {
   assert.ok(responses.some(item => item.status === 200 && item.url.includes('dsh-secretary/client.js')))
   await page.screenshot({ path: `${out}/client.png`, fullPage: true })
   await writeFile(`${out}/browser.json`, JSON.stringify({ errors, responses }, null, 2))
-  console.log('client 资产 200；默认主面板和 secretary.say 只读投影已实测。')
+  console.log('client 资产 200；默认主面板和派发只读投影已实测。')
 } finally {
   await browser.close()
 }

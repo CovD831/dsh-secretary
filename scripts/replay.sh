@@ -1,16 +1,14 @@
 #!/bin/bash
 # 在独立 home 中复跑正式安装、无模型原生轮次、事件日志、client 与卸载。
 set -euo pipefail
-ROOT='/Users/abab/Desktop/dsh-secretary'
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_ID="$(date +%s)-$$"
-export DSH_HOME="$ROOT/.local/home"
+export DSH_HOME="$ROOT/.local/home-$RUN_ID"
 DSH='/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh'
 OUT="$ROOT/.local/evidence"
 PROFILE='secretary-replay'
 PORT="${DSH_SECRETARY_PORT:-43215}"
 DEFAULT_PORT="${DSH_SECRETARY_DEFAULT_PORT:-43216}"
-PACK="$ROOT/.local/dsh-secretary-$RUN_ID.tgz"
-RUN_ID="$(basename "$PACK" .tgz)"
 PACK="$ROOT/.local/dsh-secretary-$RUN_ID.tgz"
 DEFAULT_HOME="$ROOT/.local/default-home-$RUN_ID"
 DEFAULT_OUT="$DEFAULT_HOME/.dsh/evidence-default-home"
@@ -29,7 +27,7 @@ cleanup() {
   fi
 }
 trap cleanup EXIT INT TERM
-test "$DSH_HOME" = "$ROOT/.local/home"
+test "$DSH_HOME" = "$ROOT/.local/home-$RUN_ID"
 mkdir -p "$OUT" "$DSH_HOME/evidence" "$ROOT/.local/packages"
 python3 -I - "$DSH_HOME/evidence/tools-view.json" <<'PY'
 from pathlib import Path
@@ -48,7 +46,7 @@ python3 -I - "$DSH_HOME/profiles/$PROFILE/cordis.patch.yml" "$DSH_HOME/evidence"
 import sys
 path, out = sys.argv[1:]
 with open(path, 'w') as file:
-    file.write(f'- id: dsh-secretary\n  config:\n    selfTestDirectory: {out}\n')
+    file.write(f'- id: dsh-secretary\n  config:\n    selfTestDirectory: {out}\n    workspace:\n      id: replay-workspace\n      cwd: {out}/workspace\n')
 PY
 "$DSH" plugin --profile "$PROFILE" add "$PACK" > "$OUT/install.stdout.log" 2> "$OUT/install.stderr.log"
 installed=true
@@ -83,7 +81,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const out = process.argv[2]
 const tools = JSON.parse(fs.readFileSync(`${out}/tools-view.json`, 'utf8'))
-assert.deepEqual(tools.tools, ['secretary_say'])
+assert.deepEqual(tools.tools, ['secretary_dispatch', 'secretary_say', 'secretary_status'])
 assert.equal(tools.result.type, 'tool/result')
 const events = fs.readFileSync(`${process.env.DSH_HOME}/plugins/dsh-secretary/event-log/events.jsonl`, 'utf8').trim().split('\n').map(JSON.parse)
 for (const event of events) {
@@ -94,15 +92,26 @@ for (const event of events) {
   assert.ok(Number.isFinite(Date.parse(event.ts)))
 }
 const kinds = new Set(events.map(event => event.kind))
-for (const kind of ['dsh.session', 'dsh.tool', 'dsh.agent-status', 'secretary.say']) assert.ok(kinds.has(kind), `缺少 ${kind}`)
+for (const kind of ['dsh.session', 'dsh.tool', 'dsh.agent-status', 'secretary.say', 'dispatch']) assert.ok(kinds.has(kind), `缺少 ${kind}`)
 const say = events.find(event => event.kind === 'secretary.say')
 assert.equal(say.payload.text, '骨架已就位。')
 assert.equal(say.payload.mood, 'happy')
 assert.ok(events.some(event => event.kind === 'dsh.agent-status' && event.payload.status === 'running'))
 assert.ok(events.some(event => event.kind === 'dsh.agent-status' && event.payload.status === 'idle'))
 assert.equal(new Set(events.map(event => event.id)).size, events.length)
+const dispatches = events.filter(event => event.kind === 'dispatch')
+assert.deepEqual(dispatches.map(event => event.payload.phase), ['prepared', 'accepted'])
+assert.equal(dispatches[0].payload.requestId, null)
+assert.equal(dispatches[1].causedBy, dispatches[0].id)
+const targetSessionId = dispatches[1].payload.targetSessionId
+const delivered = events.find(event => event.kind === 'dsh.session' && event.sessionId === targetSessionId
+  && event.payload.sessionType === 'user/message' && event.payload.dataRef.seq >= 0)
+assert.ok(delivered, '工作区会话未收到派发 prompt。')
+const workspaceCwd = fs.readFileSync(`${out}/patch.before.yml`, 'utf8').match(/^      cwd: (.+)$/m)?.[1]
+assert.ok(workspaceCwd && fs.statSync(workspaceCwd).isDirectory())
+fs.writeFileSync(`${out}/dispatch-assertions.json`, `${JSON.stringify({ targetSessionId, delivered, dispatches }, null, 2)}\n`)
 fs.writeFileSync(`${out}/assertions.json`, `${JSON.stringify({ tools: tools.tools, kinds: [...kinds].sort(), eventCount: events.length }, null, 2)}\n`)
-console.log('真实激活、唯一工具、原生轮次、四类事件、v0 信封及幂等 id 均通过断言。')
+console.log('真实激活、秘书三工具、原生轮次、工作区建会与 prompt 投递、v0 信封及幂等 id 均通过断言。')
 JS
 "$DSH" plugin --profile "$PROFILE" remove dsh-secretary > "$OUT/remove.stdout.log" 2> "$OUT/remove.stderr.log"
 installed=false
@@ -115,7 +124,7 @@ python3 -I - "$DEFAULT_HOME/.dsh/profiles/$PROFILE/cordis.patch.yml" "$DEFAULT_O
 import sys
 path, out = sys.argv[1:]
 with open(path, 'w') as file:
-    file.write(f'- id: dsh-secretary\n  config:\n    selfTestDirectory: {out}\n')
+    file.write(f'- id: dsh-secretary\n  config:\n    selfTestDirectory: {out}\n    workspace:\n      id: replay-workspace\n      cwd: {out}/workspace\n')
 PY
 env -u DSH_HOME HOME="$DEFAULT_HOME" "$DSH" plugin --profile "$PROFILE" add "$PACK" > "$DEFAULT_OUT/install.stdout.log" 2> "$DEFAULT_OUT/install.stderr.log"
 default_installed=true
