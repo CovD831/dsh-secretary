@@ -50,10 +50,12 @@ export function normalizeStatus(agent: Agent, status: 'idle' | 'running'): Event
   })
 }
 
-export function observeEvents(ctx: Context, writer: LogWriter): void {
+export function observeEvents(ctx: Context, writer: LogWriter, workspaceId: string): void {
   const toolCalls = new Map<string, number>()
   const observe = (event: EventEnvelope | null): undefined => {
-    if (event !== null) void writer.append(event).catch(error => console.error(`事件观察失败：${String(error)}`))
+    if (event === null) return undefined
+    if (event.workspaceId === null) event.workspaceId = workspaceId
+    void writer.append(event).catch(error => console.error(`事件观察失败：${String(error)}`))
     return undefined
   }
   ctx.on('tools/result', (exec, result) => {

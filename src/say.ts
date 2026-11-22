@@ -50,6 +50,7 @@ export async function handover(writer: LogWriter, agent: Pick<Agent, 'id'>, args
 
 export function createSpeechTools(writer: LogWriter): unknown[] {
   return [
+    createSayTool(writer),
     {
       name: TOOL_NAMES.ask,
       description: '向老板提出一个最多 3 个选项的问题，选项须说明后果，最多推荐一项。',
@@ -108,7 +109,7 @@ export function createSpeechTools(writer: LogWriter): unknown[] {
   ]
 }
 
-function createSayTool(writer: LogWriter): unknown {
+export function createSayTool(writer: LogWriter): unknown {
   return {
     name: TOOL_NAMES.say,
     description: '向老板说一句不超过 40 字的话，并指定表情。',

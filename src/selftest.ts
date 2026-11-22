@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { PRESET_NAME, TOOL_NAMES } from './constants.js'
+import { DISPATCH_TOOL_NAMES, PRESET_NAME, TOOL_NAMES } from './constants.js'
 import type { Agent } from './contracts.js'
 
 const PROVIDER = 'secretary-selftest'
@@ -33,7 +33,13 @@ const adapter = {
     }
     const args = JSON.stringify({ line: '骨架已就位。', mood: 'happy' })
     yield { type: 'block-start', index: 0, blockType: 'tool-call' }
-    yield { type: 'block-end', index: 0, block: { type: 'tool-call', id: 'secretary-selftest', name: TOOL_NAMES.say, arguments: args } }
+    yield { type: 'block-end', index: 0, block: { type: 'tool-call', id: 'secretary-selftest-say', name: TOOL_NAMES.say, arguments: args } }
+    const dispatchArgs = JSON.stringify({
+      dispatchKey: 'secretary-selftest-dispatch', task: '验证隔离工作区能收到任务。',
+      acceptance: '工作区日志出现带本派发 requestId 的 user/message。',
+    })
+    yield { type: 'block-start', index: 1, blockType: 'tool-call' }
+    yield { type: 'block-end', index: 1, block: { type: 'tool-call', id: 'secretary-selftest-dispatch', name: DISPATCH_TOOL_NAMES.dispatch, arguments: dispatchArgs } }
     yield { type: 'finish', reason: { kind: 'tool-calls' } }
   },
 }
@@ -57,8 +63,8 @@ export function runSelfTest(selfTest: SelfTest): void {
     const agent = selfTest.get(created.sessionId)
     if (agent === undefined) throw new Error('真实秘书会话创建后不可读取。')
     const tools = agent.ctx.tools.schemas(agent).map(tool => tool.name).sort()
-    const expectedTools = Object.values(TOOL_NAMES).sort()
-    if (JSON.stringify(tools) !== JSON.stringify(expectedTools)) throw new Error('秘书工具清单不是恰好三个说话工具。')
+    const expectedTools = [...Object.values(TOOL_NAMES), ...Object.values(DISPATCH_TOOL_NAMES)].sort()
+    if (JSON.stringify(tools) !== JSON.stringify(expectedTools)) throw new Error(`秘书工具清单不是恰好三个说话工具与派发、查状态工具：${tools.join('、')}。`)
     await selfTest.selectModel({ sessionId: created.sessionId, provider: PROVIDER, model: 'fixed' })
     agent.followup({
       id: randomUUID(), role: 'user', source: { kind: 'user' },
@@ -67,9 +73,12 @@ export function runSelfTest(selfTest: SelfTest): void {
     await agent.whenIdle()
     const events = agent.session.snapshotEvents()
     const result = events.find(event => event.type === 'tool/result')
-    if (result === undefined) throw new Error('原生 Agent Loop 未产生工具结果。')
+    const results = events.filter(event => event.type === 'tool/result')
+    if (results.length !== 2 || results.some(event => (event.data as { message?: { isError?: boolean } }).message?.isError !== false)) {
+      throw new Error('说话或派发工具未在原生 Agent Loop 成功完成。')
+    }
     await writeFile(join(selfTest.directory, 'tools-view.json'), `${JSON.stringify({ created, tools, result }, null, 2)}\n`)
-    console.info('秘书工具清单恰好为三个说话工具；固定流已走完原生 Agent Loop。')
+    console.info('秘书工具清单恰好五项且真实派发已通过；固定流已走完原生 Agent Loop。')
   }
   void report().catch(error => console.error(`秘书无模型自检失败：${String(error)}`))
 }

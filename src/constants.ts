@@ -15,7 +15,12 @@ export const KINDS = {
   secretarySay: 'secretary.say',
   secretaryAsk: 'secretary.ask',
   secretaryHandover: 'secretary.handover',
+  dispatch: 'dispatch',
 } as const
+export const DISPATCH_TOOL_NAMES = { dispatch: 'secretary_dispatch', status: 'secretary_status' } as const
+export const MAX_TASK_LENGTH = 2000
+export const MAX_ACCEPTANCE_LENGTH = 1000
+export const MAX_SUMMARY_LENGTH = 200
 export const PRESET_NAME = 'secretary'
 export const MOODS = ['neutral', 'working', 'happy', 'concerned'] as const
 export const MAX_LINE_LENGTH = 40
