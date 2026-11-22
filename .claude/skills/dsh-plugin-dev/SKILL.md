@@ -142,3 +142,11 @@ Web 复跑：`dsh --profile <p> --patch … --host 127.0.0.1 --port <n> --no-ope
 - team task `revision` 是 CAS，pre-execute 内读到的值到提交时可能过期；`agent/turn-stopping` steer 只是续跑建议，可能循环。出处：`R/docs/subsystems/agent-team.zh.md` 与扩展面地图。
 - 版本不满足的普通行会变 `disabled: true`，但 `--dump-config` 仍可能显示它；精确豁免属于 profile `compatibility.json`，键为 `package@version`，值是精确 runtime 版本列表，不跨升级继承。
 - `--dump-config-schema` 会 import 插件读取 Config，只对可信插件运行。按 id 的 patch 替换整个 `config`，不做深合并；已有行中的 `name` 是断言，不是重命名。出处：`R/packages/boot/app-boot/README.zh.md`、`R/packages/preset/agent-preset/skills/dsh-doc/references/composition-reference.md`。
+
+## 正式安装链路（spike-04 确证，rc.5）
+- 打包：`npm pack`；manifest 需 `engines.dsh`、`dsh.bundle.patch`、`exports["."]`（client 另加 `dsh.client` + `./client`）。
+- 安装：`dsh plugin --profile <p> add <绝对路径.tgz>`（`--profile` 必须在子命令参数前）。写入的是 profile 的 `package.json` 依赖 + `dsh.profile.bundles`，**不写 cordis.patch.yml**；插件行来自包内 patch。
+- 版本不符：安装退出码 1 并自动回滚；已装的不兼容包启动时 `skipping profile bundle`。
+- `--dump-config` 不是激活证据，必须真实启动看 apply() 副作用。
+- 卸载：`dsh plugin --profile <p> remove <包名>`。
+- 未解决：已安装包的 client 资产 URL 返回 404，浏览器端加载待验。
