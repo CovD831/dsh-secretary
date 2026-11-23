@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { realpathSync } from 'node:fs'
-import { isAbsolute, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { SpineAppender } from '../spine/types.ts'
 import { validateWorkspaceDef } from './registry.ts'
@@ -8,7 +8,7 @@ import type { Provisioned, ProvisionedDraft, WorkspaceDef, WorktreeObservation }
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_GIT_TIMEOUT_MS = 30_000
-const UNSAFE_REF_RE = /(?:^\/|\/\/|\.\.|[\x00-\x20\x7f~^:?*\[\\]|\/$|\.lock$|^@\{|^-$)/
+export const UNSAFE_REF_RE = /(?:^\/|\/\/|\.\.|[\x00-\x20\x7f~^:?*\[\\]|\/$|\.lock$|^@\{|^-$)/
 
 export interface GitRunOptions {
   timeoutMs?: number
@@ -27,9 +27,20 @@ interface ParsedStanza extends Omit<WorktreeObservation, 'dirty'> {
   bare?: boolean
 }
 
+function normalizePath(p: string): string {
+  try { return realpathSync(p) } catch {
+    const parent = dirname(p)
+    return parent === p ? resolve(p) : join(normalizePath(parent), basename(p))
+  }
+}
+
 function sameDir(a: string, b: string): boolean {
-  const real = (p: string): string => { try { return realpathSync(p) } catch { return resolve(p) } }
-  return real(a) === real(b)
+  return normalizePath(a) === normalizePath(b)
+}
+
+function sameOrWithin(candidate: string, parent: string): boolean {
+  const rel = relative(normalizePath(parent), normalizePath(candidate))
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
 }
 
 async function runGit(args: readonly string[], cwd: string, options: GitRunOptions = {}): Promise<{ stdout: string; stderr: string }> {
@@ -77,8 +88,13 @@ export async function provisionWorktree(input: ProvisionWorktreeInput & { append
 export async function provisionWorktree(input: ProvisionWorktreeInput): Promise<ProvisionedDraft | Provisioned>
 export async function provisionWorktree(input: ProvisionWorktreeInput): Promise<ProvisionedDraft | Provisioned> {
   const workspace = validateWorkspaceDef(input.workspace)
-  if (!isAbsolute(input.targetDir)) throw new Error(`worktree 目标路径必须为绝对路径: "${input.targetDir}"`)
-  if (!workspace.baseBranch || workspace.baseBranch.startsWith('-')) {
+  if (!isAbsolute(input.targetDir) || input.targetDir.startsWith('-')) {
+    throw new Error(`worktree 目标路径非法: "${input.targetDir}"`)
+  }
+  if (sameDir(input.targetDir, workspace.repository) || sameOrWithin(input.targetDir, join(workspace.repository, '.git'))) {
+    throw new Error(`worktree 目标路径不得与主仓库相同或位于 .git 内: "${input.targetDir}"`)
+  }
+  if (!workspace.baseBranch || workspace.baseBranch.startsWith('-') || UNSAFE_REF_RE.test(workspace.baseBranch)) {
     throw new Error(`baseBranch "${workspace.baseBranch}" 非法`)
   }
   const branch = deriveBranchName(workspace.branchPrefix, input.executionName)
@@ -87,7 +103,14 @@ export async function provisionWorktree(input: ProvisionWorktreeInput): Promise<
   const base = shaOut.trim()
   if (!base) throw new Error(`无法解析 baseBranch "${workspace.baseBranch}" 的提交哈希`)
   await runGit(['worktree', 'add', '--no-track', '-b', branch, input.targetDir, workspace.baseBranch], workspace.repository, opts)
-  await runGit(['config', `branch.${branch}.base`, base], workspace.repository, opts)
+  try {
+    await runGit(['config', `branch.${branch}.base`, base], workspace.repository, opts)
+  } catch (error) {
+    // config 登记失败必须回滚刚创建的 worktree 与分支，防止留下无谱系半成品。
+    await runGit(['worktree', 'remove', '--', input.targetDir], workspace.repository, opts).catch(() => {})
+    await runGit(['branch', '-d', '--', branch], workspace.repository, opts).catch(() => {})
+    throw error
+  }
   const draft: ProvisionedDraft = { ticketId: input.ticketId, workspace: workspace.id, branch, base }
   return input.appender ? recordProvisioned(input.appender, draft) : draft
 }
@@ -155,7 +178,7 @@ export async function isBranchMergedIntoBase(
   baseBranch: string,
   options: GitRunOptions = {},
 ): Promise<boolean | undefined> {
-  if (!branch || !baseBranch || branch.startsWith('-') || baseBranch.startsWith('-')) return undefined
+  if (!branch || !baseBranch || branch.startsWith('-') || baseBranch.startsWith('-') || UNSAFE_REF_RE.test(branch) || UNSAFE_REF_RE.test(baseBranch)) return undefined
   try {
     await runGit(['merge-base', '--is-ancestor', branch, baseBranch], repoDir, options)
     return true

@@ -102,6 +102,7 @@ describe('workspaces zero-double-write registry & isolation pairing', () => {
     expect((await reg.evaluate('ticket.dispatch', { mandateCeiling: 'push-branch', workspace: i2Ws })).verdict.kind).toBe('allow')
     expect((await reg.evaluate('ticket.dispatch', { mandateCeiling: 'merge', workspace: i2Ws })).verdict.kind).toBe('deny')
     expect((await reg.evaluate('ticket.dispatch', { mandateCeiling: 'merge', workspace: i4Ws })).verdict.kind).toBe('allow')
+    expect(checkMandateIsolation('read', { id: 'bad', isolation: 'I9' as never }).kind).toBe('deny')
   })
 })
 
@@ -131,6 +132,9 @@ describe('Orca true-branch worktree provisioning & DshExecutor integration', () 
         ticketId: 'bad-ticket', workspace: makeWs(repoDir, { baseBranch: 'nonexistent-branch' }), executionName: 'bad-base', targetDir: badTarget,
       })).rejects.toThrow()
       expect(existsSync(badTarget)).toBe(false)
+      await expect(provisionWorktree({ ticketId: 'bad-dir', workspace: makeWs(repoDir), executionName: 'bad-dir', targetDir: repoDir })).rejects.toThrow()
+      await expect(provisionWorktree({ ticketId: 'bad-git', workspace: makeWs(repoDir), executionName: 'bad-git', targetDir: join(repoDir, '.git', 'wt') })).rejects.toThrow()
+      await expect(provisionWorktree({ ticketId: 'bad-ref', workspace: makeWs(repoDir, { baseBranch: '-f' }), executionName: 'bad-ref', targetDir: badTarget })).rejects.toThrow()
     } finally { store.close() }
   })
 
@@ -276,5 +280,16 @@ describe('workspace.gc red-green safety gate & safe execution', () => {
       tree: { path: unmergedDir, branch: unmergedProv.branch, head: 'abc', dirty: false, locked: true, prunable: false },
       mergedIntoBase: true, now: '2026-11-24T00:05:00.000Z',
     })).kind).toBe('deny')
+
+    // 未注册/shadow 硬闸禁止 fail-open 删树，且拒绝 -f / -D 选项注入
+    const emptyReg = createJudgementRegistry()
+    expect(await planWorkspaceGc(emptyReg, { ticket: endedTicket('no-gate', unmergedDir), tree: obs3, mergedIntoBase: true, now: '2026-11-24T00:05:00.000Z' }))
+      .toMatchObject({ kind: 'keep', because: { kind: 'unmeasured', cause: 'no-evidence' } })
+    const shadowReg = createJudgementRegistry()
+    registerWorkspaceGcGate(shadowReg, 'shadow')
+    expect(await planWorkspaceGc(shadowReg, { ticket: endedTicket('shadow-gate', unmergedDir), tree: obs3, mergedIntoBase: true, now: '2026-11-24T00:05:00.000Z' }))
+      .toMatchObject({ kind: 'keep', because: { kind: 'unmeasured', cause: 'no-evidence' } })
+    expect(await executeWorkspaceGc(repoDir, { kind: 'remove-worktree', path: '-f' })).toMatchObject({ removed: false })
+    expect(await executeWorkspaceGc(repoDir, { kind: 'remove-worktree-and-branch', path: unmergedDir, branch: '-D' })).toMatchObject({ removed: false, branchRemoved: false })
   })
 })

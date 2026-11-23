@@ -53,7 +53,7 @@ export function isActionWithinIsolation(
   isolation: IsolationTier,
   ceilings: IsolationCeiling = ISOLATION_CEILING,
 ): boolean {
-  return ceilings[isolation].includes(action)
+  return (Object.hasOwn(ceilings, isolation) ? ceilings[isolation] : []).includes(action)
 }
 
 export function checkMandateIsolation(
@@ -62,11 +62,11 @@ export function checkMandateIsolation(
   ceilings: IsolationCeiling = ISOLATION_CEILING,
 ): Verdict {
   if (!workspace) return { kind: 'allow' }
-  const allowed = ceilings[workspace.isolation]
+  const allowed = Object.hasOwn(ceilings, workspace.isolation) ? ceilings[workspace.isolation] : []
   if (allowed.includes(mandateCeiling)) return { kind: 'allow' }
   return {
     kind: 'deny',
-    blockers: [`工作区 "${workspace.id}" 隔离档为 ${workspace.isolation}（上限 ${allowed.join(', ')}），拒绝执行 "${mandateCeiling}"；worktree 不抬高隔离档`],
+    blockers: [`工作区 "${workspace.id}" 隔离档为 ${String(workspace.isolation)}（上限 ${allowed.join(', ') || '无'}），拒绝执行 "${mandateCeiling}"；worktree 不抬高隔离档`],
   }
 }
 

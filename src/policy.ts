@@ -96,12 +96,13 @@ export const ExecutorConfigSchema = z.object({
   prepare: z.string().max(LIMITS.prepareCommand).default(''),
   blockedCommands: z.array(CommandNameSchema).default([]),
 }).strict()
+const SAFE_GIT_REF = /(?:^\/|\/\/|\.\.|[\x00-\x20\x7f~^:?*\[\\]|\.lock$|^@\{)/
 export const WorkspaceConfigSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]*$/),
   repository: z.string().trim().refine(path => isAbsolute(path), 'An absolute path'),
   source: z.string().trim().min(1).optional(),
-  baseBranch: z.string().trim().min(1),
-  branchPrefix: z.string().trim(),
+  baseBranch: z.string().trim().min(1).refine(v => !v.startsWith('-') && !v.endsWith('/') && !SAFE_GIT_REF.test(v), 'Invalid baseBranch'),
+  branchPrefix: z.string().trim().refine(v => v === '' || (!v.startsWith('-') && !SAFE_GIT_REF.test(v)), 'Invalid branchPrefix'),
   isolation: z.enum(['I1', 'I2', 'I3', 'I4', 'I5']),
   prepare: z.string().max(LIMITS.prepareCommand).optional(),
 }).strict()

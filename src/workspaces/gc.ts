@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process'
+import { isAbsolute } from 'node:path'
 import { promisify } from 'node:util'
 import type { GateDef, JudgementRegistry, Stage, Verdict } from '../judgement/types.ts'
 import type { GcPlan, GcSubject } from './types.ts'
-import type { GitRunOptions } from './worktree.ts'
+import { UNSAFE_REF_RE, type GitRunOptions } from './worktree.ts'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_GC_TIMEOUT_MS = 30_000
@@ -18,6 +19,9 @@ export interface GcExecutionResult {
 function evaluateGcSubject(subject: GcSubject): Verdict {
   if (!subject.ticket.ended) {
     return { kind: 'deny', blockers: ['Ticket 尚未结束，禁止回收 worktree'] }
+  }
+  if (subject.ticket.follows?.some(follow => follow.own && !follow.closed)) {
+    return { kind: 'deny', blockers: ['Ticket 尚有未关闭的自建跟进线程 (follows)，禁止回收'] }
   }
   if (!subject.tree) {
     return { kind: 'unmeasured', cause: 'missing-input', detail: '缺少 worktree 观测状态，保守保留', disposition: 'refuse' }
@@ -62,6 +66,14 @@ export async function planWorkspaceGc(registry: Pick<JudgementRegistry, 'evaluat
   if (evaluation.verdict.kind !== 'allow') {
     return { kind: 'keep', because: evaluation.verdict }
   }
+  const gateAllow = evaluation.evaluated > 0
+    && evaluation.ran.some(entry => entry.id === WORKSPACE_GC_GATE.id && entry.outcome === 'allow')
+  if (!gateAllow) {
+    return {
+      kind: 'keep',
+      because: { kind: 'unmeasured', cause: 'no-evidence', detail: 'workspace.gc 事前硬闸未注册或未启用 enforce', disposition: 'refuse' },
+    }
+  }
   if (!subject.tree) {
     return {
       kind: 'keep',
@@ -83,11 +95,17 @@ async function gitGcExec(args: readonly string[], cwd: string, options: GitRunOp
   })
 }
 
-/** 执行回收计划：严禁 `--force`，删分支只用 `-d` 让 git 原生未合并检查保底。 */
+/** 执行回收计划：严禁 `--force`，加 `--` 与前缀校验防选项注入，删分支只用 `-d`。 */
 export async function executeWorkspaceGc(repoDir: string, plan: GcPlan, options: GitRunOptions = {}): Promise<GcExecutionResult> {
   if (plan.kind === 'keep') return { removed: false, branchRemoved: false, plan }
+  if (!isAbsolute(plan.path) || plan.path.startsWith('-')) {
+    return { removed: false, branchRemoved: false, error: `非法 worktree 路径: "${plan.path}"`, plan }
+  }
+  if (plan.kind === 'remove-worktree-and-branch' && (!plan.branch || plan.branch.startsWith('-') || UNSAFE_REF_RE.test(plan.branch))) {
+    return { removed: false, branchRemoved: false, error: `非法分支名: "${plan.branch}"`, plan }
+  }
   try {
-    await gitGcExec(['worktree', 'remove', plan.path], repoDir, options)
+    await gitGcExec(['worktree', 'remove', '--', plan.path], repoDir, options)
   } catch (error) {
     return {
       removed: false,
@@ -98,7 +116,7 @@ export async function executeWorkspaceGc(repoDir: string, plan: GcPlan, options:
   }
   if (plan.kind === 'remove-worktree') return { removed: true, branchRemoved: false, plan }
   try {
-    await gitGcExec(['branch', '-d', plan.branch], repoDir, options)
+    await gitGcExec(['branch', '-d', '--', plan.branch], repoDir, options)
     return { removed: true, branchRemoved: true, plan }
   } catch (error) {
     return {
