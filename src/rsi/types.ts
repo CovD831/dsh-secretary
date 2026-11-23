@@ -7,6 +7,7 @@ export type SplitBucket = 'train' | 'validation' | 'holdout'
 
 export interface SessionEventPtr {
   readonly sessionId: string
+  readonly seq?: number
   readonly fromSeq?: number
   readonly toSeq?: number
   readonly commit?: string
@@ -138,6 +139,8 @@ export interface DomainEventBridgeMeta {
   readonly taint?: Taint
   readonly sessionId?: string
   readonly sessionSeq?: number
+  readonly sessionFromSeq?: number
+  readonly sessionToSeq?: number
   readonly commit?: string
   readonly evidence?: readonly EvidenceRef[]
 }

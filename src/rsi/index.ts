@@ -44,6 +44,8 @@ export {
   toEvaluationReading,
 } from './evaluator.ts'
 export {
-  compareParamCandidates,
   runHistoricalReplay,
 } from './replay.ts'
+export {
+  compareParamCandidates,
+} from './sweep.ts'

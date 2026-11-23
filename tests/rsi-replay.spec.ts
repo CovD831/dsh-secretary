@@ -15,6 +15,7 @@ import {
   confidenceOf,
   createPersistenceSessionReader,
   domainEventToSpineDraft,
+  extractSessionPtr,
   joinNativeSessionMetrics,
   runHistoricalReplay,
   splitByFamily,
@@ -90,6 +91,11 @@ describe('gate-corpus 切分与样本集守卫', () => {
     const fHold = famOf(splitA.holdout)
     for (const f of fTrain) { expect(fVal.has(f)).toBe(false); expect(fHold.has(f)).toBe(false) }
     for (const f of fVal) expect(fHold.has(f)).toBe(false)
+    const trimmed = splitByFamily([
+      { id: 'x1', family: ' adm ', input: 1, expectedOutcome: 'clean' },
+      { id: 'x2', family: 'adm', input: 2, expectedOutcome: 'defect' },
+    ], { train: 0.5, validation: 0.5, holdout: 0 }, 0)
+    expect(trimmed.train.length === 2 || trimmed.validation.length === 2).toBe(true)
   })
 
   it('assertCaseSetEquality 拒绝缺漏、多出或重复样本（防挑软柿子）', () => {
@@ -207,8 +213,9 @@ describe('trace-bridge 轻指针桥接 DSH 原生会话指标', () => {
     expect(rows[3]).toMatchObject({ metricsState: 'unmeasured', unmeasuredReason: 'session-log-unavailable', toolCalls: undefined, durationMs: undefined, tokens: undefined, failedCommandCount: undefined })
     expect(rows[4]).toMatchObject({ metricsState: 'unmeasured', unmeasuredReason: 'no-session-pointer', toolCalls: undefined, durationMs: undefined, tokens: undefined })
 
+    let flushCalls = 0
     const reader = createPersistenceSessionReader({
-      flush: async () => {},
+      flush: async () => { flushCalls += 1; if (flushCalls === 3) throw new Error('flush fail') },
       open: async (id) => {
         if (String(id) !== 'worker-t1') throw new Error('ENOENT')
         let readOnce = false
@@ -221,12 +228,14 @@ describe('trace-bridge 轻指针桥接 DSH 原生会话指标', () => {
     })
     expect(await reader('worker-t1')).toHaveLength(5)
     expect(await reader('missing-session')).toBeUndefined()
+    expect(await reader('worker-t1')).toBeUndefined()
+    expect(flushCalls).toBe(3)
 
-    const slicedEnv = {
-      seq: 99, id: 'slice-check', at: '2026-11-24T00:00:20Z', stream: 'ticket:t-slice' as const,
-      type: 'ticket.ended' as const, evidence: [{ kind: 'event' as const, ref: 'session:worker-t1#0-1' }], payload: {},
-    }
-    const [slicedRow] = await joinNativeSessionMetrics([slicedEnv], id => storeMap.get(id))
+    expect(extractSessionPtr({ evidence: [{ kind: 'event', ref: 'session:worker-t1#4' }], payload: {} })?.seq).toBe(4)
+    const oneSided = { seq: 98, id: 's-from', at: '2026-11-24T00:00:19Z', stream: 'ticket:t-s' as const, type: 'ticket.ended' as const, evidence: [{ kind: 'event' as const, ref: 'session:worker-t1#2-' }], payload: {} }
+    const slicedEnv = { seq: 99, id: 'slice-check', at: '2026-11-24T00:00:20Z', stream: 'ticket:t-slice' as const, type: 'ticket.ended' as const, evidence: [{ kind: 'event' as const, ref: 'session:worker-t1#0-1' }], payload: {} }
+    const [fromRow, slicedRow] = await joinNativeSessionMetrics([oneSided, slicedEnv], id => storeMap.get(id))
+    expect(fromRow).toMatchObject({ metricsState: 'measured', toolCalls: 1, failedCommandCount: 0, durationMs: 2000 })
     expect(slicedRow).toMatchObject({ metricsState: 'partial', toolCalls: 1, failedCommandCount: 1, durationMs: 1500, tokens: undefined })
   })
 })
@@ -244,14 +253,14 @@ describe('评估器不变量与 Pareto 参数寻优', () => {
 
     expect(compareWindows({ failures: 0, opportunities: 0 }, { failures: 1, opportunities: 5 }).verdict).toBe('unmeasured')
     expect(compareWindows({ failures: 2, opportunities: 10 }, { failures: 0, opportunities: 0 }).verdict).toBe('unmeasured')
-    expect(compareWindows({ failures: 5, opportunities: 10 }, { failures: 2, opportunities: 10, durationMs: 100 }, { minObservationMs: 1000 }).verdict).toBe('unmeasured')
+    expect(compareWindows({ failures: 5, opportunities: 10 }, { failures: 2, opportunities: 10, durationMs: Number.NaN }, { minObservationMs: 1000 }).verdict).toBe('unmeasured')
     expect(compareWindows({ failures: 5, opportunities: 10 }, { failures: 2, opportunities: 10 }).verdict).toBe('improved')
     expect(compareWindows({ failures: 2, opportunities: 10 }, { failures: 2, opportunities: 10 }).verdict).toBe('unchanged')
     expect(compareWindows({ failures: 1, opportunities: 10 }, { failures: 4, opportunities: 10 }).verdict).toBe('regressed')
 
     const baseBehavior = [
       { taskId: 'a', attempts: [{ at: 1, outcome: 'completed' as const }], escalations: 1, gateAllows: 0 },
-      { taskId: 'b', attempts: [{ at: 1, outcome: 'failed' as const }, { at: 2, outcome: 'completed' as const }], escalations: 2, gateAllows: 0 },
+      { taskId: 'b', attempts: [{ at: 1, outcome: 'failed' as const }, { outcome: 'completed' as const }], escalations: 2, gateAllows: 0 },
       { taskId: 'c', attempts: [] },
     ]
     const relaxedGateBehavior = baseBehavior.map(r => ({ ...r, gateAllows: 999 }))
@@ -303,5 +312,22 @@ describe('评估器不变量与 Pareto 参数寻优', () => {
     const impossible = await compareParamCandidates(buildGate, [candidates[0]!, candidates[4]!], split, { maxFalseBlocks: 0 })
     expect(impossible.recommended).toBeUndefined()
     expect(impossible.paretoFrontier).toHaveLength(0)
+
+    const synthCases: ReplayCase<number>[] = [
+      { id: 'c1', family: 'f1', input: 0, expectedOutcome: 'clean' },
+      ...Array.from({ length: 9 }, (_, k) => ({ id: `d${k}`, family: `fd${k % 3}`, input: k + 1, expectedOutcome: 'defect' as const })),
+    ]
+    const synthSplit = splitByFamily(synthCases, { train: 0.2, validation: 0.8, holdout: 0 }, 1)
+    const antiLazy = await compareParamCandidates(
+      (mode: 'lazy' | 'real') => (n: number) => mode === 'lazy'
+        ? (n === 0 ? { kind: 'allow' as const } : { kind: 'unmeasured' as const, cause: 'missing-input' as const, detail: 'skip' })
+        : (n >= 1 && n <= 3 ? { kind: 'deny' as const, blockers: ['caught'] as const } : { kind: 'allow' as const }),
+      ['lazy', 'real'],
+      synthSplit,
+      { baseline: 'lazy', maxFalseBlockRate: 0 },
+    )
+    expect(antiLazy.maxFalseBlocksAllowed).toBe(0)
+    expect(antiLazy.recommended?.params).toBe('real')
+    expect(antiLazy.candidates[0]!.paretoOptimal).toBe(false)
   })
 })

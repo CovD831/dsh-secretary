@@ -69,7 +69,12 @@ export function domainEventToSpineDraft(
   const projected = projectDomainEvent(event)
   const at = isoTime(event.at)
   const rawRefs: EvidenceRef[] = []
-  if (meta.sessionId) rawRefs.push({ kind: 'event', ref: `session:${meta.sessionId}${meta.sessionSeq !== undefined ? `#${meta.sessionSeq}` : ''}` })
+  if (meta.sessionId) {
+    const suffix = meta.sessionFromSeq !== undefined || meta.sessionToSeq !== undefined
+      ? `#${meta.sessionFromSeq ?? ''}-${meta.sessionToSeq ?? ''}`
+      : meta.sessionSeq !== undefined ? `#${meta.sessionSeq}` : ''
+    rawRefs.push({ kind: 'event', ref: `session:${meta.sessionId}${suffix}` })
+  }
   if (meta.commit) rawRefs.push({ kind: 'commit', ref: meta.commit })
   if (meta.evidence) rawRefs.push(...meta.evidence)
   const seen = new Set<string>()
@@ -96,6 +101,7 @@ export function domainEventToSpineDraft(
 /** 从事件脊信封的 evidence/payload 中解析原生会话与 commit 指针。 */
 export function extractSessionPtr(envelope: Pick<SpineEnvelope, 'evidence' | 'payload'>): SessionEventPtr | undefined {
   let sessionId: string | undefined
+  let seq: number | undefined
   let fromSeq: number | undefined
   let toSeq: number | undefined
   let commit: string | undefined
@@ -104,17 +110,27 @@ export function extractSessionPtr(envelope: Pick<SpineEnvelope, 'evidence' | 'pa
     if (ref.kind === 'event' && ref.ref.startsWith('session:') && !sessionId) {
       const [idPart, seqPart] = ref.ref.slice('session:'.length).split('#', 2)
       if (idPart && idPart.trim() !== '') sessionId = idPart
-      const range = seqPart ? /^(\d+)-(\d+)$/.exec(seqPart) : undefined
-      if (range) { fromSeq = Number(range[1]); toSeq = Number(range[2]) }
+      if (seqPart !== undefined) {
+        const range = /^(\d*)-(\d*)$/.exec(seqPart)
+        if (range && (range[1] !== '' || range[2] !== '')) {
+          if (range[1]) fromSeq = Number(range[1])
+          if (range[2]) toSeq = Number(range[2])
+        } else if (/^\d+$/.test(seqPart)) {
+          seq = Number(seqPart)
+        }
+      }
     }
   }
   if (isRecord(envelope.payload)) {
     if (!sessionId && typeof envelope.payload['sessionId'] === 'string' && envelope.payload['sessionId'].trim() !== '') sessionId = envelope.payload['sessionId']
     if (!commit && typeof envelope.payload['commit'] === 'string' && envelope.payload['commit'].trim() !== '') commit = envelope.payload['commit']
+    if (seq === undefined && typeof envelope.payload['seq'] === 'number' && Number.isSafeInteger(envelope.payload['seq'])) seq = envelope.payload['seq']
     if (fromSeq === undefined && typeof envelope.payload['fromSeq'] === 'number' && Number.isSafeInteger(envelope.payload['fromSeq'])) fromSeq = envelope.payload['fromSeq']
     if (toSeq === undefined && typeof envelope.payload['toSeq'] === 'number' && Number.isSafeInteger(envelope.payload['toSeq'])) toSeq = envelope.payload['toSeq']
   }
-  return sessionId ? { sessionId, ...(fromSeq !== undefined ? { fromSeq } : {}), ...(toSeq !== undefined ? { toSeq } : {}), ...(commit ? { commit } : {}) } : undefined
+  return sessionId
+    ? { sessionId, ...(seq !== undefined ? { seq } : {}), ...(fromSeq !== undefined ? { fromSeq } : {}), ...(toSeq !== undefined ? { toSeq } : {}), ...(commit ? { commit } : {}) }
+    : undefined
 }
 
 function parseShellOutcome(callId: string, tool: string, text: string, isError: boolean, meta: unknown): CommandOutcome | undefined {
@@ -191,10 +207,9 @@ export function createPersistenceSessionReader(
   persistence: Pick<SessionPersistence, 'flush' | 'open'>,
   signal?: AbortSignal,
 ): SessionEventsReader {
-  let flushed = false
   return async (sessionId: string) => {
-    if (!flushed) { await persistence.flush(); flushed = true }
     try {
+      await persistence.flush()
       await using handle = await persistence.open(SessionId(sessionId), 'read', { signal })
       const events: SessionEvent[] = []
       for (let offset = 0; ;) {
@@ -225,8 +240,9 @@ export async function joinNativeSessionMetrics(
     if (!ptr) { rows.push(unmeasuredRow(env, undefined, 'no-session-pointer')); continue }
     const raw = await load(ptr.sessionId)
     if (!raw) { rows.push(unmeasuredRow(env, ptr, 'session-log-unavailable')); continue }
-    const sliced = ptr.fromSeq !== undefined && ptr.toSeq !== undefined
-      ? raw.filter(e => Number(e.seq) >= ptr.fromSeq! && Number(e.seq) <= ptr.toSeq!) : raw
+    const sliced = ptr.fromSeq !== undefined || ptr.toSeq !== undefined
+      ? raw.filter(e => (ptr.fromSeq === undefined || Number(e.seq) >= ptr.fromSeq) && (ptr.toSeq === undefined || Number(e.seq) <= ptr.toSeq))
+      : raw
     if (sliced.length === 0) { rows.push(unmeasuredRow(env, ptr, 'empty-session-slice')); continue }
     rows.push({
       envelopeSeq: env.seq, envelopeId: env.id, eventType: env.type, stream: env.stream,

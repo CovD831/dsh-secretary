@@ -62,8 +62,11 @@ export function compareWindows(
   if (after.opportunities === 0) {
     return { verdict: 'unmeasured', beforeRate, afterRate: undefined, deltaRate: undefined, deltaFailures: undefined, reasons: ['no-after-opportunities: after.opportunities === 0'] }
   }
-  if (options.minObservationMs !== undefined && (after.durationMs === undefined || after.durationMs < options.minObservationMs)) {
-    return { verdict: 'unmeasured', beforeRate, afterRate: undefined, deltaRate: undefined, deltaFailures: undefined, reasons: [`observation-window-too-short: ${String(after.durationMs)} < ${options.minObservationMs}ms`] }
+  if (options.minObservationMs !== undefined) {
+    if (!Number.isFinite(options.minObservationMs) || options.minObservationMs < 0
+      || after.durationMs === undefined || !Number.isFinite(after.durationMs) || after.durationMs < options.minObservationMs) {
+      return { verdict: 'unmeasured', beforeRate, afterRate: undefined, deltaRate: undefined, deltaFailures: undefined, reasons: [`observation-window-too-short: ${String(after.durationMs)} < ${options.minObservationMs}ms`] }
+    }
   }
   const afterRate = after.failures / after.opportunities
   const deltaRate = beforeRate - afterRate
@@ -101,9 +104,10 @@ export function computeBehavioralMetrics(records: readonly TaskBehaviorRecord[])
   let firstTryPassed = 0
   let reworked = 0
   for (const task of executed) {
-    const ordered = task.attempts
-      .map((a, idx) => ({ a, idx }))
-      .sort((x, y) => (x.a.at ?? 0) - (y.a.at ?? 0) || x.idx - y.idx)
+    const allDated = task.attempts.every(a => typeof a.at === 'number' && Number.isFinite(a.at))
+    const ordered = allDated
+      ? task.attempts.map((a, idx) => ({ a, idx })).sort((x, y) => x.a.at! - y.a.at! || x.idx - y.idx)
+      : task.attempts.map((a, idx) => ({ a, idx }))
     if (ordered[0]!.a.outcome === 'completed') firstTryPassed += 1
     if (ordered.length > 1) reworked += 1
   }
@@ -146,12 +150,13 @@ export function splitByFamily<I>(
   for (const item of cases) {
     if (seenIds.has(item.id)) throw new Error(`样本 id "${item.id}" 重复，禁止切分`)
     seenIds.add(item.id)
-    if (typeof item.family !== 'string' || item.family.trim() === '') {
+    const family = typeof item.family === 'string' ? item.family.trim() : ''
+    if (family === '') {
       throw new Error(`样本 "${item.id}" 缺少有效 family 失效族键`)
     }
-    const list = groups.get(item.family) ?? []
+    const list = groups.get(family) ?? []
     list.push(item)
-    groups.set(item.family, list)
+    groups.set(family, list)
   }
 
   const active = bucketDefs.filter(b => ratios[b] > 0)
