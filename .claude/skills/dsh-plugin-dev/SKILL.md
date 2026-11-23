@@ -165,3 +165,7 @@ Web 复跑：`dsh --profile <p> --patch … --host 127.0.0.1 --port <n> --no-ope
 - `--from-default-profile desktop` 同样被保留名拒绝；演练要先用别的名字（如 `desktop-init`）派生，再把目录改名为 `desktop`、补 `package.json.name`。
 - `npm run build` 只做 `transpileModule`，不做类型检查；源码语法/类型错误仍能打包成功，直到 Node 导入时 `SyntaxError` 或 fiber 失败。正式安装前必须另跑 `npm run typecheck` 或对产物 `node --check`。
 - pnpm 安装/卸载会正则化 manifest：卸载后常删除空 `dependencies: {}`，并留下只有 `importers: .: {}` 的空 `pnpm-lock.yaml`；比对安装前备份时要把它当作可区分的归一化差异（空 lock 可安全删除）。
+- Zod 4 `z.toJSONSchema(schema)` 产物带有不可枚举属性 `~standard`，直接传给 `rc.5` 的 `tools.register()` 会被 `assertSupportedJsonSchema` 拒绝（报 `must be lossless JSON`）；须先做 `JSON.parse(JSON.stringify(z.toJSONSchema(schema)))`。
+- `0.2.2-rc.5` 移除了 `sessionController.inspect`（改用活会话 `agent.session.snapshotEvents()` + 冷会话 `await using h = await sessionPersistence.open(id, 'read', { signal })`）、移除了 `ConfigFormSnapshot.mode`（改看 `status` 与 `writable`），且 `installModelSelection(agentCtx)` 改为单参、禁止在 `agent/request` 篡改 `provider/model/reasoningEffort`（改调 `agent.model.select()`）。
+- Worker 调用 `agent.ctx.tools.restrict({ allow })` 时，若需启用 `rc.5` 官方团队与子代理等待能力，`allow` 白名单必须显式包含 `team_task_create`、`team_task_list`、`team_task_get`、`team_task_update` 与 `wait_agent`。
+- 异步装饰会话（如 `await skillScope`）期间存在并发 `prompt()`/`inject()` 重入窗口：必须在首个 `await` 之前同步完成自研工具注册与 `tools.restrict({ allow: [] })`，并用 `inFlight` Promise 表合并并发 `heal(agent)`，失败时 fail-closed 抛错拒投。
