@@ -53,7 +53,7 @@ export function evaluateAdaptiveDispatch(
   ctx: AdaptiveDispatchCtx,
   boundParams?: Partial<AdaptiveDispatchParams>,
 ): Verdict {
-  const p: AdaptiveDispatchParams = { ...DEFAULT_ADAPTIVE_DISPATCH_PARAMS, ...boundParams, ...ctx.params }
+  const p: AdaptiveDispatchParams = { ...DEFAULT_ADAPTIVE_DISPATCH_PARAMS, ...ctx.params, ...boundParams }
   const paramErr = validateParams(p)
   if (paramErr) return { kind: 'deny', blockers: [paramErr] }
 

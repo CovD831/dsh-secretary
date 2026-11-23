@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -92,6 +92,22 @@ describe('context slicer, pitfalls, and capsule budget', () => {
     expect(slice.relatedTests).toContain('tests/billing.spec.ts')
     expect(slice.matchedPitfalls.map(p => p.id)).toEqual(['hit-and'])
 
+    // 阻止目录/仓外符号链接逃逸与空 symbol 污染，并校验 totalBytes 精确匹配组装字节
+    const outsideDir = mkdtempSync(join(tmpdir(), 'outside-secret-'))
+    tempDirs.push(outsideDir)
+    writeFileSync(join(outsideDir, 'secret.ts'), 'export const SECRET_TOKEN = "leak";')
+    symlinkSync(join(outsideDir, 'secret.ts'), join(root, 'src', 'core', 'leak-link.ts'))
+    const guarded = await sliceWorkspaceContext({
+      workspaceRoot: root,
+      entryFiles: ['.', 'src/core/leak-link.ts', 'src/core/billing.ts'],
+      symbols: ['', '   '],
+      rgBin: 'nonexistent-rg',
+    })
+    expect(guarded.targetFiles).toEqual(['src/core/billing.ts'])
+    expect(guarded.callSites.every(c => !c.file.includes('leak-link'))).toBe(true)
+    const exactFit = assembleCapsule(guarded, guarded.metrics.totalBytes)
+    expect(exactFit.overflow).toBe(false)
+
     // 用真实可执行脚本验证 execFile(rg) 非降级路径
     const binDir = mkdtempSync(join(tmpdir(), 'mock-rg-'))
     tempDirs.push(binDir)
@@ -175,18 +191,28 @@ describe('seed deposits and parameterized gates', () => {
     }
   })
 
-  it('respects strict_untracked on verify.changed-paths and require_red_green on verify.rerun', async () => {
-    const relaxedPaths = createChangedPathsGate({ strict_untracked: false })
-    const pathsRes = await relaxedPaths.gate({
-      allowedPaths: ['src/a.ts'], sessionDiffs: ['src/a.ts'], gitDirtyPaths: ['src/a.ts'], untrackedPaths: ['tmp/scratch.txt'],
+  it('enforces boundParams priority, untrackedPaths=null blind check, shell tools, and integer exitCodes', async () => {
+    const strictPaths = createChangedPathsGate({ strict_untracked: true })
+    const weakenAttempt = await strictPaths.gate({
+      allowedPaths: ['src/a.ts'], sessionDiffs: ['src/a.ts'], gitDirtyPaths: ['src/a.ts'],
+      untrackedPaths: null, params: { strict_untracked: false },
     })
-    expect(pathsRes.kind).toBe('allow')
+    expect(weakenAttempt).toMatchObject({ kind: 'unmeasured', cause: 'no-evidence' })
 
-    const noRedGreen = createVerifyRerunGate({ require_red_green: false })
-    const rerunRes = await noRedGreen.gate({
-      taskType: 'fix', builderRole: 'builder', claimedDone: true,
-      rerun: { command: 'pnpm test', exitCode: 0, verifierRole: 'verifier' },
+    const persistentBlind = await strictPaths.gate({
+      allowedPaths: ['src/a.ts'], sessionDiffs: ['src/a.ts'], gitDirtyPaths: ['src/a.ts'],
+      toolCalls: [{ tool: 'bash_persistent', hasDiff: true }],
     })
-    expect(rerunRes.kind).toBe('allow')
+    expect(persistentBlind).toMatchObject({ kind: 'unmeasured', cause: 'shell-blind' })
+
+    const strictRerun = createVerifyRerunGate({ require_red_green: true })
+    const nanRedGreen = await strictRerun.gate({
+      taskType: 'fix', builderRole: 'builder', claimedDone: true, params: { require_red_green: false },
+      rerun: { command: 'pnpm test', exitCode: 0, verifierRole: 'verifier' },
+      redGreen: { command: 'pnpm test', exitCodeWithoutFix: Number.NaN, exitCodeWithFix: 0, verifierRole: 'verifier' },
+    })
+    expect(nanRedGreen).toMatchObject({ kind: 'unmeasured', cause: 'no-evidence' })
+    expect((await createChangedPathsGate({ strict_untracked: false }).gate({ allowedPaths: ['src/a.ts'], sessionDiffs: ['src/a.ts'], gitDirtyPaths: ['src/a.ts'], untrackedPaths: ['tmp/x.txt'] })).kind).toBe('allow')
+    expect((await createVerifyRerunGate({ require_red_green: false }).gate({ taskType: 'fix', builderRole: 'builder', claimedDone: true, rerun: { command: 'pnpm test', exitCode: 0, verifierRole: 'verifier' } })).kind).toBe('allow')
   })
 })

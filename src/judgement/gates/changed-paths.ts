@@ -33,7 +33,7 @@ declare module '../types.ts' {
   }
 }
 
-const UNMEASURED_TOOL_RE = /^(?:bash|sh|pwsh|powershell|zsh|str_replace_editor)$/i
+const UNMEASURED_TOOL_RE = /^(?:bash|bash_persistent|sh|pwsh|pwsh_persistent|powershell|zsh|shell|cmd|str_replace_editor)$/i
 
 function normalizePath(raw: string): { ok: true; path: string; isDir: boolean } | { ok: false; reason: string } {
   const trimmed = raw.trim()
@@ -66,6 +66,10 @@ function matchesAllowed(observedPath: string, allowed: readonly { path: string; 
       if (new RegExp(escapeGlob(rule.path)).test(observedPath)) return true
       continue
     }
+    if (rule.isDir) {
+      if (observedPath.startsWith(`${rule.path}/`)) return true
+      continue
+    }
     if (observedPath === rule.path) return true
     if (observedPath.startsWith(`${rule.path}/`)) return true
   }
@@ -80,7 +84,7 @@ function detectBlindTools(ctx: ChangedPathsCtx): string[] {
     if (t.trim() !== '') hits.push(t.trim())
   }
   for (const call of ctx.toolCalls ?? []) {
-    if (UNMEASURED_TOOL_RE.test(call.tool.trim()) && call.hasDiff !== true) {
+    if (UNMEASURED_TOOL_RE.test(call.tool.trim())) {
       hits.push(call.tool.trim())
     }
   }
@@ -92,13 +96,13 @@ export function evaluateChangedPaths(
   ctx: ChangedPathsCtx,
   boundParams?: Partial<ChangedPathsParams>,
 ): Verdict {
-  const p: ChangedPathsParams = { ...DEFAULT_CHANGED_PATHS_PARAMS, ...boundParams, ...ctx.params }
+  const p: ChangedPathsParams = { ...DEFAULT_CHANGED_PATHS_PARAMS, ...ctx.params, ...boundParams }
   const blind = detectBlindTools(ctx)
   if (blind.length > 0) {
     return {
       kind: 'unmeasured',
       cause: 'shell-blind',
-      detail: `会话存在无 diff 记录的潜在写工具（${blind.join(', ')}），无法确定性归因变更路径`,
+      detail: `会话存在无完整 diff 保障的潜在写工具（${blind.join(', ')}），无法确定性归因变更路径`,
     }
   }
 
@@ -107,6 +111,9 @@ export function evaluateChangedPaths(
   }
   if (p.require_both_surfaces && (ctx.sessionDiffs === null || ctx.gitDirtyPaths === null)) {
     return { kind: 'unmeasured', cause: 'no-evidence', detail: 'require_both_surfaces=true 但缺失一面观测数据' }
+  }
+  if (p.strict_untracked && ctx.untrackedPaths === null) {
+    return { kind: 'unmeasured', cause: 'no-evidence', detail: 'strict_untracked=true 但 untrackedPaths 不可观测（null）' }
   }
 
   const normalizedAllowed: { path: string; isDir: boolean }[] = []

@@ -1,9 +1,5 @@
-export {
-  assembleCapsule,
-  extractExportedSignatures,
-  matchPitfalls,
-  sliceWorkspaceContext,
-} from './slicer.ts'
+export { assembleCapsule, matchPitfalls } from './capsule.ts'
+export { extractExportedSignatures, sliceWorkspaceContext } from './slicer.ts'
 export type {
   CallSite,
   CapsuleSection,

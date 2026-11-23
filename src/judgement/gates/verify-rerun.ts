@@ -45,7 +45,7 @@ export function evaluateVerifyRerun(
   ctx: VerifyRerunCtx,
   boundParams?: Partial<VerifyRerunParams>,
 ): Verdict {
-  const p: VerifyRerunParams = { ...DEFAULT_VERIFY_RERUN_PARAMS, ...boundParams, ...ctx.params }
+  const p: VerifyRerunParams = { ...DEFAULT_VERIFY_RERUN_PARAMS, ...ctx.params, ...boundParams }
   if (!ctx.claimedDone) {
     return { kind: 'allow', produced: { status: 'not-claiming-done' } }
   }
@@ -57,6 +57,9 @@ export function evaluateVerifyRerun(
   const rerun = ctx.rerun
   if (!rerun) {
     return { kind: 'unmeasured', cause: 'no-evidence', detail: '缺少独立重跑验证记录 rerun' }
+  }
+  if (typeof rerun.command !== 'string' || rerun.command.trim() === '') {
+    return { kind: 'unmeasured', cause: 'no-evidence', detail: '重跑记录缺少有效 command' }
   }
   if (rerun.timedOut || rerun.aborted) {
     return { kind: 'unmeasured', cause: 'timeout', detail: `验证命令 "${rerun.command}" 超时或被中止` }
@@ -80,6 +83,9 @@ export function evaluateVerifyRerun(
     if (!rg) {
       return { kind: 'unmeasured', cause: 'no-evidence', detail: 'fix 类任务须附带撤修复红灯记录 redGreen' }
     }
+    if (typeof rg.command !== 'string' || rg.command.trim() === '') {
+      return { kind: 'unmeasured', cause: 'no-evidence', detail: 'redGreen 记录缺少有效 command' }
+    }
     const rgVerifier = rg.verifierRole.trim()
     if (rgVerifier === '') {
       return { kind: 'unmeasured', cause: 'no-evidence', detail: 'redGreen 记录缺少 verifierRole' }
@@ -87,8 +93,8 @@ export function evaluateVerifyRerun(
     if (p.require_independent_verifier && rgVerifier === builder) {
       return { kind: 'deny', blockers: [`禁止自报自验：红绿验证方 "${rgVerifier}" 与实现方 "${builder}" 角色相同`] }
     }
-    if (typeof rg.exitCodeWithoutFix !== 'number' || typeof rg.exitCodeWithFix !== 'number') {
-      return { kind: 'unmeasured', cause: 'no-evidence', detail: 'redGreen 记录缺少撤修复/含修复退出码' }
+    if (!Number.isInteger(rg.exitCodeWithoutFix) || !Number.isInteger(rg.exitCodeWithFix)) {
+      return { kind: 'unmeasured', cause: 'no-evidence', detail: 'redGreen 记录缺少有效的整数撤修复/含修复退出码' }
     }
     if (rg.exitCodeWithoutFix === 0) {
       return { kind: 'deny', blockers: [`fix 任务红绿核证失败：撤去修复后 "${rg.command}" 仍返回 0，未证明覆盖缺陷`] }

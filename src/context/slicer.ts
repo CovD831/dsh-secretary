@@ -1,46 +1,31 @@
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { readdir, readFile, realpath } from 'node:fs/promises'
+import { readdir, readFile, realpath, stat } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import type {
-  CallSite, CapsuleSection, ContextCapsule, DroppedCapsuleItem,
-  ImportedSignatureBlock, MatchedPitfall, PitfallNote, SliceRequest, SliceResult,
-} from './types.ts'
+import { assembleCapsule, buildCapsuleSections, matchPitfalls, measureSectionsBytes } from './capsule.ts'
+import type { CallSite, ImportedSignatureBlock, SliceRequest, SliceResult } from './types.ts'
+
+export { assembleCapsule, matchPitfalls }
 
 const execFileAsync = promisify(execFile)
 const IGNORED_DIRS = new Set(['.git', 'node_modules', 'dist', 'lib', 'coverage', '.next'])
+const RG_IGNORE_GLOBS = [...IGNORED_DIRS].flatMap(d => ['--glob', `!${d}`])
 const TEST_FILE_RE = /(?:^|\/)tests\/.*\.(?:spec|test)\.[^/]+$|\.(?:spec|test)\.[^/]+$/
 const RESOLVE_EXTS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs']
 
 function toPosix(p: string): string { return p.replace(/\\/g, '/') }
-function escapeRe(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
 
-function matchesKey(haystack: string, haystackLower: string, key: string, wordBoundary: boolean): boolean {
-  const k = key.trim()
-  if (k === '') return false
-  if (!wordBoundary) return haystackLower.includes(k.toLowerCase())
-  const left = /^[a-zA-Z0-9_]/.test(k) ? '(?<![a-zA-Z0-9_])' : ''
-  const right = /[a-zA-Z0-9_]$/.test(k) ? '(?![a-zA-Z0-9_])' : ''
-  return new RegExp(`${left}${escapeRe(k)}${right}`, 'i').test(haystack)
-}
-
-/** SillyTavern 式确定性触发匹配：支持主 triggerKeys + AND 全中 + NOT 排除。 */
-export function matchPitfalls(haystack: string, notes: readonly PitfallNote[]): MatchedPitfall[] {
-  const haystackLower = haystack.toLowerCase()
-  const matched: MatchedPitfall[] = []
-  const seen = new Set<string>()
-  for (const note of notes) {
-    if (seen.has(note.id)) continue
-    const wb = note.wordBoundary === true
-    const primary = note.triggerKeys.filter(k => matchesKey(haystack, haystackLower, k, wb))
-    if (primary.length === 0) continue
-    if (note.andKeys && note.andKeys.some(k => !matchesKey(haystack, haystackLower, k, wb))) continue
-    if (note.notKeys && note.notKeys.some(k => matchesKey(haystack, haystackLower, k, wb))) continue
-    seen.add(note.id)
-    matched.push({ ...note, matchedKeys: primary })
+async function resolveSafeRepoFile(rootReal: string, candidateAbs: string): Promise<string | undefined> {
+  try {
+    const info = await stat(candidateAbs)
+    if (!info.isFile()) return undefined
+    const real = await realpath(candidateAbs)
+    const rel = toPosix(relative(rootReal, real))
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return undefined
+    return rel
+  } catch {
+    return undefined
   }
-  return matched
 }
 
 function collectBalancedBlock(lines: readonly string[], startIdx: number): { text: string; nextIdx: number } {
@@ -64,8 +49,7 @@ function collectBalancedBlock(lines: readonly string[], startIdx: number): { tex
 function stripImplBody(lines: readonly string[], startIdx: number): { sig: string; nextIdx: number } {
   const head: string[] = []
   let parenDepth = 0
-  let i = startIdx
-  for (; i < lines.length; i += 1) {
+  for (let i = startIdx; i < lines.length; i += 1) {
     const line = lines[i]!
     const bodyIdx = (() => {
       for (let c = 0; c < line.length; c += 1) {
@@ -120,16 +104,18 @@ export function extractExportedSignatures(content: string): string[] {
   return sigs
 }
 
-function resolveLocalImport(fromFile: string, specifier: string, rootReal: string): string | undefined {
+async function resolveLocalImport(fromFile: string, specifier: string, rootReal: string): Promise<string | undefined> {
   if (!specifier.startsWith('.')) return undefined
   const baseDir = dirname(resolve(rootReal, fromFile))
   const raw = resolve(baseDir, specifier)
   const stem = raw.replace(/\.(?:js|mjs|cjs|jsx)$/, '')
-  const candidates = [raw, ...RESOLVE_EXTS.map(e => `${raw}${e}`), ...RESOLVE_EXTS.map(e => `${stem}${e}`), ...RESOLVE_EXTS.map(e => join(raw, `index${e}`))]
+  const candidates = [
+    raw, ...RESOLVE_EXTS.map(e => `${raw}${e}`),
+    ...RESOLVE_EXTS.map(e => `${stem}${e}`), ...RESOLVE_EXTS.map(e => join(raw, `index${e}`)),
+  ]
   for (const cand of candidates) {
-    const rel = relative(rootReal, cand)
-    if (rel.startsWith('..') || isAbsolute(rel)) continue
-    if (existsSync(cand)) return toPosix(rel)
+    const safeRel = await resolveSafeRepoFile(rootReal, cand)
+    if (safeRel) return safeRel
   }
   return undefined
 }
@@ -188,13 +174,15 @@ async function searchWorkspace(rootReal: string, needles: readonly string[], ent
   const timeout = req.timeoutMs ?? 5000
   const maxBuffer = req.maxRgOutputBytes ?? 2 * 1024 * 1024
   try {
-    const args = ['--files', '--glob', '!node_modules', '--glob', '!.git', '--glob', '!dist', '--glob', '!lib']
-    const filesRes = await execFileAsync(rgBin, args, { cwd: rootReal, timeout, maxBuffer })
+    const filesRes = await execFileAsync(rgBin, ['--files', ...RG_IGNORE_GLOBS, '--'], { cwd: rootReal, timeout, maxBuffer })
     const allFiles = filesRes.stdout.split(/\r?\n/).filter(Boolean).map(toPosix)
     const tests = new Set<string>(allFiles.filter(f => TEST_FILE_RE.test(f) && entryStems.some(s => basename(f).toLowerCase().includes(s.toLowerCase()))))
     const hits: CallSite[] = []
     if (needles.length > 0) {
-      const searchArgs = ['--line-number', '--no-heading', '--color', 'never', '-F', '--glob', '!node_modules', '--glob', '!.git', '--glob', '!dist', '--glob', '!lib', ...needles.flatMap(n => ['-e', n]), '.']
+      const searchArgs = [
+        '--line-number', '--no-heading', '--color', 'never', '-F',
+        ...RG_IGNORE_GLOBS, ...needles.flatMap(n => ['-e', n]), '--', '.',
+      ]
       const res = await execFileAsync(rgBin, searchArgs, { cwd: rootReal, timeout, maxBuffer }).catch((err: unknown) => {
         const code = (err as { code?: unknown } | null)?.code
         if (code === 1) return { stdout: '' }
@@ -222,32 +210,32 @@ export async function sliceWorkspaceContext(request: SliceRequest): Promise<Slic
   const started = Date.now()
   const rootReal = await realpath(resolve(request.workspaceRoot))
   const targetFiles: string[] = []
+  const seenTargets = new Set<string>()
   const targetContents: { file: string; content: string }[] = []
   const importedMap = new Map<string, ImportedSignatureBlock>()
-  const derivedSymbols = new Set<string>(request.symbols ?? [])
+  const derivedSymbols = new Set<string>((request.symbols ?? []).map(s => s.trim()).filter(Boolean))
   const entryStems: string[] = []
 
   for (const rawEntry of request.entryFiles ?? []) {
-    const full = resolve(rootReal, rawEntry)
-    const rel = toPosix(relative(rootReal, full))
-    if (rel.startsWith('..') || isAbsolute(rel) || !existsSync(full)) continue
+    const rel = await resolveSafeRepoFile(rootReal, resolve(rootReal, rawEntry))
+    if (!rel || seenTargets.has(rel)) continue
+    seenTargets.add(rel)
     targetFiles.push(rel)
     entryStems.push(basename(rel, extname(rel)))
-    const content = await readFile(full, 'utf8')
+    const content = await readFile(join(rootReal, rel), 'utf8')
     targetContents.push({ file: rel, content })
     for (const s of extractOwnSymbols(content)) derivedSymbols.add(s)
     for (const spec of parseRelativeImports(content)) {
-      const resolvedMod = resolveLocalImport(rel, spec, rootReal)
+      const resolvedMod = await resolveLocalImport(rel, spec, rootReal)
       if (!resolvedMod || importedMap.has(resolvedMod)) continue
       const sigs = extractExportedSignatures(await readFile(join(rootReal, resolvedMod), 'utf8'))
       importedMap.set(resolvedMod, { sourceFile: resolvedMod, importedFrom: spec, signatures: sigs })
     }
   }
 
-  const needles = [...new Set([...derivedSymbols, ...entryStems.filter(s => s.length >= 2)])]
+  const needles = [...new Set([...derivedSymbols, ...entryStems.filter(s => s.length >= 2)])].filter(s => s !== '')
   const found = await searchWorkspace(rootReal, needles, entryStems, request)
-  const entrySet = new Set(targetFiles)
-  const callSites = found.hits.filter(h => !entrySet.has(h.file))
+  const callSites = found.hits.filter(h => !seenTargets.has(h.file))
   const importedSignatures = [...importedMap.values()]
   const importedTypesCount = importedSignatures.reduce((acc, b) => acc + b.signatures.length, 0)
   const haystack = [request.queryText ?? '', ...targetFiles, ...targetContents.map(t => t.content), ...importedSignatures.flatMap(b => [b.sourceFile, ...b.signatures]), ...callSites.map(c => `${c.file}:${c.line}: ${c.text}`), ...found.tests].join('\n')
@@ -257,41 +245,6 @@ export async function sliceWorkspaceContext(request: SliceRequest): Promise<Slic
     usedFallback: found.usedFallback, ...(found.usedFallback ? { fallbackReason: found.fallbackReason } : {}),
     metrics: { targetFiles: targetFiles.length, importedTypesCount, callSiteCount: callSites.length, relatedTestsCount: found.tests.length, totalBytes: 0, durationMs: Date.now() - started },
   }
-  const fullBytes = buildSections(provisional).reduce((sum, s) => sum + s.bytes, 0)
+  const fullBytes = measureSectionsBytes(buildCapsuleSections(provisional))
   return { ...provisional, metrics: { ...provisional.metrics, totalBytes: fullBytes, durationMs: Date.now() - started } }
-}
-
-function buildSections(slice: SliceResult): CapsuleSection[] {
-  const sections: CapsuleSection[] = []
-  const push = (kind: CapsuleSection['kind'], label: string, text: string) => {
-    sections.push({ kind, label, text, bytes: Buffer.byteLength(text, 'utf8') })
-  }
-  for (const p of slice.matchedPitfalls) push('pitfall', `pitfall:${p.id}`, `## 隐性坑 [${p.id}] (命中: ${p.matchedKeys.join(', ')})\n${p.content}`)
-  for (const imp of slice.importedSignatures) push('import-signature', `import:${imp.sourceFile}`, `## 1-Hop 导出签名: ${imp.sourceFile}\n${imp.signatures.join('\n')}`)
-  for (const tgt of slice.targetContents) push('target', `target:${tgt.file}`, `## 目标文件: ${tgt.file}\n${tgt.content}`)
-  if (slice.callSites.length > 0) push('call-site', 'call-sites', `## 全仓调用点 (${slice.callSites.length})\n${slice.callSites.map(c => `${c.file}:${c.line}: ${c.text}`).join('\n')}`)
-  if (slice.relatedTests.length > 0) push('related-test', 'related-tests', `## 关联测试 (${slice.relatedTests.length})\n${slice.relatedTests.join('\n')}`)
-  return sections
-}
-
-/** 按预算组装上下文胶囊；超预算绝不静默丢弃，返回显式 overflow 与 droppedItems 账单。 */
-export function assembleCapsule(slice: SliceResult, budgetBytes: number): ContextCapsule {
-  const all = buildSections(slice)
-  const kept: CapsuleSection[] = []
-  const dropped: DroppedCapsuleItem[] = []
-  let usedBytes = 0
-  for (const sec of all) {
-    const sep = kept.length > 0 ? 2 : 0
-    if (usedBytes + sep + sec.bytes <= budgetBytes) {
-      kept.push(sec)
-      usedBytes += sep + sec.bytes
-    } else {
-      dropped.push({ kind: sec.kind, label: sec.label, bytes: sec.bytes, reason: 'budget-exceeded' })
-    }
-  }
-  const text = kept.map(s => s.text).join('\n\n')
-  return {
-    overflow: dropped.length > 0, budgetBytes, usedBytes: Buffer.byteLength(text, 'utf8'),
-    text, sections: kept, matchedPitfalls: slice.matchedPitfalls, droppedItems: dropped, metrics: slice.metrics,
-  }
 }
