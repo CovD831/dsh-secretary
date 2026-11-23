@@ -5,9 +5,9 @@ export const REDACTED = '[REDACTED]'
 
 export interface RedactResult<T> { value: T; redacted: string[] }
 
-const SENSITIVE_WORDS = new Set(['secret', 'password', 'passwd', 'authorization', 'apikey', 'credential', 'credentials'])
-const FORCE_SUBTREE_WORDS = new Set(['secret', 'secrets', 'password', 'passwd', 'authorization', 'apikey', 'credential', 'credentials'])
-const ASSIGN_KEY = String.raw`(?:[a-z0-9_]*_)?(?:secret|token|password|passwd|api_?key|authorization)\b`
+const SENSITIVE_WORDS = new Set(['secret', 'password', 'passwd', 'authorization', 'apikey', 'credential', 'credentials', 'cookie'])
+const FORCE_SUBTREE_WORDS = new Set(['secret', 'secrets', 'password', 'passwd', 'authorization', 'apikey', 'credential', 'credentials', 'cookie'])
+const ASSIGN_KEY = String.raw`(?:[a-z0-9_-]*(?:secret(?:_?(?:key|value))?|token(?:_?value)?|password|passwd|cookie|authorization|api[-_]?key))\b`
 
 const VALUE_RULES: readonly [RegExp, string][] = [
   [/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, REDACTED],
@@ -23,11 +23,11 @@ const VALUE_RULES: readonly [RegExp, string][] = [
   [/(https:\/\/open\.(?:feishu\.cn|larksuite\.com)\/open-apis\/bot\/v2\/hook\/)(?!\[REDACTED\])[^\s"'`<>]+/gi, `$1${REDACTED}`],
   [/\b(https?:\/\/)(?!\[REDACTED\])([^\s/:@]+):([^\s/@]+)@/gi, `$1${REDACTED}@`],
   [/\b(Bearer\s+)(?!\[REDACTED\])([A-Za-z0-9._~+/=-]{8,})/gi, `$1${REDACTED}`],
-  [new RegExp(`(["']?)\\b(${ASSIGN_KEY})\\1(\\s*=\\s*)(?!["']?\\[REDACTED\\])(?:"[^"\\n]+"|'[^'\\n]+'|[^\\s,;'"\`&]+)`, 'gi'), `$1$2$1$3${REDACTED}`],
+  [new RegExp(`(["']?)\\b(${ASSIGN_KEY})\\1(\\s*=\\s*)(?!["']?\\[REDACTED\\])(?:"[^"\\n]+"|'[^'\\n]+'|[^\\s,;'"\`&}\\]]+)`, 'gi'), `$1$2$1$3${REDACTED}`],
 ]
 
 const COLON_SECRET_RE = new RegExp(
-  `(["']?)\\b(${ASSIGN_KEY})\\1(\\s*:\\s*)(?!["']?\\[REDACTED\\])("[^"\\n]+"|'[^'\\n]+'|Basic\\s+[A-Za-z0-9+/=]{4,}|[^\\s,;'"\`]{6,})`,
+  `(["']?)\\b(${ASSIGN_KEY})\\1(\\s*:\\s*)(?!["']?\\[REDACTED\\])("[^"\\n]+"|'[^'\\n]+'|Basic\\s+[A-Za-z0-9+/=]{4,}|[^\\s,;'"\`}\\]]{3,})`,
   'gi',
 )
 

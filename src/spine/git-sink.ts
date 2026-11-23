@@ -54,7 +54,7 @@ async function readShardTail(filePath: string): Promise<{ tail?: SourceRef; torn
     let window = Math.min(size, 64 * 1024)
     for (;;) {
       const offset = size - window
-      const buf = Buffer.allocUnsafe(window)
+      const buf = Buffer.alloc(window)
       let filled = 0
       while (filled < window) {
         const { bytesRead } = await fh.read(buf, filled, window - filled, offset + filled)
@@ -64,22 +64,21 @@ async function readShardTail(filePath: string): Promise<{ tail?: SourceRef; torn
       const slice = filled === window ? buf : buf.subarray(0, filled)
       const torn = slice.length > 0 && slice[slice.length - 1] !== 0x0a
       const validEnd = torn ? slice.lastIndexOf(0x0a) + 1 : slice.length
-      if (validEnd > 0) {
-        let lineEnd = validEnd - 1
-        while (lineEnd > 0 && (slice[lineEnd - 1] === 0x0a || slice[lineEnd - 1] === 0x0d)) lineEnd--
-        if (lineEnd > 0) {
-          const prevNl = slice.lastIndexOf(0x0a, lineEnd - 1)
-          if (prevNl >= 0 || offset === 0) {
-            const line = slice.subarray(prevNl + 1, lineEnd).toString('utf8').trim()
-            if (line) {
-              const parsed = JSON.parse(line) as { seq?: unknown; id?: unknown }
-              if (typeof parsed.seq !== 'number' || typeof parsed.id !== 'string') {
-                throw new Error(`分片尾行缺少有效的 seq/id: ${filePath}`)
-              }
-              return { tail: { seq: parsed.seq, id: parsed.id }, torn }
-            }
+      let end = validEnd
+      while (end > 0) {
+        while (end > 0 && (slice[end - 1] === 0x0a || slice[end - 1] === 0x0d)) end--
+        if (end === 0) break
+        const prevNl = slice.lastIndexOf(0x0a, end - 1)
+        if (prevNl < 0 && offset > 0) break
+        const line = slice.subarray(prevNl + 1, end).toString('utf8').trim()
+        if (line) {
+          const parsed = JSON.parse(line) as { seq?: unknown; id?: unknown }
+          if (typeof parsed.seq !== 'number' || typeof parsed.id !== 'string') {
+            throw new Error(`分片尾行缺少有效的 seq/id: ${filePath}`)
           }
+          return { tail: { seq: parsed.seq, id: parsed.id }, torn }
         }
+        end = prevNl >= 0 ? prevNl : 0
       }
       if (offset === 0) return { torn }
       window = Math.min(size, window * 2)
@@ -96,6 +95,7 @@ export interface GitShardSinkOptions {
   userEmail?: string
 }
 
+/** 基于本地记忆 Git 仓管理 m0/YYYY-MM-DD.jsonl 分片的持久化接收器。 */
 export class GitShardSink implements ShardSink {
   readonly dir: string
   readonly lock: GitRepoLock
@@ -134,7 +134,7 @@ export class GitShardSink implements ShardSink {
 
   private async hasLocalConfig(key: string): Promise<boolean> {
     try {
-      const value = (await this.git(['config', '--local', '--get', key])).trim()
+      const value = (await this.git(['config', '--local', '--get', '--', key])).trim()
       return value.length > 0
     } catch {
       return false
@@ -145,85 +145,96 @@ export class GitShardSink implements ShardSink {
     if (this.initialized) return
     await mkdir(join(this.dir, 'm0'), { recursive: true })
     if (!existsSync(join(this.dir, '.git'))) await this.git(['init'])
-    if (!await this.hasLocalConfig('user.name')) await this.git(['config', '--local', 'user.name', this.userName])
-    if (!await this.hasLocalConfig('user.email')) await this.git(['config', '--local', 'user.email', this.userEmail])
+    if (!await this.hasLocalConfig('user.name')) await this.git(['config', '--local', '--', 'user.name', this.userName])
+    if (!await this.hasLocalConfig('user.email')) await this.git(['config', '--local', '--', 'user.email', this.userEmail])
     this.initialized = true
   }
 
-  async latest(): Promise<{ shard: string; tail?: SourceRef; torn: boolean } | undefined> {
-    const shards = await this.listShards()
-    if (!shards.length) return undefined
-    const newest = shards[shards.length - 1]!
-    const current = await readShardTail(this.resolveShard(newest))
-    if (current.tail) return { shard: newest, tail: current.tail, torn: current.torn }
-    for (let i = shards.length - 2; i >= 0; i--) {
-      const prev = await readShardTail(this.resolveShard(shards[i]!))
-      if (prev.tail) return { shard: newest, tail: prev.tail, torn: current.torn }
-    }
-    return { shard: newest, torn: current.torn }
-  }
-
-  async repairTorn(shard: string): Promise<number> {
-    const filePath = this.resolveShard(shard)
-    let fh
-    try { fh = await open(filePath, 'r+') } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0
-      throw error
-    }
-    try {
-      const { size } = await fh.stat()
-      if (size === 0) return 0
-      const tailByte = Buffer.allocUnsafe(1)
-      await fh.read(tailByte, 0, 1, size - 1)
-      if (tailByte[0] === 0x0a) return 0
-      const chunkSize = 64 * 1024
-      const buf = Buffer.allocUnsafe(Math.min(size, chunkSize))
-      let cursor = size
-      let targetSize = 0
-      while (cursor > 0) {
-        const len = Math.min(cursor, chunkSize)
-        const pos = cursor - len
-        await fh.read(buf, 0, len, pos)
-        const idx = buf.subarray(0, len).lastIndexOf(0x0a)
-        if (idx >= 0) { targetSize = pos + idx + 1; break }
-        cursor = pos
+  latest(): Promise<{ shard: string; tail?: SourceRef; torn: boolean } | undefined> {
+    return this.lock.run(async () => {
+      const shards = await this.listShards()
+      if (!shards.length) return undefined
+      const newest = shards[shards.length - 1]!
+      const current = await readShardTail(this.resolveShard(newest))
+      if (current.tail) return { shard: newest, tail: current.tail, torn: current.torn }
+      for (let i = shards.length - 2; i >= 0; i--) {
+        const prev = await readShardTail(this.resolveShard(shards[i]!))
+        if (prev.tail) return { shard: newest, tail: prev.tail, torn: current.torn }
       }
-      const truncated = size - targetSize
-      await fh.truncate(targetSize)
-      await fh.sync()
-      return truncated
-    } finally {
-      await fh.close()
-    }
-  }
-
-  async append(shard: string, lines: readonly string[]): Promise<void> {
-    if (!lines.length) return
-    const filePath = this.resolveShard(shard)
-    await mkdir(dirname(filePath), { recursive: true })
-    const normalized = lines.map(line => {
-      const clean = line.endsWith('\n') ? line.slice(0, -1) : line
-      if (clean.includes('\n') || clean.includes('\r')) throw new Error('JSONL 行不允许包含换行符')
-      return clean
+      return { shard: newest, torn: current.torn }
     })
-    const payload = Buffer.from(`${normalized.join('\n')}\n`, 'utf8')
-    const fh = await open(filePath, 'a+')
-    try {
-      const { size } = await fh.stat()
-      if (size > 0) {
-        const last = Buffer.allocUnsafe(1)
-        await fh.read(last, 0, 1, size - 1)
-        if (last[0] !== 0x0a) throw new Error(`拒绝向未修复的半行分片追加: ${shard}`)
+  }
+
+  repairTorn(shard: string): Promise<number> {
+    return this.lock.run(async () => {
+      const filePath = this.resolveShard(shard)
+      let fh
+      try { fh = await open(filePath, 'r+') } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0
+        throw error
       }
-      let written = 0
-      while (written < payload.length) {
-        const { bytesWritten } = await fh.write(payload, written, payload.length - written, null)
-        written += bytesWritten
+      try {
+        const { size } = await fh.stat()
+        if (size === 0) return 0
+        const tailByte = Buffer.alloc(1)
+        await fh.read(tailByte, 0, 1, size - 1)
+        if (tailByte[0] === 0x0a) return 0
+        const chunkSize = 64 * 1024
+        const buf = Buffer.alloc(Math.min(size, chunkSize))
+        let cursor = size
+        let targetSize = 0
+        while (cursor > 0) {
+          const len = Math.min(cursor, chunkSize)
+          const pos = cursor - len
+          let filled = 0
+          while (filled < len) {
+            const { bytesRead } = await fh.read(buf, filled, len - filled, pos + filled)
+            if (bytesRead === 0) break
+            filled += bytesRead
+          }
+          const idx = buf.subarray(0, filled).lastIndexOf(0x0a)
+          if (idx >= 0) { targetSize = pos + idx + 1; break }
+          cursor = pos
+        }
+        const truncated = size - targetSize
+        await fh.truncate(targetSize)
+        await fh.sync()
+        return truncated
+      } finally {
+        await fh.close()
       }
-      await fh.sync()
-    } finally {
-      await fh.close()
-    }
+    })
+  }
+
+  append(shard: string, lines: readonly string[]): Promise<void> {
+    return this.lock.run(async () => {
+      if (!lines.length) return
+      const filePath = this.resolveShard(shard)
+      await mkdir(dirname(filePath), { recursive: true })
+      const normalized = lines.map(line => {
+        const clean = line.endsWith('\n') ? line.slice(0, -1) : line
+        if (clean.includes('\n') || clean.includes('\r')) throw new Error('JSONL 行不允许包含换行符')
+        return clean
+      })
+      const payload = Buffer.from(`${normalized.join('\n')}\n`, 'utf8')
+      const fh = await open(filePath, 'a+')
+      try {
+        const { size } = await fh.stat()
+        if (size > 0) {
+          const last = Buffer.alloc(1)
+          await fh.read(last, 0, 1, size - 1)
+          if (last[0] !== 0x0a) throw new Error(`拒绝向未修复的半行分片追加: ${shard}`)
+        }
+        let written = 0
+        while (written < payload.length) {
+          const { bytesWritten } = await fh.write(payload, written, payload.length - written, null)
+          written += bytesWritten
+        }
+        await fh.sync()
+      } finally {
+        await fh.close()
+      }
+    })
   }
 
   async commit(message: string): Promise<string | undefined> {
