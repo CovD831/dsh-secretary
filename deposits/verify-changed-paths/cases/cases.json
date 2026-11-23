@@ -1,0 +1,67 @@
+[
+  {
+    "name": "green-writes-within-allowed-paths",
+    "expected": "allow",
+    "ctx": {
+      "allowedPaths": ["src/context/slicer.ts", "tests/"],
+      "sessionDiffs": ["src/context/slicer.ts"],
+      "gitDirtyPaths": ["src/context/slicer.ts", "tests/context-deposits.spec.ts"]
+    }
+  },
+  {
+    "name": "red-out-of-bounds-write",
+    "expected": "deny",
+    "ctx": {
+      "allowedPaths": ["src/context/slicer.ts"],
+      "sessionDiffs": ["src/context/slicer.ts"],
+      "gitDirtyPaths": ["src/context/slicer.ts", "docs/007-architecture.md"]
+    }
+  },
+  {
+    "name": "red-strict-untracked-outside-scope",
+    "expected": "deny",
+    "ctx": {
+      "allowedPaths": ["src/context/"],
+      "sessionDiffs": ["src/context/slicer.ts"],
+      "gitDirtyPaths": ["src/context/slicer.ts"],
+      "untrackedPaths": ["scripts/tmp-hack.sh"],
+      "params": {
+        "strict_untracked": true
+      }
+    }
+  },
+  {
+    "name": "unmeasured-shell-blind-bash",
+    "expected": "unmeasured",
+    "expectedCause": "shell-blind",
+    "ctx": {
+      "allowedPaths": ["src/context/slicer.ts"],
+      "sessionDiffs": [],
+      "gitDirtyPaths": ["src/context/slicer.ts"],
+      "sawShellWrite": true
+    }
+  },
+  {
+    "name": "unmeasured-str-replace-editor",
+    "expected": "unmeasured",
+    "expectedCause": "shell-blind",
+    "ctx": {
+      "allowedPaths": ["src/context/slicer.ts"],
+      "sessionDiffs": [],
+      "gitDirtyPaths": ["src/context/slicer.ts"],
+      "toolCalls": [
+        { "tool": "str_replace_editor", "hasDiff": false }
+      ]
+    }
+  },
+  {
+    "name": "unmeasured-both-surfaces-missing",
+    "expected": "unmeasured",
+    "expectedCause": "no-evidence",
+    "ctx": {
+      "allowedPaths": ["src/context/slicer.ts"],
+      "sessionDiffs": null,
+      "gitDirtyPaths": null
+    }
+  }
+]

@@ -1,0 +1,111 @@
+[
+  {
+    "name": "green-feature-independent-rerun",
+    "expected": "allow",
+    "ctx": {
+      "taskType": "feature",
+      "builderRole": "builder",
+      "claimedDone": true,
+      "rerun": {
+        "command": "pnpm exec vitest run tests/context-deposits.spec.ts",
+        "exitCode": 0,
+        "verifierRole": "verifier"
+      }
+    }
+  },
+  {
+    "name": "green-fix-with-red-green-proof",
+    "expected": "allow",
+    "ctx": {
+      "taskType": "fix",
+      "builderRole": "builder",
+      "claimedDone": true,
+      "rerun": {
+        "command": "pnpm exec vitest run tests/fix.spec.ts",
+        "exitCode": 0,
+        "verifierRole": "verifier"
+      },
+      "redGreen": {
+        "command": "pnpm exec vitest run tests/fix.spec.ts",
+        "exitCodeWithoutFix": 1,
+        "exitCodeWithFix": 0,
+        "verifierRole": "verifier"
+      }
+    }
+  },
+  {
+    "name": "red-self-reported-verification",
+    "expected": "deny",
+    "ctx": {
+      "taskType": "feature",
+      "builderRole": "builder",
+      "claimedDone": true,
+      "rerun": {
+        "command": "pnpm test",
+        "exitCode": 0,
+        "verifierRole": "builder"
+      }
+    }
+  },
+  {
+    "name": "red-independent-rerun-failed",
+    "expected": "deny",
+    "ctx": {
+      "taskType": "feature",
+      "builderRole": "builder",
+      "claimedDone": true,
+      "rerun": {
+        "command": "pnpm test",
+        "exitCode": 1,
+        "verifierRole": "verifier"
+      }
+    }
+  },
+  {
+    "name": "red-fix-missing-red-phase",
+    "expected": "deny",
+    "ctx": {
+      "taskType": "fix",
+      "builderRole": "builder",
+      "claimedDone": true,
+      "rerun": {
+        "command": "pnpm exec vitest run tests/fix.spec.ts",
+        "exitCode": 0,
+        "verifierRole": "verifier"
+      },
+      "redGreen": {
+        "command": "pnpm exec vitest run tests/fix.spec.ts",
+        "exitCodeWithoutFix": 0,
+        "exitCodeWithFix": 0,
+        "verifierRole": "verifier"
+      }
+    }
+  },
+  {
+    "name": "unmeasured-missing-rerun-evidence",
+    "expected": "unmeasured",
+    "expectedCause": "no-evidence",
+    "ctx": {
+      "taskType": "feature",
+      "builderRole": "builder",
+      "claimedDone": true,
+      "rerun": null
+    }
+  },
+  {
+    "name": "unmeasured-fix-missing-red-green-record",
+    "expected": "unmeasured",
+    "expectedCause": "no-evidence",
+    "ctx": {
+      "taskType": "fix",
+      "builderRole": "builder",
+      "claimedDone": true,
+      "rerun": {
+        "command": "pnpm exec vitest run tests/fix.spec.ts",
+        "exitCode": 0,
+        "verifierRole": "verifier"
+      },
+      "redGreen": null
+    }
+  }
+]

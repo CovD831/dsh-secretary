@@ -1,0 +1,89 @@
+[
+  {
+    "name": "green-within-budget-solo",
+    "expected": "allow",
+    "ctx": {
+      "metrics": {
+        "targetFiles": 2,
+        "importedTypesCount": 4,
+        "callSiteCount": 3,
+        "relatedTestsCount": 1,
+        "totalBytes": 4200,
+        "durationMs": 12
+      },
+      "retryCount": 0
+    }
+  },
+  {
+    "name": "green-escalate-on-capsule-overflow",
+    "expected": "allow",
+    "ctx": {
+      "metrics": {
+        "targetFiles": 3,
+        "importedTypesCount": 8,
+        "callSiteCount": 15,
+        "relatedTestsCount": 2,
+        "totalBytes": 24000,
+        "durationMs": 28
+      },
+      "retryCount": 0
+    }
+  },
+  {
+    "name": "green-escalate-on-retries",
+    "expected": "allow",
+    "ctx": {
+      "metrics": {
+        "targetFiles": 1,
+        "importedTypesCount": 1,
+        "callSiteCount": 1,
+        "relatedTestsCount": 1,
+        "totalBytes": 1800,
+        "durationMs": 8
+      },
+      "retryCount": 2
+    }
+  },
+  {
+    "name": "red-overflow-with-solo-lock",
+    "expected": "deny",
+    "ctx": {
+      "metrics": {
+        "targetFiles": 9,
+        "importedTypesCount": 10,
+        "callSiteCount": 18,
+        "relatedTestsCount": 3,
+        "totalBytes": 21000,
+        "durationMs": 30
+      },
+      "retryCount": 0,
+      "allowTeam": false
+    }
+  },
+  {
+    "name": "red-invalid-param-range",
+    "expected": "deny",
+    "ctx": {
+      "metrics": {
+        "targetFiles": 2,
+        "importedTypesCount": 2,
+        "callSiteCount": 1,
+        "relatedTestsCount": 1,
+        "totalBytes": 2500,
+        "durationMs": 10
+      },
+      "retryCount": 0,
+      "params": {
+        "solo_max_files": 99
+      }
+    }
+  },
+  {
+    "name": "unmeasured-missing-metrics",
+    "expected": "unmeasured",
+    "expectedCause": "missing-input",
+    "ctx": {
+      "retryCount": 0
+    }
+  }
+]
