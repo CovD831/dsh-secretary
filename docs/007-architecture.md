@@ -315,6 +315,10 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/core/index.ts` | The core's exports |
 | `src/spine/types.ts`, `redact.ts`, `store.ts`, `git-sink.ts`, `flusher.ts`, `index.ts` | M0 event spine contracts, secret redaction, SQLite staging table, A1 Git shard sink, and two-phase flusher with torn-tail crash recovery |
 | `src/judgement/types.ts`, `paths.ts`, `requires.ts`, `registry.ts`, `yaml.ts`, `deposit.ts`, `index.ts` | Extensible `scope.stage` judgement registry, three-state (`allow`/`deny`/`unmeasured`) verdicts, path-token requirements, safe YAML frontmatter parser, and Deposit promotion ladder |
+| `src/judgement/gates/adaptive-dispatch.ts`, `changed-paths.ts`, `verify-rerun.ts`, `index.ts` | Seeded gates for adaptive dispatch (`ticket.dispatch`), changed-paths shell-blind guard (`verify.changed-paths`), and verify-rerun red-green evidence (`verify.rerun`) |
+| `src/workspaces/types.ts`, `registry.ts`, `worktree.ts`, `gc.ts`, `index.ts` | Ticket workspace isolation contracts, registry, git worktree provisioning, and three-state GC planner |
+| `src/context/types.ts`, `capsule.ts`, `slicer.ts`, `index.ts` | Context-slicing budgeter, pitfall matcher, and priority trimmer for prompts, deposits, and spine slices |
+| `src/rsi/types.ts`, `trace-bridge.ts`, `evaluator.ts`, `replay.ts`, `sweep.ts`, `index.ts` | Offline RSI replay harness, DSH trace bridge, gate/corpus evaluator, Pareto parameter sweep, and family-isolated deposit evaluation |
 | `src/app/runtime.ts` | The Runtime, the composition root, with its start and stop |
 | `src/app/setup.ts` | Setup, and `setupChanged`, whether a save changes a field setup reads |
 | `src/app/passes.ts` | Passes, the pass scheduler |
@@ -408,6 +412,9 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/core-engine.spec.ts` | Domain rules on in-memory repositories: receiving, Eval, fan-out, resume and stop, interrupted Assignments, the pause, Policy changes, reports and outcomes, attaching, replies, failed deliveries and dismissed problems |
 | `tests/spine.spec.ts` | M0 event spine redaction, staging store, A1 Git shard sink, and two-phase flusher crash recovery |
 | `tests/judgement.spec.ts` | Judgement registry, three-state verdicts, required inputs, safe YAML parser, and Deposit promotion ladder |
+| `tests/workspaces.spec.ts` | Workspace isolation tiers, git worktree provisioning, and three-state GC planner |
+| `tests/context-deposits.spec.ts` | Context slicer budgeting and seeded gates (`adaptive-dispatch`, `changed-paths`, `verify-rerun`) |
+| `tests/rsi-replay.spec.ts` | Offline RSI replay harness, trace bridge, Pareto sweep, and family-isolated corpus evaluation |
 | `tests/stage.spec.ts` | The Ticket stages, row by row |
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations and assessment outcomes |
 | `tests/registry.spec.ts` | `SourceRegistry`: instances, validation, Policy parts, Channels and Thread context |
