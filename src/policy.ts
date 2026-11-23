@@ -2,6 +2,7 @@
  * Runtime settings schemas, assessment validation, and policy gate evaluation.
  * Who may originate work is configured per Source in that Source's own identities; the Policy never maps a person across Sources.
  */
+import { isAbsolute } from 'node:path'
 import { LIMITS } from './limits.ts'
 import { z } from 'zod'
 import { ADMISSION_DEFAULTS, type Admission, type AdmissionCell, type AdmissionRow } from './admission.ts'
@@ -95,6 +96,15 @@ export const ExecutorConfigSchema = z.object({
   prepare: z.string().max(LIMITS.prepareCommand).default(''),
   blockedCommands: z.array(CommandNameSchema).default([]),
 }).strict()
+export const WorkspaceConfigSchema = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9-]*$/),
+  repository: z.string().trim().refine(path => isAbsolute(path), 'An absolute path'),
+  source: z.string().trim().min(1).optional(),
+  baseBranch: z.string().trim().min(1),
+  branchPrefix: z.string().trim(),
+  isolation: z.enum(['I1', 'I2', 'I3', 'I4', 'I5']),
+  prepare: z.string().max(LIMITS.prepareCommand).optional(),
+}).strict()
 export const SourceInstanceSchema = z.object({ enabled: z.boolean().default(true), config: z.record(z.string(), z.unknown()).default({}) }).strict()
 export const SettingsSchema = z.object({
   paused: z.boolean().default(false),
@@ -102,9 +112,12 @@ export const SettingsSchema = z.object({
   policy: PolicyConfigSchema.default(() => PolicyConfigSchema.parse({})),
   eval: EvalConfigSchema.default(() => EvalConfigSchema.parse({})),
   executor: ExecutorConfigSchema.default(() => ExecutorConfigSchema.parse({})),
+  workspaces: z.array(WorkspaceConfigSchema)
+    .refine(items => new Set(items.map(item => item.id)).size === items.length, 'Duplicate workspace IDs')
+    .optional(),
 }).strict()
 export type Settings = z.infer<typeof SettingsSchema>
-export type SettingsBlock = 'policy' | 'eval' | 'executor' | `source:${string}`
+export type SettingsBlock = 'policy' | 'eval' | 'executor' | 'workspaces' | `source:${string}`
 export type SettingsSave = SettingsBlock | 'pause'
 export type SettingsOrigin = 'panel' | 'tool' | 'sync'
 

@@ -1,0 +1,170 @@
+import { execFile } from 'node:child_process'
+import { realpathSync } from 'node:fs'
+import { isAbsolute, resolve } from 'node:path'
+import { promisify } from 'node:util'
+import type { SpineAppender } from '../spine/types.ts'
+import { validateWorkspaceDef } from './registry.ts'
+import type { Provisioned, ProvisionedDraft, WorkspaceDef, WorktreeObservation } from './types.ts'
+
+const execFileAsync = promisify(execFile)
+const DEFAULT_GIT_TIMEOUT_MS = 30_000
+const UNSAFE_REF_RE = /(?:^\/|\/\/|\.\.|[\x00-\x20\x7f~^:?*\[\\]|\/$|\.lock$|^@\{|^-$)/
+
+export interface GitRunOptions {
+  timeoutMs?: number
+  signal?: AbortSignal
+}
+
+export interface ProvisionWorktreeInput extends GitRunOptions {
+  ticketId: string
+  workspace: WorkspaceDef
+  executionName: string
+  targetDir: string
+  appender?: SpineAppender
+}
+
+interface ParsedStanza extends Omit<WorktreeObservation, 'dirty'> {
+  bare?: boolean
+}
+
+function sameDir(a: string, b: string): boolean {
+  const real = (p: string): string => { try { return realpathSync(p) } catch { return resolve(p) } }
+  return real(a) === real(b)
+}
+
+async function runGit(args: readonly string[], cwd: string, options: GitRunOptions = {}): Promise<{ stdout: string; stderr: string }> {
+  const timeout = options.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS
+  return execFileAsync('git', [...args], {
+    cwd,
+    timeout,
+    maxBuffer: 4 * 1024 * 1024,
+    encoding: 'utf8',
+    ...(options.signal ? { signal: options.signal } : {}),
+  })
+}
+
+export function deriveBranchName(branchPrefix: string, executionName: string): string {
+  const name = executionName.trim()
+  if (!name) throw new Error('execution.name 不能为空')
+  const branch = `${branchPrefix}${name}`
+  if (!branch || branch.startsWith('-') || UNSAFE_REF_RE.test(branch)) {
+    throw new Error(`派生分支名 "${branch}" 非法`)
+  }
+  return branch
+}
+
+export function recordProvisioned(
+  appender: SpineAppender,
+  draft: ProvisionedDraft,
+  meta: { correlationId?: string; causationId?: string } = {},
+): Provisioned {
+  const at = appender.append({
+    id: `workspace.provisioned:${draft.ticketId}:${draft.branch}`,
+    stream: `ticket:${draft.ticketId}`,
+    type: 'workspace.provisioned',
+    ...(meta.causationId ? { causationId: meta.causationId } : {}),
+    ...(meta.correlationId ? { correlationId: meta.correlationId } : {}),
+    source: { kind: 'system', ref: `workspace:${draft.workspace}` },
+    evidence: [{ kind: 'commit', ref: draft.base }],
+    taint: 'trusted',
+    payload: draft,
+  })
+  return { ...draft, at }
+}
+
+/** 按 Orca 真分支纪律创建 worktree 并登记 `branch.<name>.base` 谱系，严禁 detached HEAD 与 shell 拼接。 */
+export async function provisionWorktree(input: ProvisionWorktreeInput & { appender: SpineAppender }): Promise<Provisioned>
+export async function provisionWorktree(input: ProvisionWorktreeInput): Promise<ProvisionedDraft | Provisioned>
+export async function provisionWorktree(input: ProvisionWorktreeInput): Promise<ProvisionedDraft | Provisioned> {
+  const workspace = validateWorkspaceDef(input.workspace)
+  if (!isAbsolute(input.targetDir)) throw new Error(`worktree 目标路径必须为绝对路径: "${input.targetDir}"`)
+  if (!workspace.baseBranch || workspace.baseBranch.startsWith('-')) {
+    throw new Error(`baseBranch "${workspace.baseBranch}" 非法`)
+  }
+  const branch = deriveBranchName(workspace.branchPrefix, input.executionName)
+  const opts: GitRunOptions = { timeoutMs: input.timeoutMs, signal: input.signal }
+  const { stdout: shaOut } = await runGit(['rev-parse', '--verify', `${workspace.baseBranch}^{commit}`], workspace.repository, opts)
+  const base = shaOut.trim()
+  if (!base) throw new Error(`无法解析 baseBranch "${workspace.baseBranch}" 的提交哈希`)
+  await runGit(['worktree', 'add', '--no-track', '-b', branch, input.targetDir, workspace.baseBranch], workspace.repository, opts)
+  await runGit(['config', `branch.${branch}.base`, base], workspace.repository, opts)
+  const draft: ProvisionedDraft = { ticketId: input.ticketId, workspace: workspace.id, branch, base }
+  return input.appender ? recordProvisioned(input.appender, draft) : draft
+}
+
+export function parseWorktreeListPorcelain(output: string): ParsedStanza[] {
+  const entries: ParsedStanza[] = []
+  let current: Partial<ParsedStanza> | undefined
+  const flush = () => {
+    if (!current?.path) return
+    entries.push({
+      path: current.path,
+      head: current.head ?? '',
+      ...(current.branch ? { branch: current.branch } : {}),
+      locked: current.locked ?? false,
+      prunable: current.prunable ?? false,
+      ...(current.bare ? { bare: true } : {}),
+    })
+    current = undefined
+  }
+  for (const line of output.split(/\r?\n/)) {
+    if (line === '') { flush(); continue }
+    if (line.startsWith('worktree ')) {
+      flush()
+      current = { path: line.slice('worktree '.length), locked: false, prunable: false }
+      continue
+    }
+    if (!current) continue
+    if (line.startsWith('HEAD ')) current.head = line.slice('HEAD '.length)
+    else if (line.startsWith('branch ')) {
+      const ref = line.slice('branch '.length)
+      current.branch = ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : ref
+    } else if (line === 'locked' || line.startsWith('locked ')) current.locked = true
+    else if (line === 'prunable' || line.startsWith('prunable ')) current.prunable = true
+    else if (line === 'bare') current.bare = true
+  }
+  flush()
+  return entries
+}
+
+/** 观测仓库全部 worktree 状态；单棵树 status 失败或超时诚实置 `dirty: undefined`。 */
+export async function observeWorktrees(repoDir: string, options: GitRunOptions = {}): Promise<WorktreeObservation[]> {
+  const { stdout } = await runGit(['worktree', 'list', '--porcelain'], repoDir, options)
+  const parsed = parseWorktreeListPorcelain(stdout)
+  return Promise.all(parsed.map(async entry => {
+    const base: WorktreeObservation = {
+      path: entry.path,
+      head: entry.head,
+      ...(entry.branch ? { branch: entry.branch } : {}),
+      locked: entry.locked,
+      prunable: entry.prunable,
+    }
+    if (entry.bare || entry.prunable) return base
+    try {
+      const { stdout: statusOut } = await runGit(['status', '--porcelain'], entry.path, options)
+      return { ...base, dirty: statusOut.split(/\r?\n/).some(line => line.length > 0) }
+    } catch {
+      return base
+    }
+  }))
+}
+
+export async function isBranchMergedIntoBase(
+  repoDir: string,
+  branch: string,
+  baseBranch: string,
+  options: GitRunOptions = {},
+): Promise<boolean | undefined> {
+  if (!branch || !baseBranch || branch.startsWith('-') || baseBranch.startsWith('-')) return undefined
+  try {
+    await runGit(['merge-base', '--is-ancestor', branch, baseBranch], repoDir, options)
+    return true
+  } catch (error) {
+    const code = (error as { code?: unknown } | undefined)?.code
+    return code === 1 ? false : undefined
+  }
+}
+
+export function findWorktreeObservation(observations: readonly WorktreeObservation[], directory: string): WorktreeObservation | undefined {
+  return observations.find(item => sameDir(item.path, directory))
+}

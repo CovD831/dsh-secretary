@@ -17,6 +17,7 @@ import type { Sessions } from '../app/sessions.ts'
 import { WorktreeNameSchema } from '../app/assessment.ts'
 import { resultRelay } from '../app/notices.ts'
 import type { HealthEntry } from '../infra/health.ts'
+import { createWorkspaceRegistry, provisionWorktree } from '../workspaces/index.ts'
 import { cancelled, collectJob, killJobs, runningJobs, stopBackground, stopSubagents, until, untilQuiet } from './background.ts'
 
 const now = (): string => new Date().toISOString()
@@ -247,14 +248,33 @@ export class DshExecutor implements Executor {
   private async prepareDirectory(ticket: Ticket): Promise<void> {
     const directory = ticket.execution?.directory ?? ''
     await mkdir(dirname(directory), { recursive: true })
-    const command = this.host.store.settings().executor.prepare.trim()
+    const settings = this.host.store.settings()
+    const workspaceId = ticket.execution?.workspace
+    const workspace = workspaceId ? createWorkspaceRegistry(() => settings).resolve(ticket) : undefined
+    if (workspaceId && !workspace) throw new PrepareFailed(`Unknown workspace "${workspaceId}"`)
+    const command = (workspace?.prepare ?? settings.executor.prepare).trim()
     const env = Object.fromEntries(this.host.environment(ticket).map(variable => [variable.key, variable.value]))
     // Enforce a timeout so a hung prepare command (such as on a credential prompt) fails the ticket instead of holding a worker slot indefinitely.
     const signal = AbortSignal.any([this.host.lifetime, AbortSignal.timeout(PREPARE_TIMEOUT_MS)])
-    if (command) await runAsWorker(this.host.context.subprocess, ['sh', '-c', command], dirname(directory), signal, env)
+    const cleanEmptyDir = async () => {
+      // Remove an empty directory left by a failed prepare step so a later retry does not treat it as already prepared.
+      await rmdir(directory).catch(() => { /* Absent, or holding what the command wrote, which the output explains. */ })
+    }
+    if (workspace && !command) {
+      await provisionWorktree({
+        ticketId: ticket.id,
+        workspace,
+        executionName: ticket.execution?.name ?? '',
+        targetDir: directory,
+        signal,
+        timeoutMs: PREPARE_TIMEOUT_MS,
+      }).catch(async (error: unknown) => {
+        await cleanEmptyDir()
+        throw new PrepareFailed(`The workspace worktree failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+    } else if (command) await runAsWorker(this.host.context.subprocess, ['sh', '-c', command], dirname(directory), signal, env)
       .catch(async (error: unknown) => {
-        // Remove an empty directory left by a failed prepare command so a later retry does not treat it as already prepared.
-        await rmdir(directory).catch(() => { /* Absent, or holding what the command wrote, which the output explains. */ })
+        await cleanEmptyDir()
         throw new PrepareFailed(`The prepare command failed: ${error instanceof Error ? error.message : String(error)}`)
       })
     await mkdir(directory, { recursive: true })
