@@ -1,11 +1,8 @@
 import type { Strength } from '../core/model.ts'
+import type { SourceRef } from '../spine/types.ts'
 import type { PathsOf } from './paths.ts'
 
-/** 与 src/spine/types.ts 同构的 M0 事件引用。 */
-export interface SourceRef {
-  seq: number
-  id: string
-}
+export type { SourceRef }
 
 export interface ScopeCatalog {
   intake: true

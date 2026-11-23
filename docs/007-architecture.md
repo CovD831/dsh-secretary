@@ -313,6 +313,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/core/ids.ts` | `key`: ids derived from their inputs, equal for equal inputs |
 | `src/core/memory.ts` | `MemoryRepositories`: the Store's repositories in memory, in the Store's order and with its nested rollback, for domain tests |
 | `src/core/index.ts` | The core's exports |
+| `src/spine/types.ts`, `redact.ts`, `store.ts`, `git-sink.ts`, `flusher.ts`, `index.ts` | M0 event spine contracts, secret redaction, SQLite staging table, A1 Git shard sink, and two-phase flusher with torn-tail crash recovery |
+| `src/judgement/types.ts`, `paths.ts`, `requires.ts`, `registry.ts`, `yaml.ts`, `deposit.ts`, `index.ts` | Extensible `scope.stage` judgement registry, three-state (`allow`/`deny`/`unmeasured`) verdicts, path-token requirements, safe YAML frontmatter parser, and Deposit promotion ladder |
 | `src/app/runtime.ts` | The Runtime, the composition root, with its start and stop |
 | `src/app/setup.ts` | Setup, and `setupChanged`, whether a save changes a field setup reads |
 | `src/app/passes.ts` | Passes, the pass scheduler |
@@ -404,6 +406,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | Test | Covers |
 | --- | --- |
 | `tests/core-engine.spec.ts` | Domain rules on in-memory repositories: receiving, Eval, fan-out, resume and stop, interrupted Assignments, the pause, Policy changes, reports and outcomes, attaching, replies, failed deliveries and dismissed problems |
+| `tests/spine.spec.ts` | M0 event spine redaction, staging store, A1 Git shard sink, and two-phase flusher crash recovery |
+| `tests/judgement.spec.ts` | Judgement registry, three-state verdicts, required inputs, safe YAML parser, and Deposit promotion ladder |
 | `tests/stage.spec.ts` | The Ticket stages, row by row |
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations and assessment outcomes |
 | `tests/registry.spec.ts` | `SourceRegistry`: instances, validation, Policy parts, Channels and Thread context |
