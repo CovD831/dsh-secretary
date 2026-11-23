@@ -71,6 +71,7 @@ export class Sessions {
   private readonly agentDelivery: AgentDelivery
   /** Decorated agents mapped to their registered disposers and skill scope until the agent is disposed or `Sessions.dispose()` runs. */
   private readonly bindings = new Map<Agent, SessionBinding>()
+  private readonly inFlight = new Map<Agent, Promise<void>>()
   private readonly retryHealth = new RetryHealth()
   private readonly ctx: Context
   /** Registers ordered `relay` and `notice` effect handlers that deliver to the main Session. */
@@ -146,13 +147,14 @@ export class Sessions {
     await this.heal(result.agent)
     await this.agentDelivery.send(result.agent, key(requestId), text, mode, this.host.lifetime, authorize, accepted)
   }
-  /** Re-decorates a Session that lost its binding (restored across a restart, or a decoration that failed). No-op otherwise. */
+  /** Re-decorates a Session that lost its binding (restored across a restart, or a decoration that failed). Fails closed on error. */
   private async heal(agent: Agent): Promise<void> {
-    if (this.bindings.has(agent)) return
+    if (!this.inFlight.has(agent) && this.bindings.has(agent)) return
     if (agent.id !== this.host.masterId && this.ticketOf(agent) === undefined) return
     try { await this.decorate(agent) }
     catch (error: unknown) {
       this.ctx.logger.warn('dsh-superagent could not register its tools on %s: %s', agent.id, String(error))
+      throw error
     }
   }
   /** The id of the message `prompt` delivers under `requestId`, which DSH's inbox events name it by. */
@@ -222,14 +224,19 @@ export class Sessions {
     const ticketId = ticketOfSession(agent.id)
     return ticketId === undefined ? undefined : this.host.store.tickets.get(ticketId)
   }
-  private async decorate(agent: Agent): Promise<void> {
-    if (this.bindings.has(agent)) return
-    try { await this.decorateOnce(agent) }
-    catch (error) {
+  private decorate(agent: Agent): Promise<void> {
+    const pending = this.inFlight.get(agent)
+    if (pending) return pending
+    if (this.bindings.has(agent)) return Promise.resolve()
+    const work = this.decorateOnce(agent).catch(error => {
       // Clear partial registrations so a later heal() attempt can decorate cleanly.
       this.release(agent)
       throw error
-    }
+    }).finally(() => {
+      if (this.inFlight.get(agent) === work) this.inFlight.delete(agent)
+    })
+    this.inFlight.set(agent, work)
+    return work
   }
   private async decorateOnce(agent: Agent): Promise<void> {
     const host = this.host
@@ -248,6 +255,15 @@ export class Sessions {
       const composed = host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)
       return `[dsh-superagent prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
     }, ...(master ? { complete: true } : {}) }))
+    const register = this.registerTool(agent, binding)
+    for (const tool of host.tools(agent, ticket)) register(tool.name, tool.description, tool.schema, tool.execute)
+    if (master) {
+      // Own-scope `orchestrator_*` tools registered above are exempt from `restrict()`; `allow: []` masks all inherited global tools.
+      binding.disposers.push(agent.ctx.tools.restrict({ allow: [] }))
+    } else {
+      // An Executor Session keeps the profile's work tools it has, which DSH requires to be known; its own tools are not masked.
+      binding.disposers.push(...this.workOnly(agent, ticket!.id))
+    }
     // A recreated skill scope (e.g. after the skills service restarts) starts empty, so reset `binding.skills` before rebinding.
     const skillScope = agent.ctx.inject(['skills'], scope => {
       binding.scope = scope
@@ -258,15 +274,6 @@ export class Sessions {
     await skillScope
     // Bail out if the agent was disposed while awaiting the skill scope.
     if (this.bindings.get(agent) !== binding) return
-    const register = this.registerTool(agent, binding)
-    for (const tool of host.tools(agent, ticket)) register(tool.name, tool.description, tool.schema, tool.execute)
-    if (master) {
-      // Own-scope `orchestrator_*` tools registered above are exempt from `restrict()`; `allow: []` masks all inherited global tools.
-      binding.disposers.push(agent.ctx.tools.restrict({ allow: [] }))
-    } else {
-      // An Executor Session keeps the profile's work tools it has, which DSH requires to be known; its own tools are not masked.
-      binding.disposers.push(...this.workOnly(agent, ticket!.id))
-    }
   }
   /**
    * An Executor Session's tools: only the profile's work tools, which DSH requires to be known, and none once its ticket

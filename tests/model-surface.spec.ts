@@ -537,3 +537,106 @@ it('masks all inherited global tools on the main Session with allow:[], allows r
   expect(restrictions.get(masterId)).toEqual([{ allow: [] }])
   expect(visibleOf(masterId)).toEqual(['orchestrator_route'])
 })
+
+it('fails closed when heal() fails to decorate and prevents concurrent prompt() delivery before skillScope settles', async () => {
+  const { Sessions } = await import('../src/app/sessions.ts')
+  const { z } = await import('zod')
+  const masterId = 'orchestrator-lock-race'
+  const agents = new Map<string, Record<string, unknown>>()
+  const ownTools = new Map<string, Tool>()
+  const restrictions: { allow?: string[] }[] = []
+  const deliveries: string[] = []
+  let resolveSkills!: () => void
+  let rejectSkills!: (error: Error) => void
+  let skillsFail = false
+
+  const makeMaster = () => {
+    ownTools.clear()
+    restrictions.length = 0
+    const session = { id: masterId, header: {}, snapshotEvents: () => [], requestHeader: () => undefined, append: () => {} }
+    const agent = {
+      id: masterId,
+      status: 'idle',
+      inbox: { nextTurn: [], nextStep: [], remove: () => false },
+      followup: vi.fn((m: UserMessage) => { deliveries.push(`followup:${m.id}`) }),
+      steer: vi.fn((m: UserMessage) => { deliveries.push(`steer:${m.id}`) }),
+      inject: vi.fn((m: UserMessage) => { deliveries.push(`inject:${m.id}`) }),
+      session,
+      cancel: vi.fn(),
+      whenIdle: async () => {},
+      ctx: {
+        tools: {
+          register: (tool: Tool) => { ownTools.set(tool.name, tool); return () => ownTools.delete(tool.name) },
+          get: () => undefined,
+          restrict: (rule: { allow?: string[] }) => { restrictions.push(rule); return () => {} },
+          guard: () => () => {},
+        },
+        systemPrompt: { section: () => () => {} },
+        inject: (_services: string[], _cb: (scope: unknown) => void) => {
+          const p = new Promise<void>((res, rej) => { resolveSkills = res; rejectSkills = rej })
+          if (skillsFail) queueMicrotask(() => rejectSkills(new Error('skills service down')))
+          return Object.assign(p, { dispose: async () => {} })
+        },
+      },
+    }
+    agents.set(masterId, agent)
+    return agent
+  }
+
+  const ctx = new Context()
+  const history = { read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} }
+  const services = {
+    agents,
+    llm: { resolveCallConfig: async (value: unknown) => value },
+    workspaceRegistry: { create: async (cwd: string) => ({ id: cwd, attachSession: async () => {} }) },
+    sessionController: {
+      create: async () => {},
+      resolveAgent: async (id: string) => agents.has(id) ? { agent: agents.get(id) } : { error: { code: 'session/not-found' } },
+      rename: async () => {},
+    },
+    sessionPersistence: { flush: async () => {}, open: async () => history },
+    permissionPresets: { set: () => {} },
+  }
+  for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
+
+  const sessionsManager = new Sessions({
+    context: ctx,
+    store: { tickets: { get: () => undefined }, settings: () => SettingsSchema.parse({}), get: () => undefined, set: () => {}, keys: () => [] },
+    prompts: { current: () => host.runtime.prompts.current(), version: (r: number) => host.runtime.prompts.version(r),
+      compose: () => 'prompt', skills: () => [] },
+    effects: { enqueue: () => {}, handle: () => {}, idle: async () => {}, pending: () => false },
+    health: { set: () => {} },
+    masterId,
+    lifetime: new AbortController().signal,
+    closing: () => false,
+    environment: () => [],
+    tools: () => [{ name: 'orchestrator_route', description: 'route', schema: z.object({ id: z.string() }), execute: async () => ({}) }],
+  } as never)
+  sessionsManager.install()
+
+  // 1) Concurrent re-entry: start agent/created with pending skillScope.
+  const agent1 = makeMaster()
+  const created = ctx.parallel('agent/created', { agent: agent1 } as never)
+  await Promise.resolve()
+  // Even BEFORE skillScope resolves, own-scope orchestrator_* and restrict({ allow: [] }) must already be locked synchronously.
+  expect(ownTools.has('orchestrator_route')).toBe(true)
+  expect(restrictions).toEqual([{ allow: [] }])
+
+  // Concurrent prompt() while decoration is in-flight must wait for decoration instead of delivering early.
+  let promptSettled = false
+  const concurrentPrompt = sessionsManager.prompt(masterId, 'req-concurrent', 'msg', 'steer')
+    .then(() => { promptSettled = true })
+  await Promise.resolve(); await Promise.resolve()
+  expect(promptSettled).toBe(false)
+  expect(deliveries).toEqual([])
+  resolveSkills()
+  await Promise.all([created, concurrentPrompt])
+  expect(deliveries).toHaveLength(1)
+
+  // 2) Fail-closed: if heal() fails to decorate, prompt() must reject and must NOT deliver to an unlocked session.
+  deliveries.length = 0
+  skillsFail = true
+  makeMaster()
+  await expect(sessionsManager.prompt(masterId, 'req-fail-closed', 'blocked', 'steer')).rejects.toThrow('skills service down')
+  expect(deliveries).toEqual([])
+})
