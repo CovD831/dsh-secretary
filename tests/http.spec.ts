@@ -76,6 +76,10 @@ it('answers only a same-origin request from the panel on the loopback address', 
       body: { error: 'Same-origin management request required' } })
   }
   expect(await post({ host: 'localhost:3082', origin: 'http://localhost:3082' })).toMatchObject({ status: 200 })
+  expect(await post({ host: '[::1]:3082', origin: 'http://[::1]:3082' })).toMatchObject({ status: 200 })
+  for (const host of ['127.0.0.1', 'localhost', '::1', '[::1]']) {
+    expect(() => serve({ sessions: { delivery: async () => 'injected' }, engine: { unsubscribe: () => true } }, host), host).not.toThrow()
+  }
   // Management routes require a loopback Web server.
   expect(() => serve({}, '0.0.0.0')).toThrow('Orchestrator management requires a loopback Web server')
 })

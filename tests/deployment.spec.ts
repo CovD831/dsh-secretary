@@ -1,10 +1,10 @@
 import { execFile } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Config, executable, machineOf, resolveDeployment, resolveFeishuBot, type Machine, type Probe } from '../src/deployment.ts'
+import { Config, defaultStateDir, executable, machineOf, resolveDeployment, resolveFeishuBot, type Machine, type Probe } from '../src/deployment.ts'
 import { gitEnv } from './fixtures/git.ts'
 
 const exec = promisify(execFile)
@@ -40,8 +40,19 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
 vi.setConfig({ testTimeout: 30_000 })
 
 describe('configuration schema', () => {
-  it('requires only the state directory and reads the editable fields through references', () => {
-    expect(() => Config({})).toThrow('stateDir')
+  it('defaults stateDir using DSH_HOME first without touching ~/.dsh when DSH_HOME is set, and reads editable fields through references', async () => {
+    expect(defaultStateDir({ DSH_HOME: join(dir, 'custom-dsh') })).toBe(join(dir, 'custom-dsh', 'state', 'superagent'))
+    expect(defaultStateDir({ DSH_HOME: '   ' })).toBe(join(homedir(), '.dsh', 'state', 'superagent'))
+    expect(defaultStateDir({})).toBe(join(homedir(), '.dsh', 'state', 'superagent'))
+    vi.stubEnv('DSH_HOME', join(dir, 'isolated-dsh'))
+    vi.resetModules()
+    try {
+      const { Config: FreshConfig } = await import('../src/deployment.ts')
+      expect(FreshConfig({}).stateDir).toBe(join(dir, 'isolated-dsh', 'state', 'superagent'))
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
     const read = machineOf(Config({ stateDir: join(dir, 'state') }))
     // Limits are volatile references that the loader updates in place and callers read when used.
     expect({ ...read, promptMaxChars: read.promptMaxChars.get(), admissionContextMaxPages: read.admissionContextMaxPages.get(),

@@ -59,31 +59,8 @@ declare module '@deepseek-ai/cordis' {
  * messages other Sessions, or edits documents.
  */
 const WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search',
-  'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent']
-/** What the main Session is told when it would wait: what it waits for comes to it, and a waiting step holds back the next. */
-const NO_WAIT = 'Reports, follow_up notices, new candidates and a background job\'s end with its output arrive by themselves as messages; '
-  + 'end the turn instead of waiting for them.'
-/** What a main Session under `standard` is told when its command would wait the shell's default. */
-const DEFAULT_WAIT = 'This shell waits up to 60 seconds by default: pass timeoutMs of at most 30000, or run_in_background, '
-  + 'as a waiting step holds back new candidates.'
-/** `sleep` at a command position: the start, after ; & | ( { ! ` or a newline, or after a keyword or a command that runs it. */
-const SLEEP = /(?:^|[;&|({!`\n]|\b(?:do|then|else|elif|if|while|until|time|exec|nohup|command|env)\s)\s*(?:\S*\/)?sleep\b/
-/**
- * The main Session's guard: it refuses a bash command that runs sleep or asks to hold the step longer than 30 seconds, and a
- * job wait longer than 5 seconds. Under `standard`, as a main Session created before the router preset runs, the shell holds
- * a command 60 seconds and a job wait lasts 30 seconds by default, so a command needs a timeout or the background, and a
- * job wait its timeout; the router preset ends both after 5 seconds.
- */
-function noWait({ name, arguments: input }: { name: string; arguments: unknown }, routed: () => boolean): string | undefined {
-  const args = (input ?? {}) as { command?: unknown; timeoutMs?: unknown; run_in_background?: unknown; wait?: unknown; timeout_ms?: unknown }
-  if (name === 'bash') {
-    const sleeps = typeof args.command === 'string' && SLEEP.test(args.command)
-    if (sleeps || typeof args.timeoutMs === 'number' && args.timeoutMs > 30_000) return NO_WAIT
-    if (args.timeoutMs === undefined && args.run_in_background !== true && !routed()) return DEFAULT_WAIT
-  }
-  if (name === 'job_output' && args.wait === true && (typeof args.timeout_ms === 'number' ? args.timeout_ms > 5_000 : !routed())) return NO_WAIT
-  return undefined
-}
+  'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent', 'wait_agent',
+  'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update']
 
 /**
  * Creates and decorates orchestrator and worker DSH `Agent` sessions with role models, system prompt sections from `Prompts`, runtime skills, and restricted tool sets.
@@ -137,15 +114,17 @@ export class Sessions {
   /** Resolves or creates session `id` in workspace `cwd`, initializes its role model, decorates it with prompts/skills/tools, sets `danger-full-access` permissions, and renames it to `title`. */
   async ensure(id: string, cwd: string, title: string, role: 'orchestrator' | 'worker'): Promise<Agent> {
     const ctx = this.ctx
+    // Register (or reuse) the workspace up front so restored sessions remain attached to a workspace.
+    const workspace = await ctx.workspaceRegistry.create(cwd)
     let result = await ctx.sessionController.resolveAgent(id as SessionId)
     if ('error' in result && result.error.code === 'session/not-found') {
-      const workspace = await ctx.workspaceRegistry.create(cwd)
       // A Session keeps the preset it was created with, one of the bundle's own (cordis.patch.yml).
       await ctx.sessionController.create({ sessionId: id as SessionId, workspaceId: workspace.id,
         agentPreset: role === 'worker' ? WORKER_PRESET : ROUTER_PRESET })
       result = await ctx.sessionController.resolveAgent(id as SessionId)
     }
     if ('error' in result) throw result.error
+    await workspace.attachSession?.(id as SessionId)
     const settings = this.host.store.settings()
     await initializeRoleModel(ctx, result.agent, role === 'orchestrator' ? settings.eval.model : settings.executor.model)
     await this.decorate(result.agent)
@@ -163,7 +142,18 @@ export class Sessions {
     accepted?: () => void): Promise<void> {
     const result = await this.ctx.sessionController.resolveAgent(sessionId as SessionId)
     if ('error' in result) throw result.error
+    // Restored sessions after host restart may miss agent/created; re-decorate before delivery if unbound.
+    await this.heal(result.agent)
     await this.agentDelivery.send(result.agent, key(requestId), text, mode, this.host.lifetime, authorize, accepted)
+  }
+  /** Re-decorates a Session that lost its binding (restored across a restart, or a decoration that failed). No-op otherwise. */
+  private async heal(agent: Agent): Promise<void> {
+    if (this.bindings.has(agent)) return
+    if (agent.id !== this.host.masterId && this.ticketOf(agent) === undefined) return
+    try { await this.decorate(agent) }
+    catch (error: unknown) {
+      this.ctx.logger.warn('dsh-superagent could not register its tools on %s: %s', agent.id, String(error))
+    }
   }
   /** The id of the message `prompt` delivers under `requestId`, which DSH's inbox events name it by. */
   promptedId(requestId: string): MessageId { return messageId(key(requestId)) }
@@ -180,6 +170,7 @@ export class Sessions {
   private async inject(name: string, value: Record<string, unknown>, summary: string): Promise<void> {
     const resolved = await this.ctx.sessionController.resolveAgent(this.host.masterId as SessionId)
     if ('error' in resolved) return
+    await this.heal(resolved.agent)
     // Deduplicate by notice name and payload hash so retries are idempotent while updated payloads still deliver.
     const text = JSON.stringify(value)
     await this.agentDelivery.send(resolved.agent, `notice:${name}:${key(text)}`, text, { inject: summary }, this.host.lifetime)
@@ -205,7 +196,9 @@ export class Sessions {
   /** Returns a tool registrar for `agent` that renders tool output as JSON text and attaches `output.image` as an image when present. */
   private registerTool(agent: Agent, binding: SessionBinding): RegisterTool {
     return (name, description, schema, execute) => {
-      binding.disposers.push(agent.ctx.tools.register({ name, description, parameters: z.toJSONSchema(schema),
+      // Strip non-enumerable Zod 4 symbols (such as `~standard`) so DSH rc.5's lossless-JSON parameter check passes.
+      const parameters = JSON.parse(JSON.stringify(z.toJSONSchema(schema))) as Record<string, unknown>
+      binding.disposers.push(agent.ctx.tools.register({ name, description, parameters,
         output: { schema: { type: 'object', additionalProperties: true }, render: (_args, value) => {
           const text = { type: 'text' as const, text: JSON.stringify(value) }
           const image = value && typeof value === 'object' && 'image' in value ? (value as { image: never }).image : undefined
@@ -231,6 +224,14 @@ export class Sessions {
   }
   private async decorate(agent: Agent): Promise<void> {
     if (this.bindings.has(agent)) return
+    try { await this.decorateOnce(agent) }
+    catch (error) {
+      // Clear partial registrations so a later heal() attempt can decorate cleanly.
+      this.release(agent)
+      throw error
+    }
+  }
+  private async decorateOnce(agent: Agent): Promise<void> {
     const host = this.host
     const master = agent.id === host.masterId
     const ticket = master ? undefined : this.ticketOf(agent)
@@ -260,25 +261,12 @@ export class Sessions {
     const register = this.registerTool(agent, binding)
     for (const tool of host.tools(agent, ticket)) register(tool.name, tool.description, tool.schema, tool.execute)
     if (master) {
-      binding.disposers.push(agent.ctx.tools.restrict({ allow: ['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill'] }),
-        agent.ctx.tools.guard(execution => noWait(execution, () => this.routed(agent))))
+      // Own-scope `orchestrator_*` tools registered above are exempt from `restrict()`; `allow: []` masks all inherited global tools.
+      binding.disposers.push(agent.ctx.tools.restrict({ allow: [] }))
     } else {
       // An Executor Session keeps the profile's work tools it has, which DSH requires to be known; its own tools are not masked.
       binding.disposers.push(...this.workOnly(agent, ticket!.id))
     }
-  }
-  /**
-   * Whether a Session runs the router preset: as DSH's preset registry last selected it, read through the session projection
-   * on a DSH whose registry has no `presetForSession`, else as it was created; `standard`, the safer caps, when unreadable.
-   */
-  private routed(agent: Agent): boolean {
-    try {
-      const presets = this.ctx.get('agentPresets') as { presetForSession?: (session: Agent['session']) => string | null } | undefined
-      const projections = this.ctx.get('sessionProjections') as { stateOf?: (session: Agent['session'], key: string) => unknown } | undefined
-      const selected = typeof presets?.presetForSession === 'function' ? presets.presetForSession(agent.session)
-        : projections?.stateOf?.(agent.session, 'agentPreset')
-      return (selected ?? agent.session.header.agentPreset) === ROUTER_PRESET
-    } catch { return false }
   }
   /**
    * An Executor Session's tools: only the profile's work tools, which DSH requires to be known, and none once its ticket

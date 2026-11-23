@@ -411,3 +411,129 @@ it('lists in the main Session\'s Policy section exactly the enabled rules, as th
   // The drive disabled the visual rule and changed the copy rule's instruction.
   expect(listed).toEqual([expect.stringMatching(/^- .* \(copy\): .*Keep the wording short\.$/)])
 })
+
+it('masks all inherited global tools on the main Session with allow:[], allows rc.5 team/wait tools on workers, and emits lossless JSON tool schemas', async () => {
+  const { Sessions } = await import('../src/app/sessions.ts')
+  const { bindScopeParent } = await import('@deepseek-ai/dsh-scope')
+  const { z } = await import('zod')
+  const globalTools = ['bash', 'read', 'write', 'edit', 'read_image', 'glob', 'grep', 'pwsh', 'job_output', 'job_list', 'job_kill',
+    'web_search', 'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents',
+    'interrupt_agent', 'wait_agent', 'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update',
+    'mcp_read_resource', 'ask_user_question']
+  const presetScope = {}
+  const attached: string[] = []
+  const agents = new Map<string, Record<string, unknown>>()
+  const ownTools = new Map<string, Map<string, Tool>>()
+  const restrictions = new Map<string, { allow?: string[]; deny?: string[] }[]>()
+  const calls: string[] = []
+
+  const visibleOf = (sessionId: string): string[] => {
+    const own = ownTools.get(sessionId) ?? new Map()
+    const rules = restrictions.get(sessionId) ?? []
+    const visibleGlobals = globalTools.filter(name => rules.every(rule =>
+      (rule.allow === undefined || rule.allow.includes(name)) && (rule.deny === undefined || !rule.deny.includes(name))))
+    return [...new Set([...visibleGlobals, ...own.keys()])].sort()
+  }
+  const makeAgent = (sessionId: string) => {
+    const agentCtx = new Context()
+    const own = new Map<string, Tool>()
+    ownTools.set(sessionId, own)
+    restrictions.set(sessionId, [])
+    agentCtx.reflect.provide('tools', {
+      register: (tool: Tool) => { calls.push(`register:${sessionId}:${tool.name}`); own.set(tool.name, tool); return () => own.delete(tool.name) },
+      get: (name: string, scope?: object) => {
+        if (scope === presetScope) return globalTools.includes(name) ? { name } : undefined
+        return visibleOf(sessionId).includes(name) ? { name } : undefined
+      },
+      restrict: (rule: { allow?: string[]; deny?: string[] }) => {
+        calls.push(`restrict:${sessionId}:${JSON.stringify(rule)}`)
+        restrictions.set(sessionId, [...restrictions.get(sessionId) ?? [], rule])
+        return () => {}
+      },
+      guard: () => () => {},
+    })
+    agentCtx.reflect.provide('skills', { register: () => () => {} })
+    agentCtx.reflect.provide('systemPrompt', { section: () => () => {} })
+    const session = { id: sessionId, header: {}, snapshotEvents: () => [], requestHeader: () => undefined, append: () => {} }
+    const agent = { id: sessionId, ctx: agentCtx, status: 'idle', inbox: { nextTurn: [], nextStep: [], remove: () => false },
+      followup: vi.fn(), steer: vi.fn(), inject: vi.fn(), session, cancel: vi.fn(), whenIdle: async () => {} }
+    bindScopeParent(agent as never, presetScope)
+    return agent
+  }
+
+  const masterId = 'orchestrator-test'
+  const workerId = 'worker-t1'
+  const ctx = new Context()
+  const history = { read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} }
+  const services = {
+    agents,
+    llm: { resolveCallConfig: async (value: unknown) => value },
+    workspaceRegistry: { create: async (cwd: string) => ({ id: cwd, attachSession: async (id: string) => { attached.push(id) } }) },
+    sessionController: {
+      create: async ({ sessionId }: { sessionId: string }) => { agents.set(sessionId, makeAgent(sessionId)) },
+      resolveAgent: async (id: string) => agents.has(id) ? { agent: agents.get(id) } : { error: { code: 'session/not-found' } },
+      rename: async () => {},
+    },
+    sessionPersistence: { flush: async () => {}, open: async () => history },
+    permissionPresets: { set: () => {} },
+  }
+  for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
+
+  const sessionsHost = {
+    context: ctx,
+    store: {
+      tickets: { get: (id: string) => id === 't1' ? { id: 't1', mandate: { strength: 'explicit' as const } } : undefined },
+      settings: () => SettingsSchema.parse({}),
+      get: () => undefined,
+      set: () => {},
+      keys: () => [],
+    },
+    prompts: { current: () => host.runtime.prompts.current(), version: (r: number) => host.runtime.prompts.version(r),
+      compose: () => 'prompt', skills: () => [] },
+    effects: { enqueue: () => {}, handle: () => {}, idle: async () => {}, pending: () => false },
+    health: { set: () => {} },
+    masterId,
+    lifetime: new AbortController().signal,
+    closing: () => false,
+    environment: () => [],
+    tools: (_agent: unknown, ticket?: { id: string }) => ticket
+      ? [{ name: 'orchestrator_report', description: 'report', schema: z.object({ summary: z.string() }), execute: async () => ({}) }]
+      : [{ name: 'orchestrator_route', description: 'route', schema: z.object({ id: z.string() }), execute: async () => ({}) }],
+  }
+  const sessionsManager = new Sessions(sessionsHost as never)
+  await sessionsManager.ensure(masterId, '/tmp/master', 'master', 'orchestrator')
+  await sessionsManager.ensure(workerId, '/tmp/worker', 'worker', 'worker')
+
+  expect(attached).toEqual([masterId, workerId])
+  // Lock 2 ordering: own-scope orchestrator_* tools register BEFORE restrict({ allow: [] }).
+  const registerIndex = calls.indexOf(`register:${masterId}:orchestrator_route`)
+  const restrictIndex = calls.indexOf(`restrict:${masterId}:{"allow":[]}`)
+  expect(registerIndex).toBeGreaterThanOrEqual(0)
+  expect(restrictIndex).toBeGreaterThan(registerIndex)
+  expect(restrictions.get(masterId)).toEqual([{ allow: [] }])
+  // After restrict({ allow: [] }), zero inherited global tools remain visible; only orchestrator_* is visible.
+  expect(visibleOf(masterId)).toEqual(['orchestrator_route'])
+
+  // Worker allowlist includes rc.5 team_task_* and wait_agent, while excluding non-work tools.
+  const workerAllow = restrictions.get(workerId)![0]!.allow!
+  expect(workerAllow).toEqual(expect.arrayContaining([
+    'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update', 'wait_agent',
+  ]))
+  expect(workerAllow).not.toContain('ask_user_question')
+  expect(workerAllow).not.toContain('mcp_read_resource')
+
+  // Lossless JSON check on registered parameters (Zod 4 `~standard` must be stripped).
+  const routeSchema = z.object({ id: z.string(), nested: z.object({ count: z.number() }).optional() })
+  expect(Object.getOwnPropertyDescriptor(z.toJSONSchema(routeSchema), '~standard')).toBeDefined()
+  const registeredParams = ownTools.get(masterId)!.get('orchestrator_route')!.parameters as object
+  expect(Object.getOwnPropertyDescriptor(registeredParams, '~standard')).toBeUndefined()
+  expect(Reflect.ownKeys(registeredParams).every(k => typeof k === 'string' && Object.prototype.propertyIsEnumerable.call(registeredParams, k))).toBe(true)
+
+  // Restart recovery: if agent instance is replaced without agent/created, prompt() heals its decoration and dual lock.
+  const restored = makeAgent(masterId)
+  agents.set(masterId, restored)
+  expect(visibleOf(masterId)).toEqual([...globalTools].sort())
+  await sessionsManager.prompt(masterId, 'req-heal', 'hello', 'steer')
+  expect(restrictions.get(masterId)).toEqual([{ allow: [] }])
+  expect(visibleOf(masterId)).toEqual(['orchestrator_route'])
+})
