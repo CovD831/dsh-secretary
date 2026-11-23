@@ -19,6 +19,7 @@ import { resultRelay } from '../app/notices.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { createWorkspaceRegistry, provisionWorktree } from '../workspaces/index.ts'
 import { cancelled, collectJob, killJobs, runningJobs, stopBackground, stopSubagents, until, untilQuiet } from './background.ts'
+import type { PreparedLaunchCapsule } from './capsule-hook.ts'
 
 const now = (): string => new Date().toISOString()
 /** Returns the worker session ID (`worker-<ticketId>`) for a ticket. */
@@ -80,6 +81,8 @@ export interface ExecutorHost {
   sourceLink(trigger: Trigger, signal?: AbortSignal): Promise<{ source_url?: string; source_url_read?: string }>
   /** Stored Trigger of the message `trigger` replies to, when it replies to one. */
   repliedTo(trigger: Trigger): Trigger | undefined
+  /** Optional launch-time 1-hop context slicer and adaptive dispatch planner. */
+  prepareCapsule?(input: { ticket: Ticket; assignment: Assignment; workspaceDir: string; triggerText?: string }): Promise<PreparedLaunchCapsule | undefined>
 }
 /** Looks up a ticket's origin trigger in Store. */
 export const sourceTrigger = (host: { store: Pick<Store, 'triggers'> }, ticket: Ticket): Trigger | undefined =>
@@ -478,10 +481,15 @@ export class DshExecutor implements Executor {
     const card = told || !source ? undefined : await this.triggerCard(ticket, source.id)
     if (!current()) return
     const batch = told ? [] : batchOf(this.host, ticket).map(batchLine)
+    const prepared = told || !this.host.prepareCapsule ? undefined : await this.host.prepareCapsule({
+      ticket, assignment, workspaceDir: workspace, ...(source ? { triggerText: source.text } : {}),
+    })
+    if (!current()) return
     const text = told ? JSON.stringify({ ticket_id: ticket.id, assignment: ticket.assignments.length, ...retried })
       : JSON.stringify({ ticket_id: ticket.id, title: ticket.title, ...(brief ? { assignment: brief } : {}),
         ...(read ? { assignment_chars: chars, assignment_read: read } : {}), ...(card ? { trigger: card } : {}),
-        ...(batch.length ? { batch } : {}), ...retried })
+        ...(batch.length ? { batch } : {}), ...retried,
+        ...(prepared ? { dispatch_plan: prepared.dispatch, context_capsule: prepared.capsule } : {}) })
     const requestId = later ? `assignment:${ticket.id}:${assignment.id}` : first
     await this.host.sessions.prompt(sessionId, requestId, text, 'queue',
       () => { if (!current()) throw new Error('Launch authorization changed before worker delivery') },
