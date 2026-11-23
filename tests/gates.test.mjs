@@ -23,6 +23,7 @@ async function setup(registry, workspaces = { workspace1: 'workspace-session' },
   const ctx = {
     get: name => name === 'subagents' && rootOf !== undefined ? { rootOf } : undefined,
     on(name, listener, options) { listeners.push({ name, listener, options }) },
+    waterfall(name, listener, options) { listeners.push({ name, listener, options }) },
     storageDomain: { open: async () => ({ table: () => ({ entries: () => Object.entries(workspaces) }), close: async () => {} }) },
   }
   const root = await mkdtemp(join(tmpdir(), 'secretary-gate-'))

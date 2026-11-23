@@ -29,17 +29,18 @@ export async function judgeGate(gate: GateDefinition, ctx: Parameters<GateDefini
 }
 
 export const install: Install = (ctx, { writer }) => {
-  ctx.on('tools/pre-execute', async (exec, next) => {
-    if (exec.agent === undefined) return await next()
-    const subagents = ctx.get<{ rootOf(agent: typeof exec.agent): typeof exec.agent }>('subagents')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(ctx as any).on('tools/pre-execute', async (exec: { name: string; agent?: any; arguments?: unknown; callId: string; signal?: unknown }, next: () => Promise<unknown>) => {
+    if (exec.agent == null) return await next()
+    const subagents = ctx.get<{ rootOf(agent: any): any }>('subagents')
     const root = subagents?.rootOf(exec.agent) ?? exec.agent
     const workspaceId = await workspaceOf(root, ctx.storageDomain)
     if (workspaceId === null) return await next()
     for (const gate of gateRegistry) {
       if (!gate.matches(exec.name, exec.arguments)) continue
-      const result = await judgeGate(gate, { exec, workspaceId, writer, agent: exec.agent })
+      const result = await judgeGate(gate, { exec: exec as any, workspaceId, writer, agent: exec.agent })
       await writer.append(createEnvelope({
-        id: `plugin:${randomUUID()}`, kind: KINDS.gateVerdict, sessionId: exec.agent.id,
+        id: `plugin:${randomUUID()}`, kind: KINDS.gateVerdict, sessionId: (exec.agent as any).id,
         workspaceId, source: 'plugin', causedBy: null,
         payload: {
           gateId: gate.id, gateVersion: gate.version, verdict: result.verdict, reason: result.reason,
