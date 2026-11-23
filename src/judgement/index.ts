@@ -6,6 +6,7 @@ export {
   type ExtendedJudgementRegistry,
   type JudgementRegistryOptions,
 } from './registry.ts'
+export { parseFrontmatterData } from './yaml.ts'
 export {
   admitDeposit,
   extractDepositSections,

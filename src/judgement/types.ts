@@ -155,8 +155,10 @@ export type AnyStandingOrderDef = [SignalName] extends [never]
 export type RegistryEntry = AnyGateDef | AnyStandingOrderDef | EvaluatorDef
 
 export type ParamSpec =
-  | { type: 'string' | 'number' | 'boolean' }
-  | { type: 'enum'; values: readonly [string, ...string[]] }
+  | { type: 'number'; default?: number; min?: number; max?: number }
+  | { type: 'string'; default?: string }
+  | { type: 'boolean'; default?: boolean }
+  | { type: 'enum'; values: readonly [string, ...string[]]; default?: string }
 
 export interface DepositManifest {
   id: string

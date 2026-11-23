@@ -23,7 +23,7 @@ export interface ExtendedJudgementRegistry extends JudgementRegistry {
 }
 
 interface RuntimeGate {
-  kind: 'gate'; id: string; version: number; point: Point; description: string
+  kind: 'gate'; id: string; version: number; point: Point; description: string; side?: 'hard' | 'soft'
   placement: Placement; requires: readonly string[]; appliesTo?: (ctx: unknown) => boolean
   gate: (ctx: unknown) => Verdict | Promise<Verdict>
   acceptance?: readonly [string, ...string[]]; proof?: ProofRequirement
@@ -51,6 +51,7 @@ const VALID_STAGES = new Set<Stage>(['shadow', 'observe', 'enforce', 'retired'])
 const VALID_ACTIONS = new Set<ActionClass>(['read', 'draft', 'local-write', 'commit', 'push-branch', 'outward-post', 'merge'])
 const VALID_ISOLATIONS = new Set<IsolationTier>(['I1', 'I2', 'I3', 'I4', 'I5'])
 const VALID_CAUSES = new Set<UnmeasuredCause>(['missing-input', 'shell-blind', 'timeout', 'parse-failed', 'threw', 'all-skipped', 'evaluator-stale', 'no-evidence'])
+const HARD_UNMEASURED_CAUSES = new Set<UnmeasuredCause>(['missing-input', 'shell-blind', 'timeout', 'parse-failed', 'threw', 'all-skipped', 'evaluator-stale'])
 
 export function isValidScopeStage(point: unknown, allowedScopes: ReadonlySet<string>): point is `${string}.${string}` {
   if (typeof point !== 'string' || /\s/.test(point)) return false
@@ -80,9 +81,7 @@ function assertVerdictShape(raw: unknown, id: string): Verdict {
     if (typeof v['cause'] !== 'string' || !VALID_CAUSES.has(v['cause'] as UnmeasuredCause) || typeof v['detail'] !== 'string' || v['detail'].trim() === '') {
       throw new Error(`判据 "${id}" 返回 unmeasured 时必须给出合法 cause 与非空 detail`)
     }
-    if (v['disposition'] !== undefined && v['disposition'] !== 'refuse' && v['disposition'] !== 'tolerate') {
-      throw new Error(`判据 "${id}" 返回了未知 disposition`)
-    }
+    if (v['disposition'] !== undefined && v['disposition'] !== 'refuse' && v['disposition'] !== 'tolerate') throw new Error(`判据 "${id}" 返回了未知 disposition`)
     return raw as Verdict
   }
   throw new Error(`判据 "${id}" 返回了未知裁决类型 "${String(v['kind'])}"`)
@@ -109,7 +108,8 @@ function checkProofStaleness(gate: RuntimeGate, proofs: ReadonlyMap<string, Proo
     return `评估器 "${req.evaluator}" 已升版至 v${regEval.entry.version}，原证明 v${parsed.version} 已过期`
   }
   if (proof.reading.verdict !== 'effective') return `评估器读数为 "${proof.reading.verdict}"，未达 effective`
-  if (req.minProbability !== undefined && proof.reading.probability < req.minProbability) {
+  if (!Number.isFinite(proof.reading.probability)) return '评估概率非有限数字'
+  if (req.minProbability !== undefined && (!Number.isFinite(req.minProbability) || proof.reading.probability < req.minProbability)) {
     return `评估概率 ${proof.reading.probability} 低于阈值 ${req.minProbability}`
   }
   return undefined
@@ -119,13 +119,10 @@ function validateGate(gate: RuntimeGate, allowedScopes: ReadonlySet<string>): vo
   assertScopeStage(gate.point, allowedScopes, `判据 "${gate.id}"`)
   if (typeof gate.description !== 'string' || gate.description.trim() === '') throw new Error(`判据 "${gate.id}" 缺少 description`)
   if (typeof gate.gate !== 'function') throw new Error(`判据 "${gate.id}" 缺少 gate 函数`)
-  if (!Array.isArray(gate.requires) || gate.requires.some(r => typeof r !== 'string' || r.trim() === '')) {
-    throw new Error(`判据 "${gate.id}" 的 requires 必须为非空路径字符串数组`)
-  }
+  if (gate.side !== undefined && gate.side !== 'hard' && gate.side !== 'soft') throw new Error(`判据 "${gate.id}" 的 side 非法`)
+  if (!Array.isArray(gate.requires) || gate.requires.some(r => typeof r !== 'string' || r.trim() === '')) throw new Error(`判据 "${gate.id}" 的 requires 必须为非空路径数组`)
   const p = gate.placement
-  if (!p || typeof p !== 'object' || (p.timing !== 'pre' && p.timing !== 'post') || typeof p.enforce !== 'boolean') {
-    throw new Error(`判据 "${gate.id}" 的 placement 非法`)
-  }
+  if (!p || typeof p !== 'object' || (p.timing !== 'pre' && p.timing !== 'post') || typeof p.enforce !== 'boolean') throw new Error(`判据 "${gate.id}" 的 placement 非法`)
   if (p.timing === 'post' && p.enforce) throw new Error(`判据 "${gate.id}" 禁止将事后口 (post) 设为 enforce: true`)
   if (gate.acceptance !== undefined) {
     const acc = gate.acceptance
@@ -135,9 +132,7 @@ function validateGate(gate: RuntimeGate, allowedScopes: ReadonlySet<string>): vo
   }
   if (gate.proof !== undefined) {
     const proof = gate.proof
-    if (typeof proof.evaluator !== 'string' || proof.evaluator.trim() === '') {
-      throw new Error(`判据 "${gate.id}" 的 proof.evaluator 必须为非空字符串`)
-    }
+    if (typeof proof.evaluator !== 'string' || proof.evaluator.trim() === '') throw new Error(`判据 "${gate.id}" 的 proof.evaluator 必须为非空字符串`)
   }
 }
 
@@ -213,15 +208,14 @@ export function createJudgementRegistry(options: JudgementRegistryOptions = {}):
         validateOrder(entry as unknown as RuntimeOrder, ceilings)
         entries.set(entry.id, { kind: 'standing-order', entry: entry as unknown as StandingOrderDef, stage })
       } else if (entry.kind === 'evaluator') {
-        if (typeof entry.measures !== 'string' || entry.measures.trim() === '' || typeof entry.evaluate !== 'function') {
-          throw new Error(`评估器 "${entry.id}" 缺少 measures 或 evaluate`)
-        }
+        if (typeof entry.measures !== 'string' || entry.measures.trim() === '' || typeof entry.evaluate !== 'function') throw new Error(`评估器 "${entry.id}" 缺少 measures 或 evaluate`)
         entries.set(entry.id, { kind: 'evaluator', entry, stage })
       } else throw new Error(`未知条目类型 "${String((entry as { kind?: unknown }).kind)}"`)
     },
 
     recordProof(proof: ProofRecord): void {
       if (!proof || !proof.subject?.id || !parseEvalKey(proof.evaluator)) throw new Error('ProofRecord 格式非法')
+      if (proof.reading.verdict !== 'unmeasured' && !Number.isFinite(proof.reading.probability)) throw new Error('ProofRecord probability 必须为有限数字')
       proofs.set(proof.subject.id, proof)
     },
 
@@ -247,9 +241,7 @@ export function createJudgementRegistry(options: JudgementRegistryOptions = {}):
       const blockers: string[] = []
       const unmeasuredList: { cause: UnmeasuredCause; detail: string }[] = []
       const producedMap: Record<string, unknown> = {}
-      let registered = 0
-      let evaluated = 0
-      let skipped = 0
+      let registered = 0, evaluated = 0, skipped = 0, enforcingRegistered = 0, enforcingEvaluated = 0
 
       for (const item of entries.values()) {
         if (item.kind !== 'gate' || item.stage === 'retired' || item.entry.point !== checkedPoint) continue
@@ -260,9 +252,11 @@ export function createJudgementRegistry(options: JudgementRegistryOptions = {}):
           continue
         }
         registered += 1
+        const enforcing = item.stage === 'enforce' && gate.placement.enforce
+        if (enforcing) enforcingRegistered += 1
         if (res.outcome === 'skipped') { skipped += 1; ran.push({ id: gate.id, version: gate.version, outcome: 'skipped', skip: res.skip }); continue }
         evaluated += 1
-        const enforcing = item.stage === 'enforce' && gate.placement.enforce
+        if (enforcing) enforcingEvaluated += 1
         if (res.outcome === 'allow') {
           ran.push({ id: gate.id, version: gate.version, outcome: 'allow' })
           if (enforcing && res.produced) producedMap[gate.id] = res.produced
@@ -272,20 +266,19 @@ export function createJudgementRegistry(options: JudgementRegistryOptions = {}):
           if (enforcing) blockers.push(...res.blockers); else observed.push({ id: gate.id, version: gate.version, outcome: 'deny', detail })
         } else {
           ran.push({ id: gate.id, version: gate.version, outcome: 'unmeasured', detail: res.detail })
-          if (enforcing && res.disposition !== 'tolerate') unmeasuredList.push({ cause: res.cause, detail: res.detail })
+          const canTolerate = res.disposition === 'tolerate' && gate.side !== 'hard' && !HARD_UNMEASURED_CAUSES.has(res.cause)
+          if (enforcing && !canTolerate) unmeasuredList.push({ cause: res.cause, detail: res.detail })
           else observed.push({ id: gate.id, version: gate.version, outcome: 'unmeasured', detail: res.detail })
         }
       }
 
-      const verdict: Verdict = registered === 0
-        ? { kind: 'allow' }
-        : evaluated === 0
-          ? { kind: 'unmeasured', cause: 'all-skipped', detail: `插入点 "${checkedPoint}" 已注册 ${registered} 条判据，但本轮全部被跳过` }
+      const verdict: Verdict = enforcingRegistered > 0 && enforcingEvaluated === 0
+        ? { kind: 'unmeasured', cause: 'all-skipped', detail: `插入点 "${checkedPoint}" 已注册 ${enforcingRegistered} 条强制判据，但本轮全部被跳过` }
+        : blockers.length > 0
+          ? { kind: 'deny', blockers: blockers as [string, ...string[]] }
           : unmeasuredList.length > 0
             ? { kind: 'unmeasured', cause: unmeasuredList[0]!.cause, detail: unmeasuredList.map(u => u.detail).join('; ') }
-            : blockers.length > 0
-              ? { kind: 'deny', blockers: blockers as [string, ...string[]] }
-              : Object.keys(producedMap).length > 0 ? { kind: 'allow', produced: producedMap } : { kind: 'allow' }
+            : Object.keys(producedMap).length > 0 ? { kind: 'allow', produced: producedMap } : { kind: 'allow' }
 
       const ev: PointEvaluation = { point: checkedPoint as Point, verdict, registered, evaluated, skipped, ran, observed }
       dispatchOnEvaluated(options.onEvaluated, ev)

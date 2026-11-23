@@ -217,15 +217,15 @@ describe('createJudgementRegistry', () => {
     expect(threwEv.verdict.kind).toBe('unmeasured')
     if (threwEv.verdict.kind === 'unmeasured') expect(threwEv.verdict.cause).toBe('threw')
 
-    // 验证 unmeasured 优先级高于 deny，且 observe 阶段只记账不阻塞
+    // 验证 deny > unmeasured > allow，且 ran 仍保留 unmeasured 记录
     reg.register({
       kind: 'gate', id: 'g.deny-lower', version: 1, point: 'verify.test-gate', description: 'deny',
       placement: { timing: 'pre', enforce: true }, requires: ['retry'],
       gate: () => ({ kind: 'deny', blockers: ['blocked-too'] }),
     }, 'enforce')
     const mixed = await reg.evaluate('verify.test-gate', { retry: 1 })
-    expect(mixed.verdict.kind).toBe('unmeasured')
-    expect(mixed.ran.some(r => r.id === 'g.deny-lower' && r.outcome === 'deny')).toBe(true)
+    expect(mixed.verdict).toEqual({ kind: 'deny', blockers: ['[g.deny-lower] blocked-too'] })
+    expect(mixed.ran.some(r => r.id === 'g.throw' && r.outcome === 'unmeasured')).toBe(true)
 
     const obsReg = createJudgementRegistry({ onEvaluated: async () => Promise.reject(new Error('async sink fail')) })
     obsReg.register({
@@ -238,6 +238,48 @@ describe('createJudgementRegistry', () => {
     expect(obsEv.evaluated).toBe(1)
     expect(obsEv.verdict).toEqual({ kind: 'allow' })
     expect(obsEv.observed.map(o => o.id)).toEqual(['g.obs'])
+  })
+
+  it('isolates observe gates from all-skipped and blocks tolerate on hard failures/hard-side gates', async () => {
+    // 场景①：纯 observe 被跳过不得触发 all-skipped 拦截
+    const obsOnly = createJudgementRegistry()
+    obsOnly.register({
+      kind: 'gate', id: 'g.obs-skip', version: 1, point: 'verify.test-gate', description: 'obs skip',
+      placement: { timing: 'pre', enforce: true }, requires: ['retry'],
+      appliesTo: () => false, gate: () => ({ kind: 'allow' }),
+    }, 'observe')
+    expect((await obsOnly.evaluate('verify.test-gate', { retry: 1 })).verdict).toEqual({ kind: 'allow' })
+
+    // 场景②：enforce 全跳过 + observe 执行时，必须报 all-skipped
+    obsOnly.register({
+      kind: 'gate', id: 'g.obs-run', version: 1, point: 'verify.test-gate', description: 'obs run',
+      placement: { timing: 'pre', enforce: true }, requires: ['retry'], gate: () => ({ kind: 'allow' }),
+    }, 'observe')
+    obsOnly.register({
+      kind: 'gate', id: 'g.enf-skip', version: 1, point: 'verify.test-gate', description: 'enf skip',
+      placement: { timing: 'pre', enforce: true }, requires: ['retry'],
+      appliesTo: () => false, gate: () => ({ kind: 'allow' }),
+    }, 'enforce')
+    const masked = await obsOnly.evaluate('verify.test-gate', { retry: 1 })
+    expect(masked.verdict.kind).toBe('unmeasured')
+    if (masked.verdict.kind === 'unmeasured') expect(masked.verdict.cause).toBe('all-skipped')
+
+    // 硬测量失效原因与 side: 'hard' 严禁 tolerate 洗白为 allow
+    const hardReg = createJudgementRegistry()
+    hardReg.register({
+      kind: 'gate', id: 'g.hard-tol', version: 1, point: 'verify.test-gate', description: 'hard',
+      side: 'hard', placement: { timing: 'pre', enforce: true }, requires: ['retry'],
+      gate: () => ({ kind: 'unmeasured', cause: 'no-evidence', detail: 'no evidence', disposition: 'tolerate' }),
+    }, 'enforce')
+    expect((await hardReg.evaluate('verify.test-gate', { retry: 1 })).verdict.kind).toBe('unmeasured')
+
+    const timeoutReg = createJudgementRegistry()
+    timeoutReg.register({
+      kind: 'gate', id: 'g.timeout-tol', version: 1, point: 'verify.test-gate', description: 'timeout',
+      side: 'soft', placement: { timing: 'pre', enforce: true }, requires: ['retry'],
+      gate: () => ({ kind: 'unmeasured', cause: 'timeout', detail: 'timed out', disposition: 'tolerate' }),
+    }, 'enforce')
+    expect((await timeoutReg.evaluate('verify.test-gate', { retry: 1 })).verdict.kind).toBe('unmeasured')
   })
 
   it('downgrades to evaluator-stale when proof is missing or evaluator upgrades beyond proof version', async () => {
@@ -265,6 +307,21 @@ describe('createJudgementRegistry', () => {
     const stale = await reg.evaluate('ticket.test-dispatch', { ticketId: 'T-1' })
     expect(stale.verdict.kind).toBe('unmeasured')
     if (stale.verdict.kind === 'unmeasured') expect(stale.verdict.cause).toBe('evaluator-stale')
+
+    const nanProof = {
+      subject: { id: 'g.nan', version: 1 }, evaluator: 'eval.core@v1' as const,
+      reading: { verdict: 'effective' as const, probability: Number.NaN, reasons: ['bad'] }, at: { seq: 2, id: 'm0-2' },
+    }
+    const nanReg = createJudgementRegistry({ proofs: [nanProof] })
+    nanReg.register({
+      kind: 'gate', id: 'g.nan', version: 1, point: 'ticket.test-dispatch', description: 'nan',
+      placement: { timing: 'pre', enforce: true }, requires: ['ticketId'],
+      proof: { evaluator: 'eval.core', minVersion: 1, minProbability: 0.8 },
+      gate: () => ({ kind: 'allow' }),
+    }, 'enforce')
+    expect(() => nanReg.recordProof(nanProof)).toThrow(/有限数字/)
+    const nanEv = await nanReg.evaluate('ticket.test-dispatch', { ticketId: 'T-1' })
+    expect(nanEv.verdict.kind === 'unmeasured' && nanEv.verdict.cause).toBe('evaluator-stale')
   })
 })
 
@@ -383,6 +440,121 @@ only intent
     expect(missingSec.admitted).toBe(false)
     if (!missingSec.admitted) {
       expect(missingSec.violations.filter(v => v.rule === 'missing-prose-section')).toHaveLength(4)
+    }
+  })
+
+  it('hardens YAML parsing, blocks D5 coercion bypasses, stops path traversal, and validates RSI param tuning ranges', async () => {
+    // 1. YAML 原型污染键、偶数反斜杠引号与嵌套深度限制
+    const protoBypass = admitDeposit(`---
+id: verify.proto
+version: 1
+kind: gate
+point: verify.test-gate
+params: {}
+trust: owner
+cases: cases/
+__proto__:
+  polluted: true
+---
+${VALID_PROSE}`)
+    expect(protoBypass.admitted).toBe(false)
+
+    const inlineProto = admitDeposit(`---
+id: verify.inline-proto
+version: 1
+kind: gate
+point: verify.test-gate
+params: { __proto__: { type: string } }
+trust: owner
+cases: cases/
+---
+${VALID_PROSE}`)
+    expect(inlineProto.admitted).toBe(false)
+
+    const escapedQuoteOk = admitDeposit(`---
+id: "verify.quote\\\\" # trailing comment after even backslashes
+version: 1
+kind: gate
+point: verify.test-gate
+params:
+  note:
+    type: string
+    default: "ok\\\\"
+trust: owner
+cases: "cases/"
+---
+${VALID_PROSE}`)
+    expect(escapedQuoteOk.admitted).toBe(true)
+    if (escapedQuoteOk.admitted) expect(escapedQuoteOk.manifest.id).toBe('verify.quote\\')
+
+    // 2. D5 enforce: "true" 类型强转绕过与 action 伪装绕过必须被拦
+    const coercionBypass = admitDeposit(`---
+id: lessons.coercion
+version: 1
+kind: counter-rule
+point: verify.test-gate
+params: { threshold: { type: number, default: 3, min: 2, max: 10 } }
+trust: owner
+cases: cases/
+enforce: "true"
+action: {}
+---
+${VALID_PROSE}`)
+    expect(coercionBypass.admitted).toBe(false)
+
+    const stringActionBypass = admitDeposit(`---
+id: lessons.str-action
+version: 1
+kind: counter-rule
+point: verify.test-gate
+params: { threshold: { type: number } }
+trust: owner
+cases: cases/
+stage: shadow
+enforce: false
+action: "rule.promote"
+---
+${VALID_PROSE}`)
+    expect(stringActionBypass.admitted).toBe(false)
+
+    // 3. 路径穿越拦截
+    const traversal = admitDeposit(`---
+id: verify.traversal
+version: 1
+kind: gate
+point: verify.test-gate
+params: {}
+trust: owner
+cases: ../outside
+---
+${VALID_PROSE}`)
+    expect(traversal.admitted).toBe(false)
+
+    const absDir = mkdtempSync(join(tmpdir(), 'deposit-abs-'))
+    tempDirs.push(absDir)
+    writeFileSync(join(absDir, 'DEPOSIT.md'), `---
+id: verify.abs
+version: 1
+kind: gate
+point: verify.test-gate
+params: {}
+trust: owner
+cases: /tmp/evil
+---
+${VALID_PROSE}`)
+    const pkg = await loadDepositPackage(absDir)
+    expect(pkg.admission.admitted).toBe(false)
+
+    // 4. RSI 调参槽位校验与对象入口五节正文一致性
+    const badRange = admitDeposit({
+      id: 'verify.bad-range', version: 1, kind: 'gate', point: 'verify.test-gate',
+      params: { threshold: { type: 'number', default: 1, min: 3, max: 10 } },
+      trust: 'owner', prose: 'missing 5 sections', cases: 'cases/',
+    })
+    expect(badRange.admitted).toBe(false)
+    if (!badRange.admitted) {
+      expect(badRange.violations.some(v => v.rule === 'invalid-param-spec')).toBe(true)
+      expect(badRange.violations.some(v => v.rule === 'missing-prose-section')).toBe(true)
     }
   })
 })
