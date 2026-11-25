@@ -397,6 +397,22 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
       skills: Object.fromEntries(skills),
       orchestrator: composePrompt(body, 'orchestrator'), worker: composePrompt(body, 'worker'), scope: '' }
   } },
+  'GET projection/state': { answer: () => ({
+    avatar: { posture: 'patrol_idle', zone: 'board', shift: 'day', paused: false, workingCount: 0, deviation: null, bark: null,
+      counts: { failed: 0, blocked: 0, personWaiting: 0, working: 0, pendingConflicts: 0, pendingRulings: 0, pendingVerifications: 0 } },
+    schedule: [], updatedAt: '2026-11-26T00:00:00.000Z',
+  }) },
+  'GET projection/notebook': { answer: () => ({
+    exists: false, revision: 0, updatedAt: null,
+    counts: { total: 0, pending: 0, asked: 0, resolved: 0, conflicts: 0, rulings: 0, verifications: 0, depositProposals: 0, dueReminders: 0 },
+    groups: { pending: [], asked: [], resolved: [] },
+  }) },
+  'GET projection/spine': { query: ['sinceSeq', 'limit', 'ticketId', 'type'], answer: () => ({
+    items: [], totalMatched: 0, headSeq: 0, nextSinceSeq: null, hasMore: false,
+  }) },
+  'GET projection/deposits': { answer: () => ({
+    total: 0, admittedCount: 0, totalTriggers: 0, allowCount: 0, denyCount: 0, unmeasuredCount: 0, items: [],
+  }) },
 }
 
 function match(method: string, segments: string[]) {

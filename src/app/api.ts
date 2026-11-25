@@ -8,6 +8,12 @@ import type { SettingsView } from './views/settings.ts'
 import type { SourceStatusView } from './views/sources.ts'
 import type { DecisionListView, SearchView, ThreadDetailView, ThreadListView } from './views/threads.ts'
 import type { TicketListView } from './views/tickets.ts'
+import type {
+  DepositsProjectionView,
+  NotebookProjectionView,
+  SpineProjectionView,
+  StateProjectionView,
+} from '../projection/types.ts'
 
 export const TICKET_FILTERS = ['open', 'person', 'working', 'idle', 'ended'] as const
 export const THREAD_FILTERS = ['subscribed', 'evaluating', 'recent', 'all'] as const
@@ -43,6 +49,10 @@ export interface Api {
   'GET prompts': { query?: { revision?: number; offset?: number }; response: PromptsView }
   'PUT prompts': { body: { config: PromptConfig; baseRevision: number }; response: { revision: number; context_delivery: Delivery } }
   'POST prompts/preview': { body: PromptConfig; response: ReturnType<Prompts['preview']> }
+  'GET projection/state': { response: StateProjectionView }
+  'GET projection/notebook': { response: NotebookProjectionView }
+  'GET projection/spine': { query?: { sinceSeq?: number; limit?: number; ticketId?: string; type?: string }; response: SpineProjectionView }
+  'GET projection/deposits': { response: DepositsProjectionView }
 }
 type Path<K> = K extends `${string} ${infer P}` ? P : never
 type Params<P> = P extends `${string}:${infer Name}/${infer Rest}` ? Record<Name, string> & Params<Rest>
