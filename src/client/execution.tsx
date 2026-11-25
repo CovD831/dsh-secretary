@@ -1,6 +1,7 @@
 /** Execution status view (active Tickets and pause control) and Execution settings group (Executor capacity and workspace environment). */
 import { useRef, useState } from 'react'
 import { TICKET_FILTERS, type TicketFilter } from '../app/api.ts'
+import type { ApprovalMode } from '../policy.ts'
 import { LIMITS } from '../limits.ts'
 import { usePoll, type SettingsView, type SourceView, type StateView } from './api.ts'
 import { DisclosureRow, Icon, InfoTip, Input, Pill } from './controls.tsx'
@@ -72,14 +73,33 @@ function EnvironmentVariables({ groups, sources,
     </div>
   </DisclosureRow>
 }
+const APPROVAL_MODES: readonly ApprovalMode[] = ['always-ask', 'smart-auto', 'full-trust']
+const optInt = (text: string): number | undefined => text.trim() ? Number(text) : undefined
+
 export function ExecutionSettings() {
   const { t } = usePanel()
   const { blocks, environment, sources } = useSettings().settings
   // Keep raw user text (such as separators between blocked commands) in the draft and parse only on save.
   const executor = blocks.executor.value
-  const saved = { ...executor, maxWorkers: String(executor.maxWorkers), blockedCommands: executor.blockedCommands.join(' ') }
-  const draft = useBlockDraft('executor', saved, blocks.executor.revision,
-    value => ({ ...value, maxWorkers: numberOf(value.maxWorkers), blockedCommands: value.blockedCommands.split(/[\s,]+/).filter(Boolean) }))
+  const saved = {
+    model: executor.model, maxWorkers: String(executor.maxWorkers), directory: executor.directory,
+    prepare: executor.prepare, blockedCommands: executor.blockedCommands.join(' '),
+    approvalMode: (executor.approvalMode ?? '') as '' | ApprovalMode,
+    maxTurns: executor.maxTurns !== undefined ? String(executor.maxTurns) : '',
+    maxStallTurns: executor.maxStallTurns !== undefined ? String(executor.maxStallTurns) : '',
+    maxTokens: executor.maxTokens !== undefined ? String(executor.maxTokens) : '',
+  }
+  const draft = useBlockDraft('executor', saved, blocks.executor.revision, value => {
+    const maxTurns = optInt(value.maxTurns), maxStallTurns = optInt(value.maxStallTurns), maxTokens = optInt(value.maxTokens)
+    return {
+      model: value.model, maxWorkers: numberOf(value.maxWorkers), directory: value.directory, prepare: value.prepare,
+      blockedCommands: value.blockedCommands.split(/[\s,]+/).filter(Boolean),
+      ...(value.approvalMode ? { approvalMode: value.approvalMode } : {}),
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
+      ...(maxStallTurns !== undefined ? { maxStallTurns } : {}),
+      ...(maxTokens !== undefined ? { maxTokens } : {}),
+    }
+  })
   const value = draft.value
   const edit = (next: Partial<typeof value>) => draft.edit({ ...value, ...next })
   const prepare = useRef<HTMLTextAreaElement>(null)
@@ -100,6 +120,26 @@ export function ExecutionSettings() {
             <Input type="number" min={LIMITS.maxWorkers.min} max={LIMITS.maxWorkers.max} required value={value.maxWorkers}
               onChange={event => edit({ maxWorkers: event.target.value })} />
           </Field>
+          <Field label={t('approvalMode')} hint={t('approvalModeHint')}>
+            <select className="dt-select" value={value.approvalMode} onChange={e => edit({ approvalMode: e.target.value as '' | ApprovalMode })}>
+              <option value="">{t('approvalMode.inherit')}</option>
+              {APPROVAL_MODES.map(mode => <option key={mode} value={mode}>{t(`approvalMode.${mode}`)}</option>)}
+            </select>
+          </Field>
+          <div className="dt-grid3">
+            <Field label={t('breakerTurns')} hint={t('breakerTurnsHint')}>
+              <Input type="number" min={1} max={200} placeholder={t('unsetValue')} value={value.maxTurns}
+                onChange={e => edit({ maxTurns: e.target.value })} />
+            </Field>
+            <Field label={t('breakerStallTurns')} hint={t('breakerStallTurnsHint')}>
+              <Input type="number" min={1} max={50} placeholder={t('unsetValue')} value={value.maxStallTurns}
+                onChange={e => edit({ maxStallTurns: e.target.value })} />
+            </Field>
+            <Field label={t('breakerTokens')} hint={t('breakerTokensHint')}>
+              <Input type="number" min={100} max={50000000} placeholder={t('unsetValue')} value={value.maxTokens}
+                onChange={e => edit({ maxTokens: e.target.value })} />
+            </Field>
+          </div>
         </div>
         <div className="dt-form dt-block">
           <h2 className="dt-block-title">{t('term.environment')}<InfoTip text={t('environmentIntro')} /></h2>

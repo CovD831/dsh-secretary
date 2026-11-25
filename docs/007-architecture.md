@@ -325,7 +325,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/governance.ts`, `src/app/governance-ops.ts` | Runtime governance wiring for spine, judgement gates, deposit auto-discovery/`LEDGER.md`, workspace provisioning, context capsules, FTS5 memory recall/patches, and RSI/calibration operations |
 | `src/app/ruling-queue.ts` | Unified single-item ruling queue merging secretary questions, DeepSeek Harness `approval/request` prompts, and circuit-breaker/unknown-side-effect escalations |
 | `src/app/governance-ruling.ts` | Governance ruling handler for Feishu interactive card callbacks: operator authorization, idempotency, M1–M6 memory persistence, and M0 spine recording |
-| `src/projection/types.ts`, `avatar-state.ts`, `reader.ts`, `index.ts` | Read-only projection engine deriving pixel-frontend state and avatar bark from M0 spine and Store without mutating sources of truth |
+| `src/projection/types.ts`, `avatar-state.ts`, `shard-cache.ts`, `reader.ts`, `index.ts` | Read-only projection engine deriving pixel-frontend state and avatar bark from M0 spine and Store with bounded incremental shard cache |
 | `src/app/runtime.ts` | The Runtime, the composition root, with its start and stop |
 | `src/app/setup.ts` | Setup, and `setupChanged`, whether a save changes a field setup reads |
 | `src/app/passes.ts` | Passes, the pass scheduler |
@@ -398,9 +398,12 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/client/api.ts` | Calls and polls of the management API, typed by `src/app/api.ts`, and the Decision filters of the Eval status |
 | `src/client/route.ts` | The tabs, the settings groups, the typed routes that `parseRoute` reads, and the route memory with the settings group opened last |
 | `src/client/overview.tsx` | The overview |
+| `src/client/secretary-console.tsx` | The Secretary Console: desktop message bus, live feed with handover/dispatch cards, single-item ruling queue, and avatar/schedule view |
+| `src/client/studios.tsx`, `studio-deposits.tsx`, `studio-memory.tsx`, `studio-rsi.tsx` | The Governance Studios shell and its three tabs: Deposits registry & stage ladder, Memory & M6 notebook studio, and Statistical RSI calibration + F1 pixel proof |
 | `src/client/source.tsx`, `trigger.tsx`, `eval.tsx`, `execution.tsx` | One file per stage: its status, and its settings where it has some |
 | `src/client/thread.tsx`, `ticket.tsx` | The record pages: a Thread with its timeline, and a Ticket with its authorization, Inputs and Assignments |
 | `src/client/settings.tsx` | The Settings tab: the group navigation and the group on screen |
+| `src/client/workspaces-settings.tsx` | Multi-workspace settings block editor (`I1`–`I5`, repository, branch, CoW, verification, and approval tier) |
 | `src/client/settings-kit.tsx` | The building blocks of settings blocks: the settings the stage groups share, `useBlockDraft`, the fields, among them a Source kind's, and the history of saves |
 | `src/client/prompts.tsx` | The Prompts settings: the page owns the view it read and its editor the draft, and the Edit, Full prompt and History tabs render from them; a built-in part's editor shows a changed default and keeps or drops the override |
 | `src/client/prompt-config.ts` | The prompt configuration by section, by the team sections, skill names, built-in parts (`part/<key>`, with `withOverride`) and part headings the prompt views give, and the line diff of the full prompt, as pure functions |
@@ -412,7 +415,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/client/markdown.ts` | The Markdown subset of reports and questions, and the bare addresses in messages, as blocks and inline parts |
 | `src/client/text.ts` | Copy by key and the wording of domain values, reasons, senders and times |
 | `src/client/marks.ts` | The marks of the states the views classify: a Ticket's or a Thread's stage, a Source's state and a Decision's outcome, each as a dot, an icon, a tone and a label |
-| `src/client/locales.ts` | All copy in both languages, and the glossary of [001 Domain model](001-domain.md) |
+| `src/client/locales.ts`, `locales-m4.ts` | All copy in both languages, and the glossary of [001 Domain model](001-domain.md) |
 | `src/client/client.css`, `css.d.ts` | The panel's stylesheet, loaded as text |
 
 `src/sources/github.ts` and `src/sources/feishu.ts` are also the entries of the two Source plugins, built by `tsdown.config.ts` and exported in `package.json` as `./github-watch` and `./feishu-watch`. The bundle's `cordis.patch.yml` inserts the three plugins, with Feishu disabled.
@@ -478,6 +481,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/milestone2-deposits-gates.spec.ts` | Milestone 2 verification: 4 zero-code declarative building blocks, all 10 seed deposit packages, `orchestrator_deposit_author`, stage transitions, `LEDGER.md`, and `PreExecuteCompletionGuard` enforcement |
 | `tests/milestone3-memory-rsi.spec.ts` | Milestone 3 verification: CAS/resident write guards, SQLite FTS5 rebuild & M0 fallback, user-direct override, M3 pitfall notes, M6 lifecycle & believability metrics, L1–L13 backfill, 3-day clustering, bootstrap CI, holdout opener, LOO ablation, and temperature-scaling ECE reduction |
 | `tests/f1-pixel-proof.spec.ts` | Parallel track F1 verification: 46-color frozen palette Oklab quantization, integer 2× scaling, suite-footprint non-overlap, deterministic seed layout, 4-state screen shape badges, and 4-mood secretary portraits |
+| `tests/milestone4-studios.spec.tsx` | Milestone 4 verification: incremental M0 shard cache hits, secretary desktop console & single-item ruling queue, deposit/memory/RSI governance studios, F1 proof preview, 3-tier approval, circuit-breaker caps, and multi-workspace settings |
 
 `tests/fixtures/` holds what several tests share: `host.ts`, a simulated DeepSeek Harness host; `panel-server.ts` and `panel.tsx`, the fake management API and the panel around a page; `deployment.ts`, a resolved deployment; `git.ts`, the environment of every git the tests start, which names no repository; and `async.ts`.
 

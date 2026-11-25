@@ -108,6 +108,16 @@ export interface PanelServer {
   opened: string[]
   dropped: DroppedReply[]
   failing: Extract<Problem, { kind: 'outgoing' }>['outgoing'][]
+  projectionState?: ApiResponse<'GET projection/state'>
+  notebook?: ApiResponse<'GET projection/notebook'>
+  projectionDeposits?: ApiResponse<'GET projection/deposits'>
+  rulings?: ApiResponse<'GET rulings'>
+  secretaryFeed?: ApiResponse<'GET secretary/feed'>
+  depositsLedger?: ApiResponse<'GET deposits/ledger'>
+  memoryStudio?: ApiResponse<'GET memory/studio'>
+  rsiWorkbench?: ApiResponse<'GET rsi/workbench'>
+  ablationResult?: ApiResponse<'POST rsi/ablation'>
+  pixelProof?: ApiResponse<'GET pixel-office/proof'>
 }
 export let server: PanelServer
 
@@ -399,12 +409,12 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
       skills: Object.fromEntries(skills),
       orchestrator: composePrompt(body, 'orchestrator'), worker: composePrompt(body, 'worker'), scope: '' }
   } },
-  'GET projection/state': { answer: () => ({
+  'GET projection/state': { answer: () => server.projectionState ?? ({
     avatar: { posture: 'patrol_idle', zone: 'board', shift: 'day', paused: false, workingCount: 0, deviation: null, bark: null,
       counts: { failed: 0, blocked: 0, personWaiting: 0, working: 0, pendingConflicts: 0, pendingRulings: 0, pendingVerifications: 0 } },
     schedule: [], updatedAt: '2026-11-26T00:00:00.000Z',
   }) },
-  'GET projection/notebook': { answer: () => ({
+  'GET projection/notebook': { answer: () => server.notebook ?? ({
     exists: false, revision: 0, updatedAt: null,
     counts: { total: 0, pending: 0, asked: 0, resolved: 0, conflicts: 0, rulings: 0, verifications: 0, depositProposals: 0, dueReminders: 0 },
     groups: { pending: [], asked: [], resolved: [] },
@@ -412,19 +422,72 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   'GET projection/spine': { query: ['sinceSeq', 'limit', 'ticketId', 'type'], answer: () => ({
     items: [], totalMatched: 0, headSeq: 0, nextSinceSeq: null, hasMore: false,
   }) },
-  'GET projection/deposits': { answer: () => ({
+  'GET projection/deposits': { answer: () => server.projectionDeposits ?? ({
     total: 0, admittedCount: 0, totalTriggers: 0, allowCount: 0, denyCount: 0, unmeasuredCount: 0, items: [],
   }) },
-  'GET rulings': { query: ['status'], answer: () => ({ active: null, pendingCount: 0, items: [] }) },
-  'POST rulings/:id/decide': { body: true, answer: () => ({ ok: true }) },
-  'GET secretary/feed': { answer: () => ({ items: [], activeRuling: null, pendingCount: 0 }) },
-  'POST secretary/messages': { body: true, answer: () => ({ triggerId: 'desk-1', received: 'stored' }) },
-  'GET deposits/ledger': { answer: () => ({ records: [], markdown: '# Deposits Ledger' }) },
-  'POST deposits/:id/stage': { body: true, answer: ({ params, body }) => ({ ok: true as const, id: params.id, fromStage: 'shadow' as const, toStage: body.toStage, stageOverrides: { [params.id]: body.toStage } }) },
-  'GET memory/studio': { answer: () => ({ entries: [], pendingPatches: [], metrics: { repeatQuestionRate: 0, falseRecallCount: 0, weeklyCorrectedMemories: 0, totalQuestions: 0, repeatQuestions: 0, windowDays: 7 } }) },
-  'POST memory/direct': { body: true, answer: () => ({ sourceRef: { seq: 1, id: 'mem:user_direct:1' }, writeResult: { kind: 'rejected' as const, reason: 'invalid-input' as const, detail: 'stub' }, tombstonedIds: [] }) },
-  'POST memory/patches/:index': { body: true, answer: () => ({ ok: true }) },
-  'GET rsi/workbench': { answer: () => ({
+  'GET rulings': { query: ['status'], answer: () => server.rulings ?? ({ active: null, pendingCount: 0, items: [] }) },
+  'POST rulings/:id/decide': { body: true, answer: ({ params, body }) => {
+    if (server.rulings?.active?.id === params.id) {
+      const rest = server.rulings.items.filter(i => i.id !== params.id && i.status === 'pending')
+      server.rulings = { active: rest[0] ?? null, pendingCount: rest.length, items: server.rulings.items.map(i => i.id === params.id ? { ...i, status: 'decided', decision: body.decision } : i) }
+    }
+    return { ok: true }
+  } },
+  'GET secretary/feed': { answer: () => server.secretaryFeed ?? ({ items: [], activeRuling: null, pendingCount: 0 }) },
+  'POST secretary/messages': { body: true, answer: ({ body }) => {
+    if (server.secretaryFeed) {
+      server.secretaryFeed = {
+        ...server.secretaryFeed,
+        items: [...server.secretaryFeed.items, { id: 'desk-1', at: '2026-11-26T00:00:00Z', role: 'boss', kind: 'boss_message', text: body.text, triggerId: 'desk-1' }],
+      }
+    }
+    return { triggerId: 'desk-1', received: 'stored' }
+  } },
+  'GET deposits/ledger': { answer: () => server.depositsLedger ?? ({ records: [], markdown: '# Deposits Ledger' }) },
+  'POST deposits/:id/stage': { body: true, answer: ({ params, body }) => {
+    if (server.depositsLedger) {
+      server.depositsLedger = {
+        ...server.depositsLedger,
+        records: server.depositsLedger.records.map(r => r.id === params.id ? { ...r, stage: body.toStage } : r),
+      }
+    }
+    if (server.projectionDeposits) {
+      server.projectionDeposits = {
+        ...server.projectionDeposits,
+        items: server.projectionDeposits.items.map(i => i.id === params.id ? { ...i, stage: body.toStage } : i),
+      }
+    }
+    return { ok: true as const, id: params.id, fromStage: 'shadow' as const, toStage: body.toStage, stageOverrides: { [params.id]: body.toStage } }
+  } },
+  'GET memory/studio': { answer: () => server.memoryStudio ?? ({ entries: [], pendingPatches: [], metrics: { repeatQuestionRate: 0, falseRecallCount: 0, weeklyCorrectedMemories: 0, totalQuestions: 0, repeatQuestions: 0, windowDays: 7 } }) },
+  'POST memory/direct': { body: true, answer: ({ body }) => {
+    const scope = (body.scope?.startsWith('workspace:') || body.scope?.startsWith('person:') ? body.scope : 'global') as 'global' | `workspace:${string}` | `person:${string}`
+    const entry = {
+      id: 'mem-direct-1', statement: body.statement, scope, sourceType: 'user_direct' as const,
+      sourceRef: { seq: 1, id: 'mem:user_direct:1' }, observedAt: '2026-11-26T00:00:00Z', validFrom: '2026-11-26T00:00:00Z',
+      confidence: 'stated' as const, author: 'user', taint: 'clean' as const, clearance: body.clearance ?? 'public' as const,
+      ...(body.topicKey ? { topicKey: body.topicKey } : {}), ...(body.m2Kind ? { m2Kind: body.m2Kind } : {}),
+      ...(body.resident !== undefined ? { resident: body.resident } : {}),
+    }
+    if (server.memoryStudio) {
+      server.memoryStudio = {
+        ...server.memoryStudio,
+        entries: [...server.memoryStudio.entries, { relPath: `${body.layer ?? 'm2'}/profile.md`, layer: body.layer ?? 'm2', revision: 1, entry }],
+      }
+    }
+    return { sourceRef: entry.sourceRef, writeResult: { kind: 'accepted' as const, entry, pagePath: `${body.layer ?? 'm2'}/profile.md`, supersededIds: [] }, tombstonedIds: [] }
+  } },
+  'POST memory/patches/:index': { body: true, answer: ({ params }) => {
+    const idx = Number(params.index)
+    if (server.memoryStudio && Number.isInteger(idx) && idx >= 0 && idx < server.memoryStudio.pendingPatches.length) {
+      server.memoryStudio = {
+        ...server.memoryStudio,
+        pendingPatches: server.memoryStudio.pendingPatches.filter((_, i) => i !== idx),
+      }
+    }
+    return { ok: true }
+  } },
+  'GET rsi/workbench': { answer: () => server.rsiWorkbench ?? ({
     snapshot: {
       eventCount: 0, taskRecords: [], replayCases: [], joinedSessionMetrics: [],
       labelCounts: { 'L1:verify_failed': 0, 'L2:gate_denied_fixed': 0, 'L3:rework_retry': 0, 'L4:circuit_broken': 0, 'L5:tool_error': 0, 'L6:escalation_queued': 0, 'L7:ruling_decided': 0, 'L8:memory_rejected': 0, 'L9:memory_corrected': 0, 'L10:recall_dropped': 0, 'L11:unmeasured_gap': 0, 'L12:external_taint': 0, 'L13:draft_abandoned': 0 },
@@ -440,9 +503,9 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     calibration: { state: 'unmeasured' as const, ece: undefined, totalLabeled: 0, numBins: 10, bins: [], reason: 'empty' },
     openedHoldouts: {},
   }) },
-  'POST rsi/ablation': { body: true, answer: () => ({ baseline: { totalCases: 0, caseIds: [], triggeredCount: 0, catches: 0, falseBlocks: 0, misses: 0, trueAllows: 0, unmeasuredCount: 0, unknownLabelCount: 0, coverageDiscount: 1, netBenefit: 0, marginalCost: { deltaTokens: undefined, deltaMs: undefined, state: 'unmeasured' as const }, cases: [] }, impacts: [], redundantGateIds: [], harmfulGateIds: [], conflicts: [] }) },
+  'POST rsi/ablation': { body: true, answer: () => server.ablationResult ?? ({ baseline: { totalCases: 0, caseIds: [], triggeredCount: 0, catches: 0, falseBlocks: 0, misses: 0, trueAllows: 0, unmeasuredCount: 0, unknownLabelCount: 0, coverageDiscount: 1, netBenefit: 0, marginalCost: { deltaTokens: undefined, deltaMs: undefined, state: 'unmeasured' as const }, cases: [] }, impacts: [], redundantGateIds: [], harmfulGateIds: [], conflicts: [] }) },
   'POST rsi/holdout': { body: true, answer: () => ({ ok: false as const, reason: 'stub' }) },
-  'GET pixel-office/proof': { answer: () => ({ workspaceId: 'secretary-main', seed: 20261126, width: 1440, height: 900, paletteColors: 46, html: '<!doctype html>' }) },
+  'GET pixel-office/proof': { answer: () => server.pixelProof ?? ({ workspaceId: 'secretary-main', seed: 20261126, width: 1440, height: 900, paletteColors: 46, html: '<!doctype html>' }) },
 }
 
 function match(method: string, segments: string[]) {

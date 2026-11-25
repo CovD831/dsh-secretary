@@ -11,8 +11,10 @@ import { OverviewPage } from './overview.tsx'
 import { PanelProvider, usePanel, usePanelData } from './provider.tsx'
 import { HOME, TABS, initialLocation, lastSettingsGroup, remember, routeLabel, settingsRoute, type Location, type Route,
   type Tab } from './route.ts'
+import { SecretaryConsole } from './secretary-console.tsx'
 import { SettingsPage } from './settings.tsx'
 import { SourceStatus } from './source.tsx'
+import { StudiosPage } from './studios.tsx'
 import { actorName, errorText, reasonLabel, valueLabel, type T, readableMarkers } from './text.ts'
 import { ThreadPage } from './thread.tsx'
 import { TicketPage } from './ticket.tsx'
@@ -147,6 +149,8 @@ function Pages({ route, openTab, deploymentForm }: { route: Route; openTab: (tab
   const page = (() => {
     switch (route.page) {
       case 'overview': return <OverviewPage />
+      case 'secretary': return <SecretaryConsole />
+      case 'studios': return <StudiosPage tab={route.query?.tab ?? 'deposits'} />
       case 'source': return <SourceStatus />
       case 'trigger': return route.id !== undefined ? <ThreadPage key={route.id} id={route.id} target={route.query?.trigger} />
         : <TriggerStatus filter={route.query?.filter ?? 'subscribed'} />

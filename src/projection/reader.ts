@@ -1,5 +1,5 @@
 /** 严格只读投影读取器：零 SQLite/记忆目录写入，消费 Store 与 stateDir 生成视图。 */
-import { lstat, readdir, readFile } from 'node:fs/promises'
+import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Store } from '../app/store.ts'
 import { ticketStage } from '../core/stage.ts'
@@ -10,10 +10,13 @@ import { readMemoryPage } from '../memory/codec.ts'
 import type { AttentionItem, LedgerPage } from '../memory/types.ts'
 import type { SourceRef, SpineEnvelope } from '../spine/types.ts'
 import { compileAvatarState, compileDailySchedule, isValidSourceRef } from './avatar-state.ts'
+import { getProjectionShardCacheStats, parseSpineEnvelope, readCachedShardEvents, type ProjectionShardCacheStats } from './shard-cache.ts'
 import type {
   DepositGateStats, DepositProjectionItem, DepositsProjectionView, M2MonikerRef,
   NotebookItem, NotebookProjectionView, SpineProjectionView, SpineQuery, StateProjectionView, TicketStateRef,
 } from './types.ts'
+
+export { getProjectionShardCacheStats, type ProjectionShardCacheStats }
 
 const SHARD_FILE_RE = /^\d{4}-\d{2}-\d{2}\.jsonl$/
 const isRecord = (val: unknown): val is Record<string, unknown> => Boolean(val && typeof val === 'object' && !Array.isArray(val))
@@ -65,30 +68,13 @@ export async function readNotebookProjection(stateDir: string, now = new Date())
   }
 }
 
-function parseEnvelope(rawLine: string): SpineEnvelope | undefined {
-  const line = rawLine.trim()
-  if (!line) return undefined
-  try {
-    const obj = JSON.parse(line) as Partial<SpineEnvelope>
-    if (!obj || typeof obj.seq !== 'number' || !Number.isSafeInteger(obj.seq) || obj.seq <= 0) return undefined
-    return typeof obj.id === 'string' && obj.id.trim() && typeof obj.type === 'string' ? (obj as SpineEnvelope) : undefined
-  } catch { return undefined }
-}
-
 async function readDiskShards(stateDir: string): Promise<SpineEnvelope[]> {
   const m0Dir = join(stateDir, 'memory', 'm0')
   let names: string[]
   try { names = (await readdir(m0Dir)).filter(n => SHARD_FILE_RE.test(n)).sort() } catch { return [] }
   const out: SpineEnvelope[] = []
   for (const name of names) {
-    const filePath = join(m0Dir, name)
-    try {
-      const info = await lstat(filePath)
-      if (!info.isFile() || info.isSymbolicLink()) continue
-      const raw = await readFile(filePath, 'utf8')
-      const complete = raw.endsWith('\n') ? raw : raw.slice(0, raw.lastIndexOf('\n') + 1)
-      for (const line of complete.split('\n')) { const ev = parseEnvelope(line); if (ev) out.push(ev) }
-    } catch { continue }
+    try { for (const ev of await readCachedShardEvents(join(m0Dir, name))) out.push(ev) } catch { continue }
   }
   return out
 }
@@ -102,7 +88,7 @@ function readSqliteBuffer(store: Pick<Store, 'db'> | undefined): SpineEnvelope[]
     const out: SpineEnvelope[] = []
     for (const r of rows) {
       if (typeof r.value !== 'string') continue
-      const ev = parseEnvelope(r.value)
+      const ev = parseSpineEnvelope(r.value)
       if (ev) out.push(ev)
     }
     return out

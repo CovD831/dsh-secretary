@@ -4,8 +4,10 @@
 import { USER_ERRORS } from '../core/errors.ts'
 import { SETUP_PROBLEMS } from '../setup.ts'
 import { HEALTH_TEXT } from '../sources/host.ts'
+import { M4_TEXT } from './locales-m4.ts'
 
 const TEXT = {
+  ...M4_TEXT,
   // Shared
   title: ['Superagent', 'Superagent'],
   close: ['关闭', 'Close'],

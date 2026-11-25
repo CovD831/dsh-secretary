@@ -8,8 +8,9 @@ import { usePanel } from './provider.tsx'
 import { SETTINGS_GROUPS, settingsRoute, type SettingsGroup } from './route.ts'
 import { SettingsProvider } from './settings-kit.tsx'
 import { SourceSettings } from './source.tsx'
+import { WorkspacesSettings } from './workspaces-settings.tsx'
 
-const STAGE_GROUPS: readonly SettingsGroup[] = ['source', 'eval', 'execution']
+const STAGE_GROUPS: readonly SettingsGroup[] = ['source', 'eval', 'execution', 'workspaces']
 export function SettingsPage({ group, query, state, deploymentForm }: {
   group: SettingsGroup; query: { source?: string; version?: string }; state: StateView; deploymentForm: DeploymentForm
 }) {
@@ -19,6 +20,7 @@ export function SettingsPage({ group, query, state, deploymentForm }: {
       case 'source': return <SettingsProvider><SourceSettings {...query.source ? { focus: query.source } : {}} /></SettingsProvider>
       case 'eval': return <SettingsProvider><EvalSettings version={query.version} /></SettingsProvider>
       case 'execution': return <SettingsProvider><ExecutionSettings /></SettingsProvider>
+      case 'workspaces': return <SettingsProvider><WorkspacesSettings /></SettingsProvider>
       case 'prompts': return <PromptsPage />
       case 'deployment': return <DeploymentPage setup={state.setup} form={deploymentForm} />
     }
