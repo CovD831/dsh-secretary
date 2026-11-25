@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // Milestone 4 verification: incremental shard cache, secretary console, three governance studios, and multi-workspace/approval settings.
-import { appendFileSync, mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, mkdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, onTestFinished } from 'vitest'
@@ -42,16 +42,27 @@ it('reuses unchanged M0 shards, reads appended lines incrementally by byte offse
   expect(s3.incrementalHits).toBe(s2.incrementalHits + 1)
   expect(s3.misses).toBe(s2.misses)
 
-  // In-place O_TRUNC rewrite with larger size: tailSig mismatch forces full reread instead of splicing onto old events.
-  writeFileSync(shard, `${ev(20, { ticketId: 't1', padding: 'x'.repeat(240) })}\n`, 'utf8')
+  // In-place O_TRUNC rewrite with strictly larger size (>515B) and a trailing line: tailSig mismatch must force full reread.
+  const largerRewrite = `${ev(20, { ticketId: 't1', padding: 'x'.repeat(420) })}\n${ev(21, { ticketId: 't1' })}\n`
+  expect(Buffer.byteLength(largerRewrite, 'utf8')).toBeGreaterThan(statSync(shard).size)
+  writeFileSync(shard, largerRewrite, 'utf8')
+  const aligned = new Date(1764115200000)
+  utimesSync(shard, aligned, aligned)
   const p3 = await readSpineProjection(undefined, dir)
   const s4 = getProjectionShardCacheStats()
-  expect(p3.items.map(i => i.seq)).toEqual([20])
+  expect(p3.items.map(i => i.seq)).toEqual([20, 21])
   expect(s4.misses).toBe(s3.misses + 1)
 
-  // Atomic rename replacement with identical size (new inode): ino mismatch forces full reread.
+  // Atomic rename replacement with identical size AND identical mtime (only new inode differs): ino mismatch must force full reread.
+  const beforeStat = statSync(shard)
+  const base30 = `${ev(30, { ticketId: 't1', padding: '' })}\n`
+  const padLen = beforeStat.size - Buffer.byteLength(base30, 'utf8')
+  expect(padLen).toBeGreaterThan(0)
+  const content30 = `${ev(30, { ticketId: 't1', padding: 'y'.repeat(padLen) })}\n`
+  expect(Buffer.byteLength(content30, 'utf8')).toBe(beforeStat.size)
   const tmpShard = join(m0, 'tmp-replace.jsonl')
-  writeFileSync(tmpShard, `${ev(30, { ticketId: 't1', padding: 'y'.repeat(240) })}\n`, 'utf8')
+  writeFileSync(tmpShard, content30, 'utf8')
+  utimesSync(tmpShard, aligned, aligned)
   renameSync(tmpShard, shard)
   const p4 = await readSpineProjection(undefined, dir)
   const s5 = getProjectionShardCacheStats()
