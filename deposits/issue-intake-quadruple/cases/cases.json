@@ -1,0 +1,73 @@
+[
+  {
+    "name": "green-complete-bug-quadruple-triage",
+    "expected": "allow",
+    "ctx": {
+      "issueType": "bug",
+      "body": "App crashes on launch under macOS 15.1",
+      "proposedAction": "triage",
+      "quadruple": {
+        "version": "1.4.2",
+        "platform": "macOS 15.1 arm64",
+        "steps": "1. Open app 2. Click Settings",
+        "errorText": "TypeError: Cannot read properties of undefined"
+      },
+      "dedupCandidates": [
+        { "issueNumber": 102, "similarity": 0.91, "diffSummary": "Same TypeError on arm64" },
+        { "issueNumber": 88, "similarity": 0.72, "diffSummary": "Different crash path" }
+      ]
+    }
+  },
+  {
+    "name": "green-incomplete-bug-routes-to-needs-info",
+    "expected": "allow",
+    "ctx": {
+      "issueType": "bug",
+      "body": "Crashes when saving file on v1.4.2",
+      "proposedAction": "needs-info",
+      "quadruple": {
+        "version": "1.4.2",
+        "platform": "Windows 11"
+      }
+    }
+  },
+  {
+    "name": "red-forbid-auto-close-duplicate",
+    "expected": "deny",
+    "ctx": {
+      "issueType": "bug",
+      "body": "Duplicate crash on launch",
+      "proposedAction": "auto-close-duplicate",
+      "quadruple": {
+        "version": "1.4.2",
+        "platform": "macOS 15.1",
+        "steps": "Launch app",
+        "errorText": "SIGSEGV"
+      },
+      "dedupCandidates": [
+        { "issueNumber": 102, "similarity": 0.96 }
+      ]
+    }
+  },
+  {
+    "name": "red-forbid-triage-with-incomplete-quadruple",
+    "expected": "deny",
+    "ctx": {
+      "issueType": "bug",
+      "body": "Something is broken",
+      "proposedAction": "triage",
+      "quadruple": {
+        "version": "1.4.2"
+      }
+    }
+  },
+  {
+    "name": "unmeasured-missing-issue-type",
+    "expected": "unmeasured",
+    "expectedCause": "missing-input",
+    "ctx": {
+      "issueType": null,
+      "body": "Crash report body"
+    }
+  }
+]

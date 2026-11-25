@@ -1,0 +1,57 @@
+[
+  {
+    "name": "green-reproduced-with-script-and-red-output",
+    "expected": "allow",
+    "ctx": {
+      "terminalState": "reproduced",
+      "reproScriptPath": "repro/issue-412.spec.ts",
+      "redOutput": "AssertionError: expected 500 to equal 200",
+      "proposedAction": "open-fix-pr"
+    }
+  },
+  {
+    "name": "green-not-reproduced-label-only-with-matrix",
+    "expected": "allow",
+    "ctx": {
+      "terminalState": "not-reproduced",
+      "matrixTried": ["macOS-15-arm64-node22", "ubuntu-24.04-x64-node22"],
+      "proposedAction": "label-only"
+    }
+  },
+  {
+    "name": "red-not-reproduced-auto-close-forbidden",
+    "expected": "deny",
+    "ctx": {
+      "terminalState": "not-reproduced",
+      "matrixTried": ["ubuntu-24.04-x64"],
+      "proposedAction": "close-issue",
+      "humanConfirmedClose": false
+    }
+  },
+  {
+    "name": "red-reproduced-missing-script-and-short-output",
+    "expected": "deny",
+    "ctx": {
+      "terminalState": "reproduced",
+      "redOutput": "fail",
+      "proposedAction": "open-fix-pr"
+    }
+  },
+  {
+    "name": "red-invalid-terminal-state",
+    "expected": "deny",
+    "ctx": {
+      "terminalState": "wontfix-guessed",
+      "proposedAction": "label-only"
+    }
+  },
+  {
+    "name": "unmeasured-missing-terminal-state",
+    "expected": "unmeasured",
+    "expectedCause": "missing-input",
+    "ctx": {
+      "terminalState": null,
+      "proposedAction": "label-only"
+    }
+  }
+]
