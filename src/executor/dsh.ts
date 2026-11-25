@@ -83,6 +83,8 @@ export interface ExecutorHost {
   repliedTo(trigger: Trigger): Trigger | undefined
   /** Optional launch-time 1-hop context slicer and adaptive dispatch planner. */
   prepareCapsule?(input: { ticket: Ticket; assignment: Assignment; workspaceDir: string; triggerText?: string }): Promise<PreparedLaunchCapsule | undefined>
+  /** Optional recorder invoked when launch-time capsule preparation throws unexpectedly. */
+  onCapsuleError?(ticket: Ticket, assignment: Assignment, error: unknown): void
 }
 /** Looks up a ticket's origin trigger in Store. */
 export const sourceTrigger = (host: { store: Pick<Store, 'triggers'> }, ticket: Ticket): Trigger | undefined =>
@@ -481,15 +483,24 @@ export class DshExecutor implements Executor {
     const card = told || !source ? undefined : await this.triggerCard(ticket, source.id)
     if (!current()) return
     const batch = told ? [] : batchOf(this.host, ticket).map(batchLine)
-    const prepared = told || !this.host.prepareCapsule ? undefined : await this.host.prepareCapsule({
-      ticket, assignment, workspaceDir: workspace, ...(source ? { triggerText: source.text } : {}),
-    })
+    let prepared: PreparedLaunchCapsule | undefined
+    if (!told && this.host.prepareCapsule) {
+      try {
+        prepared = await this.host.prepareCapsule({
+          ticket, assignment, workspaceDir: workspace, ...(source ? { triggerText: source.text } : {}),
+        })
+      } catch (error) {
+        this.host.onCapsuleError?.(ticket, assignment, error)
+      }
+    }
     if (!current()) return
+    if (prepared?.blocked?.length) throw new PrepareFailed(`Adaptive dispatch denied: ${prepared.blocked.join('; ')}`)
     const text = told ? JSON.stringify({ ticket_id: ticket.id, assignment: ticket.assignments.length, ...retried })
       : JSON.stringify({ ticket_id: ticket.id, title: ticket.title, ...(brief ? { assignment: brief } : {}),
         ...(read ? { assignment_chars: chars, assignment_read: read } : {}), ...(card ? { trigger: card } : {}),
         ...(batch.length ? { batch } : {}), ...retried,
-        ...(prepared ? { dispatch_plan: prepared.dispatch, context_capsule: prepared.capsule } : {}) })
+        ...(prepared?.dispatch ? { dispatch_plan: prepared.dispatch } : {}),
+        ...(prepared ? { context_capsule: prepared.capsule } : {}) })
     const requestId = later ? `assignment:${ticket.id}:${assignment.id}` : first
     await this.host.sessions.prompt(sessionId, requestId, text, 'queue',
       () => { if (!current()) throw new Error('Launch authorization changed before worker delivery') },

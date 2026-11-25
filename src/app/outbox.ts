@@ -5,7 +5,7 @@ import { checkedImText } from '../infra/text.ts'
 import type { Verdict } from '../judgement/types.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import { FAILURES_BEFORE_ERROR, Later, type Effects } from './effects.ts'
-import type { DropReason, Store } from './store.ts'
+import type { Store } from './store.ts'
 
 export interface OutboxHost {
   readonly store: Pick<Store, 'atomic' | 'receipts'>
@@ -14,7 +14,6 @@ export interface OutboxHost {
   readonly commands: Commands
   paused(): boolean
   evaluateOutbound?: (message: OutboundMessage) => Promise<Verdict>
-  deniedReason?: DropReason
 }
 
 /**
@@ -51,9 +50,9 @@ export class Outbox implements OutboxPort {
       const outbound: OutboundMessage = { id: receipt.id, channel: receipt.channel, text: receipt.text, kind: receipt.kind,
         ...(receipt.ticketId !== undefined ? { ticketId: receipt.ticketId } : {}) }
       const verdict = await this.host.evaluateOutbound(outbound)
-      if (verdict.kind === 'deny') { store.receipts.settle(receipt, this.host.deniedReason ?? 'gateDenied'); return }
-      if (verdict.kind === 'unmeasured' && verdict.disposition !== 'tolerate') {
-        throw new Later(`Outbound gate unmeasured (${verdict.cause}): ${verdict.detail}`)
+      if (verdict.kind === 'deny') { store.receipts.settle(receipt, 'gateDenied'); return }
+      if (verdict.kind === 'unmeasured') {
+        throw new Error(`Outbound gate unmeasured (${verdict.cause}): ${verdict.detail}`)
       }
     }
     // A permanently unreachable target (such as a recalled message or deleted Issue) settles as `channelGone` so its receipt prevents retries.

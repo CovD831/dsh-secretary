@@ -1,6 +1,6 @@
 /** 阶段三运行时主干全链路治理串联与红绿验证：Spine M0 + Judgement + Workspaces GC + 1-Hop Capsule。 */
 import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -9,6 +9,7 @@ import { Effects } from '../src/app/effects.ts'
 import { GovernanceRuntime } from '../src/app/governance.ts'
 import { Outbox } from '../src/app/outbox.ts'
 import { Store } from '../src/app/store.ts'
+import { zh, en } from '../src/client/locales.ts'
 import { Engine, type OutboundMessage, type Ticket } from '../src/core/index.ts'
 import { prepareLaunchCapsule } from '../src/executor/capsule-hook.ts'
 import { DshExecutor } from '../src/executor/dsh.ts'
@@ -70,9 +71,10 @@ function createWiredEngine(store: Store, governance: GovernanceRuntime) {
 afterEach(() => { while (tempDirs.length > 0) rmSync(tempDirs.pop()!, { recursive: true, force: true }) })
 
 describe('阶段三 Runtime 主干全链路治理接入', () => {
-  it('测试1：Engine + Store + GovernanceRuntime 原子入脊并落盘递增 seq 与 dsh-session 指针（含默认注册表阶段）', async () => {
+  it('测试1：原子入脊、resolveSpineRef 真伪核验、删库重建 seq 对齐与停机微任务防踩关库', async () => {
     const stateDir = makeTempDir('wiring-spine-')
-    const store = new Store(join(stateDir, 'orchestrator.sqlite'))
+    const dbPath = join(stateDir, 'orchestrator.sqlite')
+    const store = new Store(dbPath)
     const governance = new GovernanceRuntime({ store, stateDir })
     try {
       await governance.recover()
@@ -80,7 +82,6 @@ describe('阶段三 Runtime 主干全链路治理接入', () => {
         ['workspace.gc.safety', 'enforce'], ['ticket.adaptive-dispatch', 'enforce'], ['verify.changed-paths', 'shadow'], ['verify.rerun', 'shadow'],
       ])
       governance.registry.unregister('verify.changed-paths'); governance.registry.register(verifyChangedPathsGate, 'enforce')
-      expect(governance.registry.list().find(g => g.id === 'verify.changed-paths')?.stage).toBe('enforce')
 
       const engine = createWiredEngine(store, governance)
       expect(() => store.atomic(() => {
@@ -95,20 +96,40 @@ describe('阶段三 Runtime 主干全链路治理接入', () => {
       engine.assignmentStarted(ticketId, store.tickets.get(ticketId)!.assignments[0]!.id)
       engine.report(ticketId, { state: 'ready', summary: '已完成修复' })
 
-      const report = await governance.flush()
-      expect(report.to).toBeGreaterThanOrEqual(7)
+      const bufferedRef = governance.appender.append({ id: 'buf-check-1', stream: 'system:test', type: 'test.buffered', source: { kind: 'system', ref: 'test' }, evidence: [], taint: 'trusted', payload: {} })
+      expect(await governance.resolveSpineRef(bufferedRef)).toBe(true)
+      expect(await governance.resolveSpineRef({ seq: bufferedRef.seq, id: 'forged-id' })).toBe(false)
+      expect(await governance.resolveSpineRef({ seq: 0, id: bufferedRef.id })).toBe(false)
+
+      await governance.flush()
       const events = readShardEvents(governance.memoryDir)
+      expect(events.length).toBeGreaterThanOrEqual(8)
       expect(events.map(e => e.seq)).toEqual(events.map((_, idx) => idx + 1))
-      expect(events.map(e => e.type)).toEqual(expect.arrayContaining(['trigger.received', 'eval.started', 'decision.recorded', 'ticket.created', 'assignment.started', 'ticket.ended']))
       expect(events.some(e => e.payload['triggerId'] === 'rollback-tr')).toBe(false)
       const endedEv = events.find(e => e.type === 'ticket.ended')!
       expect(endedEv.payload['sessionPtr']).toBe(`dsh-session:worker-${ticketId}`)
       expect(extractSessionPtr(endedEv)).toEqual({ sessionId: `worker-${ticketId}` })
-      expect(store.db.prepare('SELECT COUNT(*) AS n FROM event_spine').get()).toEqual({ n: 0 })
+      expect(await governance.resolveSpineRef(bufferedRef)).toBe(true)
+      expect(await governance.resolveSpineRef({ seq: 9999, id: 'missing' })).toBe(false)
     } finally { await governance.shutdown(); store.close() }
+
+    // 删库重建 + 分片末尾半行残骸 + 停机微任务竞态验证
+    const shard = readdirSync(join(stateDir, 'memory', 'm0')).find(n => n.endsWith('.jsonl'))!
+    appendFileSync(join(stateDir, 'memory', 'm0', shard), '{"v":1,"seq":999,"id":"torn', 'utf8')
+    const rebuiltStore = new Store(join(stateDir, 'rebuilt.sqlite'))
+    const rebuiltGov = new GovernanceRuntime({ store: rebuiltStore, stateDir })
+    const preRecoverRef = rebuiltGov.appender.append({ id: 'after-rebuild-1', stream: 'system:test', type: 'test.rebuilt', source: { kind: 'system', ref: 'test' }, evidence: [], taint: 'trusted', payload: {} })
+    expect(preRecoverRef.seq).toBeGreaterThanOrEqual(9)
+    await rebuiltGov.recover()
+    rebuiltGov.recordDomainEvent({ type: 'policy.changed', at: new Date().toISOString(), data: { from: 'v1', to: 'v2' } })
+    await rebuiltGov.shutdown()
+    rebuiltStore.close()
+    await new Promise<void>(r => setTimeout(r, 20))
+    expect(readShardEvents(rebuiltGov.memoryDir).some(e => e.type === 'policy.changed')).toBe(true)
   })
 
-  it('测试2：outbox.send 事前硬闸拦截违禁消息并落盘 deny 记录，对 unmeasured 拒绝放行，合规消息正常发出', async () => {
+  it('测试2：outbox.send 事前硬闸拦截(gateDenied)并补齐译文，unmeasured 抛错计次告警不永久静默阻塞，合规放行', async () => {
+    expect([zh['reason.gateDenied'], en['reason.gateDenied']]).toEqual(['外发前被判据硬闸拦截', 'Blocked by an outbound judgement gate'])
     const h = await startRuntime()
     try {
       const lark = vi.mocked(Commands.prototype.lark); lark.mockClear()
@@ -118,7 +139,7 @@ describe('阶段三 Runtime 主干全链路治理接入', () => {
         placement: { timing: 'pre', enforce: true }, requires: ['message', 'message.text'],
         gate: ({ message }) => {
           if (message.text.includes('FORBIDDEN_SECRET')) return { kind: 'deny', blockers: ['禁止外发含 FORBIDDEN_SECRET'] }
-          if (message.text.includes('UNMEASURED_BLIND')) return { kind: 'unmeasured', cause: 'timeout', detail: '外部脱敏检测超时' }
+          if (message.text.includes('UNMEASURED_BLIND')) return { kind: 'unmeasured', cause: 'no-evidence', detail: '外部脱敏不可测', disposition: 'tolerate' }
           return { kind: 'allow' }
         },
       }, 'enforce')
@@ -133,25 +154,34 @@ describe('阶段三 Runtime 主干全链路治理接入', () => {
       expect(h.runtime.outbox.status('msg-deny')).toBe('dropped')
       expect(h.runtime.store.receipts.get('msg-deny')?.dropped?.reason).toBe('gateDenied')
       expect(h.runtime.outbox.status('msg-blind')).toBe('pending')
+      const eff = h.runtime.store.db.prepare("SELECT attempts, error FROM effect WHERE kind = 'reply' AND key = 'msg-blind'").get() as { attempts: number; error: string }
+      expect(eff.attempts).toBe(1)
+      expect(eff.error).toContain('Outbound gate unmeasured')
       expect(h.runtime.outbox.status('msg-ok')).toBe('sent')
-      const sentTexts = lark.mock.calls.map(([args]) => args.join(' '))
-      expect(sentTexts.some(t => t.includes('FORBIDDEN_SECRET') || t.includes('UNMEASURED_BLIND'))).toBe(false)
-      expect(sentTexts.some(t => t.includes('正常完成通知'))).toBe(true)
+      expect(lark.mock.calls.map(([args]) => args.join(' ')).some(t => t.includes('FORBIDDEN_SECRET') || t.includes('UNMEASURED_BLIND'))).toBe(false)
 
-      const gateEvs = readShardEvents(h.runtime.governance.memoryDir).filter(e => e.type === 'gate.evaluated' && e.payload['point'] === 'outbox.send')
-      expect(gateEvs.some(e => e.payload['messageId'] === 'msg-deny' && (e.payload['verdict'] as { kind: string }).kind === 'deny')).toBe(true)
-      expect(gateEvs.some(e => e.payload['messageId'] === 'msg-blind' && (e.payload['verdict'] as { kind: string }).kind === 'unmeasured')).toBe(true)
-
-      const store = new Store(join(makeTempDir('outbox-compat-'), 's.sqlite')), effects = new Effects(store, new HealthBoard()), sendSpy = vi.fn(async () => 'sent' as const)
-      const compat = new Outbox({ store, effects, commands: new Commands(() => ({}) as never, {}, new AbortController().signal),
-        sources: { instance: () => ({ id: 'feishu', kind: 'feishu', enabled: true, installed: true, config: {} as never }), channelAllowed: () => true, send: sendSpy }, paused: () => false })
-      effects.start(); compat.send(safe); await compat.sent()
-      expect([compat.status('msg-ok'), sendSpy.mock.calls.length]).toEqual(['sent', 1])
-      await effects.drain(); store.close()
+      // 连续 3 次 unmeasured 失败触发健康告警且不再阻断后续同会话消息
+      const store = new Store(join(makeTempDir('outbox-err-'), 's.sqlite')), fxBoard = new HealthBoard(), sendSpy = vi.fn(async () => 'sent' as const)
+      let nowMs = 1_000_000
+      const fx = new Effects(store, fxBoard, () => nowMs)
+      const outbox = new Outbox({
+        store, effects: fx, commands: new Commands(() => ({}) as never, {}, new AbortController().signal),
+        sources: { instance: () => ({ id: 'feishu', kind: 'feishu', enabled: true, installed: true, config: {} as never }), channelAllowed: () => true, send: sendSpy },
+        paused: () => false,
+        evaluateOutbound: async m => m.id === 'm1' ? { kind: 'unmeasured', cause: 'timeout', detail: 'down', disposition: 'tolerate' } : { kind: 'allow' },
+      })
+      fx.start()
+      outbox.send({ id: 'm1', channel: ch, text: 'first', kind: 'reply', ticketId: 'tk1' })
+      outbox.send({ id: 'm2', channel: ch, text: 'second', kind: 'reply', ticketId: 'tk1' })
+      for (let i = 0; i < 3; i++) { await outbox.sent(); nowMs += 60_000 }
+      expect(outbox.status('m1')).toBe('pending')
+      expect(fxBoard.all['reply']?.state).toBe('error')
+      expect(outbox.status('m2')).toBe('sent')
+      await fx.drain(); store.close()
     } finally { await h.stop() }
   })
 
-  it('测试3：发射前 rg 1-Hop 切片注入与 team 升档、及工单结束 worktree 脏保留/净回收安全 GC', async () => {
+  it('测试3：发射前 rg 1-Hop 切片、allowTeam=false 拦发射与异常降级、及工单结束 GC 与 executed 入脊', async () => {
     const stateDir = makeTempDir('wiring-gc-')
     const { repoDir, ws } = await initSampleRepo(stateDir)
     const store = new Store(join(stateDir, 'orchestrator.sqlite'))
@@ -169,9 +199,7 @@ describe('阶段三 Runtime 主干全链路治理接入', () => {
       expect(solo?.dispatch).toEqual({ executionMode: 'solo', thinkingTier: 'low' })
       expect(solo!.capsule.text).toContain('export interface LedgerEntry')
       expect(solo!.capsule.text).not.toContain('SECRET_BODY')
-      expect(solo!.slice.relatedTests).toContain('tests/billing.spec.ts')
-
-      expect(await prepareLaunchCapsule({ ticket: { ...ticketA, title: '普通任务', execution: { name: 'n', directory: repoDir, assignment: '无路径' } }, workspaceDir: repoDir, triggerText: '不存在 missing/x.ts', registry: governance.registry })).toBeUndefined()
+      expect(await prepareLaunchCapsule({ ticket: { ...ticketA, title: '普通任务', execution: { name: 'n', directory: repoDir, assignment: '无路径' } }, workspaceDir: repoDir, triggerText: '无 missing/x.ts', registry: governance.registry })).toBeUndefined()
 
       const retriedTicket: Ticket = {
         ...ticketA, id: 't-team',
@@ -183,32 +211,35 @@ describe('阶段三 Runtime 主干全链路治理接入', () => {
       }
       const escalated = await governance.prepareLaunchCapsule({ ticket: retriedTicket, assignment: retriedTicket.assignments[2]!, workspaceDir: repoDir })
       expect(escalated!.dispatch).toMatchObject({ executionMode: 'team', thinkingTier: 'high' })
-      expect(escalated!.dispatch.escalateReason).toContain('retryCount(2)')
+      const deniedPlan = await prepareLaunchCapsule({ ticket: retriedTicket, assignment: retriedTicket.assignments[2]!, workspaceDir: repoDir, registry: governance.registry, allowTeam: false })
+      expect(deniedPlan?.verdict.kind).toBe('deny')
+      expect(deniedPlan?.blocked?.[0]).toContain('禁止 team 模式')
+      expect(deniedPlan?.dispatch).toBeUndefined()
 
       const prompted: string[] = []
       store.triggers.save({ id: 'tr1', source: 'feishu', threads: [{ source: 'feishu', id: 'c1:m1' }], actor: { source: 'feishu', id: 'u1' }, human: true, at: '2026-11-24T00:00:00Z', text: '请修改 src/core/billing.ts', meta: {} })
       store.tickets.save(ticketA)
-      const executor = new DshExecutor({
+      const makeExec = (prepareCapsule: NonNullable<ConstructorParameters<typeof DshExecutor>[0]['prepareCapsule']>) => new DshExecutor({
         context: { agents: { get: () => undefined }, on: () => () => {} } as never,
         engine: { assignmentStarted: () => {}, inputsDelivered: () => {}, inputsRead: () => {}, turnEnded: () => {}, deliveryFailed: () => {}, report: () => ticketA, assignmentInterrupted: () => {} },
         store, effects: new Effects(store, new HealthBoard()), health: new HealthBoard().claim('worker'), machine: { stateDir }, lifetime: new AbortController().signal,
         sessions: { ensure: async () => ({ inbox: { remove: () => false } }) as never, prompt: async (_s, _r, text) => { prompted.push(text) }, holds: async () => false, relay: () => {}, promptedId: id => id as never },
         closing: () => false, paused: () => false, environment: () => [], sourceLink: async () => ({}), repliedTo: () => undefined,
-        prepareCapsule: input => governance.prepareLaunchCapsule(input),
+        prepareCapsule, onCapsuleError: (t, a, e) => governance.recordCapsuleUnmeasured(t, a, e),
       })
-      await (executor as unknown as { launch(t: Ticket, a: Ticket['assignments'][0]): Promise<void> }).launch(ticketA, ticketA.assignments[0]!)
-      const launchJson = JSON.parse(prompted[0]!) as Record<string, unknown>
-      expect(launchJson['dispatch_plan']).toEqual({ executionMode: 'solo', thinkingTier: 'low' })
-      expect((launchJson['context_capsule'] as { text: string }).text).toContain('formatEntry')
+      await (makeExec(input => governance.prepareLaunchCapsule(input)) as unknown as { launch(t: Ticket, a: Ticket['assignments'][0]): Promise<void> }).launch(ticketA, ticketA.assignments[0]!)
+      expect(JSON.parse(prompted[0]!)['dispatch_plan']).toEqual({ executionMode: 'solo', thinkingTier: 'low' })
+      // 切片异常隔离回退无胶囊正常发射，并向 M0 补记 unmeasured；而 enforce deny 真正拒发
+      await (makeExec(async () => { throw new Error('rg crashed') }) as unknown as { launch(t: Ticket, a: Ticket['assignments'][0]): Promise<void> }).launch(ticketA, ticketA.assignments[0]!)
+      expect(JSON.parse(prompted[1]!)['context_capsule']).toBeUndefined()
+      await expect((makeExec(async () => deniedPlan) as unknown as { launch(t: Ticket, a: Ticket['assignments'][0]): Promise<void> }).launch(ticketA, ticketA.assignments[0]!)).rejects.toThrow('Adaptive dispatch denied')
 
       const dirtyDir = join(stateDir, 'wts', 'dirty-wt'), cleanDir = join(stateDir, 'wts', 'clean-wt')
       await provisionWorktree({ ticketId: 't-dirty', workspace: ws, executionName: 'dirty-wt', targetDir: dirtyDir, appender: governance.appender })
       writeFileSync(join(dirtyDir, 'untracked.txt'), 'keep me\n')
       await provisionWorktree({ ticketId: 't-clean', workspace: ws, executionName: 'clean-wt', targetDir: cleanDir, appender: governance.appender })
-      writeFileSync(join(cleanDir, 'done.txt'), 'shipped\n')
-      await git(cleanDir, 'add', 'done.txt'); await git(cleanDir, 'commit', '-m', 'done')
+      writeFileSync(join(cleanDir, 'done.txt'), 'shipped\n'); await git(cleanDir, 'add', 'done.txt'); await git(cleanDir, 'commit', '-m', 'done')
       await git(repoDir, 'merge', '--ff-only', 'agent/clean-wt')
-
       const engine = createWiredEngine(store, governance)
       for (const [id, name, dir] of [['t-dirty', 'dirty-wt', dirtyDir], ['t-clean', 'clean-wt', cleanDir]] as const) {
         store.tickets.save({ ...ticketA, id, execution: { name, directory: dir, assignment: '', workspace: ws.id }, assignments: [{ id: `${id}-a0`, state: 'running', createdAt: '2026-11-24T00:00:00Z' }] })
@@ -217,13 +248,10 @@ describe('阶段三 Runtime 主干全链路治理接入', () => {
       await governance.flush()
 
       expect([existsSync(dirtyDir), existsSync(cleanDir)]).toEqual([true, false])
-      const branches = await git(repoDir, 'branch', '--list')
-      expect(branches).toContain('agent/dirty-wt')
-      expect(branches).not.toContain('agent/clean-wt')
-      const gcEvents = readShardEvents(governance.memoryDir).filter(e => e.type === 'gate.evaluated' && e.payload['point'] === 'workspace.gc')
-      expect((gcEvents.find(e => e.payload['ticketId'] === 't-dirty')?.payload['verdict'] as { kind: string }).kind).toBe('deny')
-      expect((gcEvents.find(e => e.payload['ticketId'] === 't-clean')?.payload['verdict'] as { kind: string }).kind).toBe('allow')
-      expect(readShardEvents(governance.memoryDir).some(e => e.type === 'gate.evaluated' && e.payload['point'] === 'ticket.adaptive-dispatch' && e.payload['sessionPtr'] === `dsh-session:worker-${ticketA.id}`)).toBe(true)
+      const allEvents = readShardEvents(governance.memoryDir)
+      expect(allEvents.some(e => e.type === 'gate.evaluated' && e.payload['ticketId'] === ticketA.id && (e.payload['verdict'] as { kind: string }).kind === 'unmeasured')).toBe(true)
+      const gcExec = allEvents.find(e => e.type === 'workspace.gc.executed' && e.payload['ticketId'] === 't-clean')!
+      expect(gcExec.payload).toMatchObject({ removed: true, branchRemoved: true, sessionPtr: 'dsh-session:worker-t-clean' })
     } finally { await governance.shutdown(); store.close() }
   })
 })

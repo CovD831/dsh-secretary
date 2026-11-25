@@ -14,7 +14,9 @@ export interface LaunchDispatchPlan {
 }
 
 export interface PreparedLaunchCapsule {
-  readonly dispatch: LaunchDispatchPlan
+  readonly verdict: Verdict
+  readonly dispatch?: LaunchDispatchPlan
+  readonly blocked?: readonly [string, ...string[]]
   readonly capsule: ContextCapsule
   readonly slice: SliceResult
 }
@@ -27,6 +29,7 @@ export interface LaunchCapsuleInput {
   readonly registry: Pick<JudgementRegistry, 'evaluate'>
   readonly recordSpine?: (event: SpineDraft<Record<string, unknown>>) => void
   readonly retryCount?: number
+  readonly allowTeam?: boolean
   readonly maxBytes?: number
   readonly pitfallNotes?: readonly PitfallNote[]
   readonly rgBin?: string
@@ -85,19 +88,16 @@ function countFailedRetries(assignments: readonly Pick<Assignment, 'state' | 'en
   return assignments.filter(a => a.state === 'ended' && (a.report?.state === 'failed' || a.endedReason === 'retried')).length
 }
 
-function extractDispatchPlan(verdict: Verdict): LaunchDispatchPlan {
-  if (verdict.kind === 'allow') {
-    const raw = (verdict.produced?.['ticket.adaptive-dispatch']
-      ?? (verdict.produced ? Object.values(verdict.produced)[0] : undefined)) as Record<string, unknown> | undefined
-    const mode = raw?.['executionMode'] === 'team' ? 'team' : 'solo'
-    const tier = raw?.['thinkingTier']
-    const thinkingTier: ThinkingTier = tier === 'high' || tier === 'medium' || tier === 'low'
-      ? tier : DEFAULT_ADAPTIVE_DISPATCH_PARAMS.default_thinking
-    const reason = typeof raw?.['escalateReason'] === 'string' && raw['escalateReason'] ? raw['escalateReason'] : undefined
-    return { executionMode: mode, thinkingTier, ...(reason ? { escalateReason: reason } : {}) }
-  }
-  const escalateReason = verdict.kind === 'deny' ? verdict.blockers.join('; ') : verdict.detail
-  return { executionMode: 'solo', thinkingTier: DEFAULT_ADAPTIVE_DISPATCH_PARAMS.default_thinking, escalateReason }
+function extractDispatchPlan(verdict: Verdict): LaunchDispatchPlan | undefined {
+  if (verdict.kind !== 'allow') return undefined
+  const raw = (verdict.produced?.['ticket.adaptive-dispatch']
+    ?? (verdict.produced ? Object.values(verdict.produced)[0] : undefined)) as Record<string, unknown> | undefined
+  const mode = raw?.['executionMode'] === 'team' ? 'team' : 'solo'
+  const tier = raw?.['thinkingTier']
+  const thinkingTier: ThinkingTier = tier === 'high' || tier === 'medium' || tier === 'low'
+    ? tier : DEFAULT_ADAPTIVE_DISPATCH_PARAMS.default_thinking
+  const reason = typeof raw?.['escalateReason'] === 'string' && raw['escalateReason'] ? raw['escalateReason'] : undefined
+  return { executionMode: mode, thinkingTier, ...(reason ? { escalateReason: reason } : {}) }
 }
 
 /** 发射前提取工作区 1-Hop 切片、计算自适应派发档位并记录事件脊；未命中仓内真实文件时返回 undefined。 */
@@ -115,8 +115,13 @@ export async function prepareLaunchCapsule(input: LaunchCapsuleInput): Promise<P
     ...(input.rgBin ? { rgBin: input.rgBin } : {}),
   })
   const retryCount = input.retryCount ?? countFailedRetries(ticket.assignments)
-  const evaluation = await registry.evaluate('ticket.adaptive-dispatch', { metrics: slice.metrics, retryCount })
+  const evaluation = await registry.evaluate('ticket.adaptive-dispatch', {
+    metrics: slice.metrics,
+    retryCount,
+    ...(input.allowTeam !== undefined ? { allowTeam: input.allowTeam } : {}),
+  })
   const dispatch = extractDispatchPlan(evaluation.verdict)
+  const blocked = evaluation.verdict.kind === 'deny' ? evaluation.verdict.blockers : undefined
   const capsule = assembleCapsule(slice, input.maxBytes ?? DEFAULT_ADAPTIVE_DISPATCH_PARAMS.max_capsule_bytes)
 
   if (recordSpine) {
@@ -140,7 +145,8 @@ export async function prepareLaunchCapsule(input: LaunchCapsuleInput): Promise<P
         metrics: slice.metrics,
         retryCount,
         verdict: evaluation.verdict,
-        dispatch,
+        ...(dispatch ? { dispatch } : {}),
+        ...(blocked ? { blocked } : {}),
         capsuleBytes: capsule.usedBytes,
         overflow: capsule.overflow,
         droppedItems: capsule.droppedItems,
@@ -148,5 +154,11 @@ export async function prepareLaunchCapsule(input: LaunchCapsuleInput): Promise<P
     })
   }
 
-  return { dispatch, capsule, slice }
+  return {
+    verdict: evaluation.verdict,
+    ...(dispatch ? { dispatch } : {}),
+    ...(blocked ? { blocked } : {}),
+    capsule,
+    slice,
+  }
 }
