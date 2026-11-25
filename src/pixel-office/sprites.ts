@@ -1,12 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { inflateSync } from 'node:zlib'
+import { packagePath } from '../infra/paths.ts'
 import { colorIndex, PixelGrid, STATUS_COLOR_MAP, type SecretaryMood, type StatusKind } from './palette.ts'
 import { NATIVE_H, NATIVE_W, PORTRAIT_H, PORTRAIT_W } from './layout.ts'
 
 const C = (hex: string): number => colorIndex(hex)
-const ASSET_DIR = fileURLToPath(new URL('../../assets/f1-proof', import.meta.url))
+const ASSET_DIR = packagePath('assets', 'f1-proof')
 
 export const AI_MONITOR_ANCHORS: ReadonlyArray<{ suiteId: string; x: number; y: number }> = [
   { suiteId: 'executive', x: 407, y: 131 },
