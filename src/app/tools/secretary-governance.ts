@@ -176,7 +176,7 @@ export function secretaryGovernanceTools(gov: GovernanceRuntime): Tool[] {
       name: 'orchestrator_memory_recall', description: 'Recall secretary memory and M6 attention.', schema: RecallSchema,
       execute: async args => {
         const res = await gov.memoryRepoLock.run(() => assembleMemoryPrompt({
-          dir: gov.memoryDir, caller: { role: 'secretary', maxClearance: 'private' }, query: args.query,
+          dir: gov.memoryDir, caller: { role: 'secretary', maxClearance: 'private' }, query: args.query, ftsIndex: gov.ftsIndex,
           ...(args.recent_messages ? { recentMessages: args.recent_messages } : {}), ...(args.budgets ? { budgets: args.budgets } : {}), now: gov.nowDate(),
         }))
         const droppedIds = [...res.receipt.resident.droppedIds, ...res.receipt.triggered.droppedIds, ...res.receipt.retrieved.droppedIds, ...res.receipt.attention.droppedIds]
@@ -198,17 +198,21 @@ export function secretaryGovernanceTools(gov: GovernanceRuntime): Tool[] {
           const rel = resolveMemoryRelPath({ layer: args.layer, ...(args.slug ? { slug: args.slug } : {}), ...(args.workspace_key ? { workspaceKey: args.workspace_key } : {}) })
           const page = await gov.memoryRepoLock.run(() => readMemoryPage(gov.memoryDir, rel)), hit = page?.layer !== 'm6' ? page?.entries.find(e => e.id === args.entry_id) : undefined
           if (hit && (hit.sourceType === 'user_ruling' || hit.sourceType === 'user_direct')) return { kind: 'rejected', reason: 'forbidden', detail: '禁止秘书工具对老板直述或裁决条目打墓碑' }
-          return stripUndefined({ kind: 'tombstoned', ...await gov.memory.tombstone({ target: { layer: args.layer, ...(args.slug ? { slug: args.slug } : {}), ...(args.workspace_key ? { workspaceKey: args.workspace_key } : {}) }, entryId: args.entry_id, reason: args.reason, sourceRef: args.source_ref, author: 'secretary' }) })
+          const tombRes = await gov.memory.tombstone({ target: { layer: args.layer, ...(args.slug ? { slug: args.slug } : {}), ...(args.workspace_key ? { workspaceKey: args.workspace_key } : {}) }, entryId: args.entry_id, reason: args.reason, sourceRef: args.source_ref, author: 'secretary' })
+          await gov.ftsIndex.rebuild().catch(() => undefined)
+          return stripUndefined({ kind: 'tombstoned', ...tombRes })
         }
         if (!args.statement?.trim() || !args.scope?.trim()) throw new Error('propose mode requires statement and scope')
         if (args.layer === 'm2' && env.taint === 'untrusted') return { kind: 'rejected', reason: 'forbidden', detail: '禁止使用 untrusted 来源事件写入 M2 记忆' }
-        return stripUndefined(await gov.memory.propose({
+        const propRes = await gov.memory.propose({
           layer: args.layer, ...(args.slug ? { slug: args.slug } : {}), ...(args.workspace_key ? { workspaceKey: args.workspace_key } : {}),
           statement: args.statement, scope: args.scope as MemoryScope, sourceType: args.source_type ?? 'session', sourceRef: args.source_ref, author: 'secretary',
           taint: memoryTaintOf(env.taint), overrideTombstone: false, ...(args.topic_key ? { topicKey: args.topic_key } : {}), ...(args.clearance ? { clearance: args.clearance } : {}),
           ...(args.m2_kind ? { m2Kind: args.m2_kind } : {}), ...(args.resident !== undefined ? { resident: args.resident } : {}), ...(args.importance !== undefined ? { importance: args.importance } : {}),
           ...(args.verbatim_quote ? { verbatimQuote: args.verbatim_quote } : {}), ...(args.evidence_text ? { evidenceText: args.evidence_text } : {}), ...(args.trigger_keys ? { triggerKeys: args.trigger_keys } : {}),
-        }))
+        })
+        if (propRes.kind === 'accepted') await gov.ftsIndex.rebuild().catch(() => undefined)
+        return stripUndefined(propRes)
       },
     }),
     tool({

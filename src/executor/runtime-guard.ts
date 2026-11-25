@@ -8,6 +8,8 @@ import { latestAssignment, liveTicket, runningAssignment, type EngineForExecutor
 import type { ApprovalMode, Settings } from '../policy.ts'
 import type { Store } from '../app/store.ts'
 import type { ApprovalOutcome, RulingQueue } from '../app/ruling-queue.ts'
+import { KV } from '../kv.ts'
+import { calibrateProbability, classifyThresholdBand } from '../rsi/index.ts'
 import type { SpineAppender } from '../spine/types.ts'
 import { ticketOfSession } from './dsh.ts'
 
@@ -54,7 +56,7 @@ interface AssignmentBudgetState {
 
 export interface RuntimeGuardDeps {
   readonly context: Context
-  readonly store: Pick<Store, 'tickets' | 'settings' | 'atomic'>
+  readonly store: Pick<Store, 'tickets' | 'settings' | 'atomic' | 'get'>
   readonly engine: Pick<EngineForExecutor, 'report'>
   readonly appender: SpineAppender
   readonly rulings: RulingQueue
@@ -155,6 +157,9 @@ export class RuntimeGuard {
     const mode = effectiveApprovalMode(this.deps.store.settings(), ticket)
     const risk = classifySmartAutoRisk(exec.name, exec.arguments, ticket.execution?.directory ?? '')
     if (mode === 'smart-auto' && !SAFE_READ_TOOLS.has(exec.name)) {
+      const scaler = this.deps.store.get(KV.governance.temperatureScaler)
+      const calibratedProb = scaler?.fitted ? calibrateProbability(risk.rawScore, scaler) : risk.rawScore
+      const bandDecision = classifyThresholdBand(calibratedProb, [0.2, 0.8])
       this.deps.appender.append({
         id: `cal:smart-auto:${ticket.id}:${String(exec.callId)}:${++this.seq}`,
         stream: `ticket:${ticket.id}`, type: 'gate.calibrated_pre_screen',
@@ -162,8 +167,8 @@ export class RuntimeGuard {
         evidence: [{ kind: 'event', ref: `session:${exec.agent.id}` }], taint: 'trusted',
         payload: {
           gateId: 'approval.smart-auto', ticketId: ticket.id, sessionId: exec.agent.id, toolName: exec.name, callId: String(exec.callId),
-          rawScore: risk.rawScore, calibratedProb: risk.rawScore, threshold: 0.5, decision: risk.needsAsk ? 'ask' : 'allow',
-          ...(risk.reason ? { reason: risk.reason } : {}),
+          rawScore: risk.rawScore, calibratedProb, threshold: 0.5, thresholdBand: [0.2, 0.8], bandDecision,
+          decision: risk.needsAsk ? 'ask' : 'allow', ...(risk.reason ? { reason: risk.reason } : {}),
         },
       })
     }

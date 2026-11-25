@@ -419,6 +419,30 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   'POST rulings/:id/decide': { body: true, answer: () => ({ ok: true }) },
   'GET secretary/feed': { answer: () => ({ items: [], activeRuling: null, pendingCount: 0 }) },
   'POST secretary/messages': { body: true, answer: () => ({ triggerId: 'desk-1', received: 'stored' }) },
+  'GET deposits/ledger': { answer: () => ({ records: [], markdown: '# Deposits Ledger' }) },
+  'POST deposits/:id/stage': { body: true, answer: ({ params, body }) => ({ ok: true as const, id: params.id, fromStage: 'shadow' as const, toStage: body.toStage, stageOverrides: { [params.id]: body.toStage } }) },
+  'GET memory/studio': { answer: () => ({ entries: [], pendingPatches: [], metrics: { repeatQuestionRate: 0, falseRecallCount: 0, weeklyCorrectedMemories: 0, totalQuestions: 0, repeatQuestions: 0, windowDays: 7 } }) },
+  'POST memory/direct': { body: true, answer: () => ({ sourceRef: { seq: 1, id: 'mem:user_direct:1' }, writeResult: { kind: 'rejected' as const, reason: 'invalid-input' as const, detail: 'stub' }, tombstonedIds: [] }) },
+  'POST memory/patches/:index': { body: true, answer: () => ({ ok: true }) },
+  'GET rsi/workbench': { answer: () => ({
+    snapshot: {
+      eventCount: 0, taskRecords: [], replayCases: [], joinedSessionMetrics: [],
+      labelCounts: { 'L1:verify_failed': 0, 'L2:gate_denied_fixed': 0, 'L3:rework_retry': 0, 'L4:circuit_broken': 0, 'L5:tool_error': 0, 'L6:escalation_queued': 0, 'L7:ruling_decided': 0, 'L8:memory_rejected': 0, 'L9:memory_corrected': 0, 'L10:recall_dropped': 0, 'L11:unmeasured_gap': 0, 'L12:external_taint': 0, 'L13:draft_abandoned': 0 },
+      labelHits: [],
+      attribution: { counts: { missing_rule: 0, wrong_rule: 0, unmeasurable: 0, rule_conflict: 0 }, totalAttributed: 0, totalTickets: 0, totalToolExecutions: 0, ratePerTicket: { missing_rule: undefined, wrong_rule: undefined, unmeasurable: undefined, rule_conflict: undefined }, ratePerToolExecution: { missing_rule: undefined, wrong_rule: undefined, unmeasurable: undefined, rule_conflict: undefined } },
+      clusters: [], candidateDrafts: [], calibratedRecords: [],
+      behavioralMetrics: { firstTryPassRate: { state: 'unmeasured' as const, why: 'empty' }, reworkRate: { state: 'unmeasured' as const, why: 'empty' }, escalationDensity: { state: 'unmeasured' as const, why: 'empty' }, executedTasks: 0 },
+      effectivenessReading: { verdict: 'unmeasured' as const, reasons: ['empty'] },
+      windowComparison: { verdict: 'unmeasured' as const, beforeRate: undefined, afterRate: undefined, deltaRate: undefined, deltaFailures: undefined, reasons: ['empty'] },
+    },
+    scaler: { temperature: 1, bias: 0, inputSpace: 'probability' as const, fitted: false, sampleCount: 0, lossBefore: 0, lossAfter: 0 },
+    calibratedRecords: [],
+    calibration: { state: 'unmeasured' as const, ece: undefined, totalLabeled: 0, numBins: 10, bins: [], reason: 'empty' },
+    openedHoldouts: {},
+  }) },
+  'POST rsi/ablation': { body: true, answer: () => ({ baseline: { totalCases: 0, caseIds: [], triggeredCount: 0, catches: 0, falseBlocks: 0, misses: 0, trueAllows: 0, unmeasuredCount: 0, unknownLabelCount: 0, coverageDiscount: 1, netBenefit: 0, marginalCost: { deltaTokens: undefined, deltaMs: undefined, state: 'unmeasured' as const }, cases: [] }, impacts: [], redundantGateIds: [], harmfulGateIds: [], conflicts: [] }) },
+  'POST rsi/holdout': { body: true, answer: () => ({ ok: false as const, reason: 'stub' }) },
+  'GET pixel-office/proof': { answer: () => ({ workspaceId: 'secretary-main', seed: 20261126, width: 1440, height: 900, paletteColors: 46, html: '<!doctype html>' }) },
 }
 
 function match(method: string, segments: string[]) {

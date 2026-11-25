@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import type { Store } from '../app/store.ts'
 import { ticketStage } from '../core/stage.ts'
 import { packagePath } from '../infra/paths.ts'
+import { KV } from '../kv.ts'
 import { loadDepositPackage } from '../judgement/deposit.ts'
 import { readMemoryPage } from '../memory/codec.ts'
 import type { AttentionItem, LedgerPage } from '../memory/types.ts'
@@ -197,11 +198,13 @@ async function scanDepositRoot(rootDir: string, source: 'builtin' | 'state'): Pr
 
 /** 扫描内置与状态目录沉淀包并关联 M0 `gate.evaluated` 统计，生成战绩面只读视图。 */
 export async function readDepositsProjection(
-  store: Pick<Store, 'db'> | undefined,
+  store: Pick<Store, 'db' | 'get'> | undefined,
   stateDir: string,
   repoDepositsDir = packagePath('deposits'),
 ): Promise<DepositsProjectionView> {
+  const stageOverrides = store && 'get' in store ? (store.get(KV.governance.depositStages) ?? {}) : {}
   const rawItems = [...await scanDepositRoot(repoDepositsDir, 'builtin'), ...await scanDepositRoot(join(stateDir, 'deposits'), 'state')]
+    .map(item => item.admitted && stageOverrides[item.id] ? { ...item, stage: stageOverrides[item.id] } : item)
   const statsList = collectGateStats(await readMergedSpine(store, stateDir), rawItems)
   const items = rawItems.map((item, idx) => ({ ...item, stats: statsList[idx] ?? item.stats }))
   return {

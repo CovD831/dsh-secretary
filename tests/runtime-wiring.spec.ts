@@ -84,6 +84,13 @@ describe('阶段三 Runtime 主干全链路治理接入', () => {
         ['ticket.adaptive-dispatch', 'enforce'],
         ['verify.changed-paths', 'shadow'],
         ['verify.rerun', 'shadow'],
+        ['intake.bug-quadruple', 'observe'],
+        ['outward.reply-desk', 'observe'],
+        ['replay.ci-evaluator', 'observe'],
+        ['verify.repro-evidence', 'observe'],
+        ['verify.secret-path-guard', 'enforce'],
+        ['friction.seen-three', 'observe'],
+        ['ticket.stale-patrol', 'observe'],
       ])
       governance.registry.unregister('verify.changed-paths'); governance.registry.register(verifyChangedPathsGate, 'enforce')
 

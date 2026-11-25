@@ -21,7 +21,9 @@ import type { Deployment, Machine } from '../deployment.ts'
 import { environmentOf, ticketEnvironment, type Variable } from './execution-environment.ts'
 import type { SetupProblem } from '../setup.ts'
 import { DshExecutor, sourceTrigger, triggerMessage, workerSessionId } from '../executor/dsh.ts'
+import { PreExecuteCompletionGuard } from '../executor/pre-execute-gates.ts'
 import { RuntimeGuard } from '../executor/runtime-guard.ts'
+import { refreshSecretaryMemoryBlock } from './governance-ops.ts'
 import { ticketCard } from './cards.ts'
 import { MasterAssessor } from './assessment.ts'
 import { KV } from '../kv.ts'
@@ -73,9 +75,11 @@ export class Runtime extends Service implements SourceHost {
   readonly outbox: Outbox
   readonly governance: GovernanceRuntime
   readonly guard: RuntimeGuard
+  readonly completionGuard: PreExecuteCompletionGuard
   readonly engine: Engine
   readonly passes: Passes
   readonly ready: Promise<void>
+  private secretaryMemoryBlock = ''
   private readonly board = new HealthBoard()
   private readonly runtimeHealth = this.board.claim('runtime', { state: 'starting', detail: '' })
   readonly masterId: string
@@ -152,7 +156,13 @@ export class Runtime extends Service implements SourceHost {
       const sessions = this.sessions = new Sessions({ context: ctx, store, prompts, effects, health: board.claim('models'), masterId,
         lifetime: this.lifetime,
         closing: () => this.closing(), environment,
-        tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent) })
+        tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent),
+        secretaryMemorySection: () => governance.secretaryMemoryCache || this.secretaryMemoryBlock,
+        refreshSecretaryMemory: async query => {
+          const block = await refreshSecretaryMemoryBlock(governance, query, true)
+          governance.secretaryMemoryCache = block
+          this.secretaryMemoryBlock = block
+        } })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
       this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, lifetime: this.lifetime, sessions,
         sourceHost: this, setup, requestPass: () => { this.passes.request() } })
@@ -215,6 +225,9 @@ export class Runtime extends Service implements SourceHost {
         context: ctx, store, get engine() { return runtime.engine }, appender: governance.appender,
         rulings: governance.rulings, relayToMaster: (id, text) => sessions.relay(id, text),
       })
+      this.completionGuard = new PreExecuteCompletionGuard({
+        context: ctx, store, registry: governance.registry, appender: governance.appender, autoInstall: false,
+      })
       this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources, governance, outbox,
         get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
         requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
@@ -276,6 +289,7 @@ export class Runtime extends Service implements SourceHost {
     this.sessions.install()
     this.executor.install()
     this.guard.install()
+    this.completionGuard.install()
     await this.sessions.ensure(this.masterId, this.machine.stateDir, 'dsh-superagent orchestrator', 'orchestrator')
     for (const id of this.settings.syncable()) await this.settings.sync(id).catch(() => { /* sync() records its failure in health. */ })
     // If stop() was called while awaiting setup, session creation, or policy sync, do not start background loops.
@@ -288,7 +302,7 @@ export class Runtime extends Service implements SourceHost {
   private httpHost(): HttpHost {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, governance, health, machine, masterId, ready, sourceLinks, setup, passes } = this
-    return { store, sources, prompts, sessions, settings, engine, executor, governance, health, machine, masterId, ready, sourceLinks,
+    return { store, sources, prompts, sessions, settings, engine, executor, governance, persistence: this.ctx.sessionPersistence, health, machine, masterId, ready, sourceLinks,
       get deployment() { return setup.deployment },
       get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),
@@ -306,6 +320,7 @@ export class Runtime extends Service implements SourceHost {
       await Promise.allSettled([passes, this.effects.drain(), ...agents.map(agent => agent.whenIdle())])
       // The workers' jobs and subagents stop too: their ends would start worker turns without the tool limits released below.
       await this.executor.shutdown()
+      this.completionGuard.dispose()
       this.guard.dispose()
       this.executor.dispose()
       this.sessions.dispose()

@@ -6,7 +6,10 @@ import type { PromptVersion } from './app/prompts.ts'
 import type { RulingItem } from './app/ruling-queue.ts'
 import type { SettingsVersion } from './app/store.ts'
 import type { SecretaryFeedEntry } from './app/tools/secretary-core.ts'
+import type { Stage } from './judgement/types.ts'
+import type { PendingPatchProposal } from './memory/types.ts'
 import type { SettingsSave } from './policy.ts'
+import type { TemperatureScaler } from './rsi/types.ts'
 import type { Retry } from './sources/github.ts'
 
 /** Key of a KV record whose value has type `V`; a plain string represents an untyped key. */
@@ -36,10 +39,14 @@ export const KV = {
     masterId: record<string>('master-id'),
     masters: record<Record<string, string>>('masters'),
   },
-  /** Governance: unified single-item ruling queue and secretary conversation feed. */
+  /** Governance: unified single-item ruling queue, secretary feed, deposit stage overrides, pending memory patches, and RSI calibration state. */
   governance: {
     rulings: record<RulingItem[]>('governance-rulings'),
     feed: record<SecretaryFeedEntry[]>('governance-feed'),
+    depositStages: record<Record<string, Stage>>('governance-deposit-stages'),
+    memoryPatches: record<PendingPatchProposal[]>('governance-memory-patches'),
+    temperatureScaler: record<TemperatureScaler>('governance-temperature-scaler'),
+    openedHoldouts: record<Record<string, string>>('governance-opened-holdouts'),
   },
   /** Sessions: prompt revisions each Session has worked under, ordered oldest first; the last entry (`.at(-1)`) is its active revision. */
   sessions: { prompts: family<number[], [session: string]>('session-prompts:') },

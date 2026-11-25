@@ -36,6 +36,10 @@ export interface SessionsHost {
   environment(ticket: Ticket): Variable[]
   /** Tools to register on the main Session (`ticket === undefined`) or on `ticket`'s worker Session. */
   tools(agent: Agent, ticket?: Ticket): Tool[]
+  /** Optional synchronous getter returning the latest assembled M2/M6 memory block for the main Session. */
+  secretaryMemorySection?(): string
+  /** Optional pre-turn refresher updating the main Session's M2/M6 memory block and M6 attention lifecycle. */
+  refreshSecretaryMemory?(query: string): Promise<void>
 }
 
 /**
@@ -184,7 +188,10 @@ export class Sessions {
     if ('error' in result) throw result.error
     // Restored sessions after host restart may miss agent/created; re-decorate before delivery if unbound.
     await this.heal(result.agent)
-    if (sessionId === this.host.masterId) await initializeRoleModel(this.ctx, result.agent, this.host.store.settings().eval.model)
+    if (sessionId === this.host.masterId) {
+      await initializeRoleModel(this.ctx, result.agent, this.host.store.settings().eval.model)
+      void this.host.refreshSecretaryMemory?.(text).catch(() => undefined)
+    }
     await this.agentDelivery.send(result.agent, key(requestId), text, mode, this.host.lifetime, authorize, accepted)
   }
   /** Re-decorates a Session that lost its binding (restored across a restart, or a decoration that failed). Fails closed on error. */
@@ -294,7 +301,8 @@ export class Sessions {
       const current = ticket && host.store.tickets.get(ticket.id)
       const composed = host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)
       const secretaryHead = master ? `${SECRETARY_CHINESE_PROTOCOL}\n\n` : ''
-      return `[dsh-superagent prompt revision ${version.revision}]\n${secretaryHead}${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
+      const memoryTail = master ? (host.secretaryMemorySection?.() ?? '') : ''
+      return `[dsh-superagent prompt revision ${version.revision}]\n${secretaryHead}${composed}${memoryTail}\n${current ? mandateInstructions(current.mandate) : ''}`
     }, ...(master ? { complete: true } : {}) }))
     const register = this.registerTool(agent, binding)
     for (const tool of host.tools(agent, ticket)) register(tool.name, tool.description, tool.schema, tool.execute)

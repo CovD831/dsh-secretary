@@ -16,6 +16,11 @@ import type {
 } from '../projection/types.ts'
 import type { DecideRulingInput, RulingItem, RulingStatus } from './ruling-queue.ts'
 import type { SecretaryFeedEntry } from './tools/secretary-core.ts'
+import type {
+  HoldoutEvaluationResult, LeaveOneOutResult, MemoryStudioView, RsiWorkbenchView,
+  TransitionDepositStageResult, UserDirectMemoryResult, WriteResult,
+} from './http-governance.ts'
+import type { DiscoveredDepositRecord, Stage } from '../judgement/index.ts'
 
 export const TICKET_FILTERS = ['open', 'person', 'working', 'idle', 'ended'] as const
 export const THREAD_FILTERS = ['subscribed', 'evaluating', 'recent', 'all'] as const
@@ -59,6 +64,29 @@ export interface Api {
   'POST rulings/:id/decide': { body: Omit<DecideRulingInput, 'id' | 'actorId'> & { actorId?: string }; response: { ok: boolean; item?: RulingItem; duplicate?: boolean; reason?: string } }
   'GET secretary/feed': { response: { items: SecretaryFeedEntry[]; activeRuling: RulingItem | null; pendingCount: number } }
   'POST secretary/messages': { body: { text: string; threadId?: string }; response: { triggerId: string; received: string } }
+  'GET deposits/ledger': { response: { records: readonly DiscoveredDepositRecord[]; markdown: string } }
+  'POST deposits/:id/stage': { body: { toStage: Stage; reason?: string }; response: TransitionDepositStageResult }
+  'GET memory/studio': { response: MemoryStudioView }
+  'POST memory/direct': {
+    body: {
+      layer?: 'm1' | 'm2' | 'm3' | 'm4'; slug?: string; workspaceKey?: string; statement: string; scope?: string
+      topicKey?: string; m2Kind?: 'preference' | 'veto' | 'shared_event' | 'internal_moniker' | 'correction_repair'
+      clearance?: 'public' | 'workspace' | 'private'; resident?: boolean; importance?: number
+      overrideTombstone?: boolean; expectedRevision?: number; invalidationReason?: string
+    }
+    response: UserDirectMemoryResult
+  }
+  'POST memory/patches/:index': { body: { decision: 'approve' | 'dismiss' }; response: { ok: boolean; writeResult?: WriteResult; reason?: string } }
+  'GET rsi/workbench': { response: RsiWorkbenchView }
+  'POST rsi/ablation': {
+    body: { cases: { id: string; family: string; input: unknown; expectedOutcome: 'defect' | 'clean' | 'unknown'; point?: string }[] }
+    response: LeaveOneOutResult
+  }
+  'POST rsi/holdout': {
+    body: { candidateId: string; point: string; cases: { id: string; family: string; input: unknown; expectedOutcome: 'defect' | 'clean' | 'unknown' }[] }
+    response: { ok: true; result: HoldoutEvaluationResult } | { ok: false; reason: string }
+  }
+  'GET pixel-office/proof': { response: { workspaceId: string; seed: number; width: number; height: number; paletteColors: number; html: string } }
 }
 type Path<K> = K extends `${string} ${infer P}` ? P : never
 type Params<P> = P extends `${string}:${infer Name}/${infer Rest}` ? Record<Name, string> & Params<Rest>
