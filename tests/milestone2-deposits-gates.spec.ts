@@ -373,9 +373,55 @@ describe('Milestone 2: Zero-Code Building Blocks, 10 Seed Deposits & PreExecute 
     const parsed = reportTool.schema.parse({ state: 'ready', summary: 'ok', declared_paths: ['src/a.ts'] }) as { declared_paths?: string[] }
     expect(parsed.declared_paths).toEqual(['src/a.ts'])
 
-    const realOut = await executeVerifyRerunCommands(['node -e "console.log(123)"'], repoDir, { ticketId: 't-real', revision: 1 })
-    expect(realOut.verdict.kind).toBe('allow')
-    expect(realOut.results[0]!.stdoutSha256).toMatch(/^[a-f0-9]{64}$/)
+    // B3: 缺少受沙箱约束的会话 shell 执行器时，禁止在宿主进程裸跑 sh -c，诚实返回 unmeasured('no-sandbox')
+    const noSandboxOut = await executeVerifyRerunCommands(['node -e "console.log(123)"'], repoDir, { ticketId: 't-nosb', revision: 1 })
+    expect(noSandboxOut.verdict).toMatchObject({ kind: 'unmeasured', cause: 'no-sandbox' })
+
+    // B3: 挂载真实形态的 ctx.shell + ctx.sandboxPolicy 且回传 sandbox 事实时，在会话沙箱内重跑放行；无 sandbox 事实时拒放！
+    const sandboxCtx = new Context()
+    const resolvedSpecs: unknown[] = []
+    let fakeSandboxFact: { mode: string; denied: boolean; runnerFailed?: boolean } | undefined = { mode: 'workspace-write', denied: false }
+    sandboxCtx.reflect.provide('sandboxPolicy', {
+      resolve: ({ session }: { session?: { id?: string; header?: { cwd?: string } } } = {}) => ({
+        mode: 'danger-full-access', workspaceRoot: session?.header?.cwd ?? repoDir, sessionId: session?.id,
+      }),
+    })
+    sandboxCtx.reflect.provide('shell', {
+      resolve: (req: unknown) => { resolvedSpecs.push(req); return req },
+      execute: async () => ({
+        result: async () => ({
+          exitCode: 0, timedOut: false, aborted: false,
+          stdout: { text: '123\n' }, stderr: { text: '' },
+          ...(fakeSandboxFact ? { sandbox: fakeSandboxFact } : {}),
+        }),
+      }),
+    })
+    const sbGuard = new PreExecuteCompletionGuard({ context: sandboxCtx, store, registry })
+    store.tickets.save(makeTicket('t-sb', repoDir, ['pnpm test'], '```verify\necho evil_from_assignment\n```'))
+    const sbPass = await sandboxCtx.waterfall('tools/pre-execute' as never,
+      makeExec('orchestrator_report', 'sb1', { state: 'ready', summary: 'ok', declared_paths: ['src/a.ts', 'src/child.ts', '.env.local'] }, 'worker-t-sb') as never,
+      (async () => 'allow') as never)
+    // .env.local 已被 secret-path-guard 拦下，清理 .env.local 后走通 verify.rerun 会话沙箱路径
+    expect(sbPass).toMatchObject({ kind: 'deny' })
+    rmSync(join(repoDir, '.env.local'), { force: true })
+    const sbCleanPass = await sandboxCtx.waterfall('tools/pre-execute' as never,
+      makeExec('orchestrator_report', 'sb2', { state: 'ready', summary: 'ok', declared_paths: ['src/a.ts', 'src/child.ts'] }, 'worker-t-sb') as never,
+      (async () => 'allow') as never)
+    expect(sbCleanPass).toBe('allow')
+    expect((resolvedSpecs[0] as { command: string; sandboxPolicy: { mode: string } })).toMatchObject({
+      command: 'pnpm test',
+      sandboxPolicy: { mode: 'workspace-write', workspaceRoot: repoDir },
+    })
+
+    // 若 shell 执行器未回传 sandbox 事实（如未隔离的 bash-local），必须判 no-sandbox 并拦截！
+    fakeSandboxFact = undefined
+    store.tickets.save(makeTicket('t-unsb', repoDir, ['pnpm lint']))
+    const unsbDeny = await sandboxCtx.waterfall('tools/pre-execute' as never,
+      makeExec('orchestrator_report', 'sb3', { state: 'ready', summary: 'ok', declared_paths: ['src/a.ts', 'src/child.ts'] }, 'worker-t-unsb') as never,
+      (async () => 'allow') as never)
+    expect(unsbDeny).toMatchObject({ kind: 'deny' })
+    expect((unsbDeny as { reason: string }).reason).toContain('no-sandbox')
+    sbGuard.dispose()
 
     guard.dispose()
     store.close()

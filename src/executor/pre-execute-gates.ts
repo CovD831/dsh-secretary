@@ -9,7 +9,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Store } from '../app/store.ts'
 import type { Ticket } from '../core/index.ts'
 import {
-  executeVerifyRerunCommands, extractVerifyCommandsFromText,
+  executeVerifyRerunCommands,
   type ExecuteVerifyRerunOptions, type ExecuteVerifyRerunReport,
 } from '../judgement/gates/verify-rerun.ts'
 import type { ExtendedJudgementRegistry, JudgementRegistry, PointEvaluation } from '../judgement/index.ts'
@@ -252,14 +252,14 @@ export class PreExecuteCompletionGuard {
       }
     }
 
-    const ticketCmds = ticket?.execution?.verifyCommands ?? []
-    const assignCmds = extractVerifyCommandsFromText(ticket?.execution?.assignment)
-    const verifyCommands = ticketCmds.length > 0 ? ticketCmds : assignCmds
-    if (verifyCommands.length > 0) {
+    const rerunActive = entries.length === 0 || entries.some(e => e.kind === 'gate' && e.point === 'verify.rerun' && (e.stage === 'enforce' || e.stage === 'observe'))
+    const verifyCommands = ticket?.execution?.verifyCommands ?? []
+    if (rerunActive && verifyCommands.length > 0) {
       const revision = await this.computeWorkspaceRevision(workdir, git, sessionDiffPaths)
+      const runCommand = this.deps.runVerifyCommand ?? this.buildSessionSandboxRunner(exec.agent?.session)
       const rerunReport = await executeVerifyRerunCommands(verifyCommands, workdir ?? '', {
         ticketId: rootId, revision, builderRole: 'worker', verifierRole: 'verifier', taskType: 'feature', signal: exec.signal,
-        ...(this.deps.runVerifyCommand ? { runCommand: this.deps.runVerifyCommand } : {}),
+        runCommand,
         ...(this.deps.rerunCache ? { cache: this.deps.rerunCache } : {}),
         ...(this.deps.verifyTimeoutMs !== undefined ? { timeoutMs: this.deps.verifyTimeoutMs } : {}),
       })
@@ -270,6 +270,32 @@ export class PreExecuteCompletionGuard {
       }
     }
     return 'allow'
+  }
+
+  private buildSessionSandboxRunner(session: unknown): NonNullable<ExecuteVerifyRerunOptions['runCommand']> {
+    return async (command, cwd, opts) => {
+      const shell = this.deps.context.get('shell' as never) as {
+        resolve(req: Record<string, unknown>): unknown
+        execute(spec: unknown): Promise<{ result(): Promise<{ exitCode: number | null; timedOut: boolean; aborted: boolean; stdout: { text: string }; stderr: { text: string }; sandbox?: { mode: string; denied: boolean; runnerFailed?: boolean } }> }>
+      } | undefined
+      const sandboxPolicySvc = this.deps.context.get('sandboxPolicy' as never) as {
+        resolve(req?: { session?: unknown }): { mode: string; workspaceRoot: string; additionalWritableRoots?: readonly string[]; sessionId?: string }
+      } | undefined
+      if (!shell || !sandboxPolicySvc || !session) return { exitCode: null, noSandbox: true }
+      try {
+        const base = sandboxPolicySvc.resolve({ session })
+        const sandboxPolicy = base.mode === 'danger-full-access' ? { ...base, mode: 'workspace-write' } : base
+        const spec = shell.resolve({
+          command, workdir: cwd, timeoutMs: opts.timeoutMs, onExpiry: 'kill', stdoutMaxBytes: 4 * 1024 * 1024,
+          ...(opts.signal ? { signal: opts.signal } : {}), sandboxPolicy,
+        })
+        const res = await (await shell.execute(spec)).result()
+        if (!res.sandbox || res.sandbox.runnerFailed) return { exitCode: null, noSandbox: true }
+        return { exitCode: res.exitCode, timedOut: res.timedOut, aborted: res.aborted, stdout: res.stdout.text, stderr: res.stderr.text }
+      } catch {
+        return { exitCode: null, noSandbox: true }
+      }
+    }
   }
 
   private async computeWorkspaceRevision(workdir: string | undefined, git: GitStatusSnapshot, sessionDiffs: readonly string[]): Promise<string> {

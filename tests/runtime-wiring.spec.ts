@@ -15,7 +15,6 @@ import { prepareLaunchCapsule } from '../src/executor/capsule-hook.ts'
 import { DshExecutor } from '../src/executor/dsh.ts'
 import { Commands } from '../src/infra/commands.ts'
 import { HealthBoard } from '../src/infra/health.ts'
-import { verifyChangedPathsGate } from '../src/judgement/gates/index.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { extractSessionPtr } from '../src/rsi/trace-bridge.ts'
 import type { SpineEnvelope } from '../src/spine/types.ts'
@@ -82,8 +81,8 @@ describe('阶段三 Runtime 主干全链路治理接入', () => {
         ['workspace.gc.safety', 'enforce'],
         ['ticket.dispatch.isolation-ceiling', 'enforce'],
         ['ticket.adaptive-dispatch', 'enforce'],
-        ['verify.changed-paths', 'shadow'],
-        ['verify.rerun', 'shadow'],
+        ['verify.changed-paths', 'enforce'],
+        ['verify.rerun', 'enforce'],
         ['intake.bug-quadruple', 'observe'],
         ['outward.reply-desk', 'observe'],
         ['replay.ci-evaluator', 'observe'],
@@ -92,7 +91,6 @@ describe('阶段三 Runtime 主干全链路治理接入', () => {
         ['friction.seen-three', 'observe'],
         ['ticket.stale-patrol', 'observe'],
       ])
-      governance.registry.unregister('verify.changed-paths'); governance.registry.register(verifyChangedPathsGate, 'enforce')
 
       const engine = createWiredEngine(store, governance)
       expect(() => store.atomic(() => {

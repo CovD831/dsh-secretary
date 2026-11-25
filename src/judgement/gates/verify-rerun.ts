@@ -1,11 +1,7 @@
-import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { promisify } from 'node:util'
 import type { GateDef, Verdict } from '../types.ts'
-
-const execFileAsync = promisify(execFile)
 
 export interface RerunRecord {
   readonly command: string
@@ -13,6 +9,7 @@ export interface RerunRecord {
   readonly verifierRole: string
   readonly timedOut?: boolean
   readonly aborted?: boolean
+  readonly noSandbox?: boolean
 }
 
 export interface RedGreenRecord {
@@ -66,6 +63,7 @@ export interface ExecuteVerifyRerunOptions {
     exitCode: number | null
     timedOut?: boolean
     aborted?: boolean
+    noSandbox?: boolean
     stdout?: string
     stderr?: string
   }>
@@ -128,6 +126,9 @@ export function evaluateVerifyRerun(
   if (typeof rerun.command !== 'string' || rerun.command.trim() === '') {
     return { kind: 'unmeasured', cause: 'no-evidence', detail: '重跑记录缺少有效 command' }
   }
+  if (rerun.noSandbox) {
+    return { kind: 'unmeasured', cause: 'no-sandbox', detail: '缺少受沙箱约束的会话 shell 执行器（ctx.shell + sandboxPolicy），禁止在宿主进程裸跑命令' }
+  }
   if (rerun.timedOut || rerun.aborted) {
     return { kind: 'unmeasured', cause: 'timeout', detail: `验证命令 "${rerun.command}" 超时或被中止` }
   }
@@ -182,27 +183,7 @@ export function evaluateVerifyRerun(
   }
 }
 
-async function runShellVerifyCommand(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal) {
-  try {
-    const out = await execFileAsync('sh', ['-c', command], {
-      cwd, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, encoding: 'utf8',
-      ...(signal ? { signal } : {}),
-    })
-    return { exitCode: 0, timedOut: false, aborted: false, stdout: out.stdout, stderr: out.stderr }
-  } catch (err) {
-    const e = err as { code?: unknown; killed?: boolean; signal?: unknown; name?: string; stdout?: unknown; stderr?: unknown }
-    const aborted = Boolean(signal?.aborted || e.name === 'AbortError')
-    const timedOut = !aborted && Boolean(e.killed || e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT')
-    const exitCode = typeof e.code === 'number' && Number.isInteger(e.code) ? e.code : null
-    return {
-      exitCode, timedOut, aborted,
-      stdout: typeof e.stdout === 'string' ? e.stdout : '',
-      stderr: typeof e.stderr === 'string' ? e.stderr : '',
-    }
-  }
-}
-
-/** 受控重跑验证命令集（支持超时、`ticketId+revision+cmdHash` 幂等缓存、SHA-256 摘要），并交由 `verifyRerunGate` 裁决。 */
+/** 受控重跑验证命令集（支持超时、`ticketId+revision+cmdHash` 幂等缓存、SHA-256 摘要，要求显式提供会话沙箱 runner），并交由 `verifyRerunGate` 裁决。 */
 export async function executeVerifyRerunCommands(
   commands: readonly string[],
   cwd: string,
@@ -247,9 +228,12 @@ export async function executeVerifyRerunCommands(
   if (!cwdOk) {
     return finalize(baseCtx(null), [])
   }
+  if (!options.runCommand) {
+    return finalize(baseCtx({ command: normalized[0]!, exitCode: null, verifierRole, noSandbox: true }), [])
+  }
 
   const timeoutMs = Math.min(Math.max(1000, options.timeoutMs ?? 120_000), 600_000)
-  const runner = options.runCommand ?? ((cmd, dir, opts) => runShellVerifyCommand(cmd, dir, opts.timeoutMs, opts.signal))
+  const runner = options.runCommand
   const results: VerifyCommandResult[] = []
   let finalRerun: RerunRecord = { command: normalized.join(' && '), exitCode: 0, verifierRole }
 
@@ -260,13 +244,17 @@ export async function executeVerifyRerunCommands(
     const stderr = raw.stderr ?? ''
     const timedOut = Boolean(raw.timedOut)
     const aborted = Boolean(raw.aborted)
+    const noSandbox = Boolean(raw.noSandbox)
     results.push({
       command, exitCode: raw.exitCode, durationMs: Date.now() - started, timedOut, aborted,
       stdoutSha256: createHash('sha256').update(stdout).digest('hex'),
       stdoutTail: stdout.slice(-500), stderrTail: stderr.slice(-500),
     })
-    if (timedOut || aborted || raw.exitCode === null || raw.exitCode !== 0) {
-      finalRerun = { command, exitCode: raw.exitCode, verifierRole, ...(timedOut ? { timedOut: true } : {}), ...(aborted ? { aborted: true } : {}) }
+    if (noSandbox || timedOut || aborted || raw.exitCode === null || raw.exitCode !== 0) {
+      finalRerun = {
+        command, exitCode: raw.exitCode, verifierRole,
+        ...(timedOut ? { timedOut: true } : {}), ...(aborted ? { aborted: true } : {}), ...(noSandbox ? { noSandbox: true } : {}),
+      }
       break
     }
   }

@@ -84,8 +84,8 @@ export class GovernanceRuntime {
     registerWorkspaceGcGate(this.registry, 'enforce')
     registerDispatchIsolationGate(this.registry, 'enforce')
     this.registry.register(adaptiveDispatchGate, 'enforce')
-    this.registry.register(verifyChangedPathsGate, 'shadow')
-    this.registry.register(verifyRerunGate, 'shadow')
+    this.registry.register(verifyChangedPathsGate, 'enforce')
+    this.registry.register(verifyRerunGate, 'enforce')
   }
 
   latestSpineSeq(): number {

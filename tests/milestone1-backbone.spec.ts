@@ -181,6 +181,24 @@ describe('里程碑 1：原生秘书总线、三档权限沙箱与两层极速�
         value: { ...h.runtime.store.settings().executor, model: { provider: 'mock-p', model: 'mock-m' } },
       })
 
+      // 无源派单（缺失 trigger_id）必须被硬拒绝，严禁合成老板显式授权洗白污点！
+      const missingTrigger = await h.runTool(h.runtime.masterId, 'secretary_dispatch', {
+        title: '无源伪造派单',
+        objective: '尝试不带 trigger_id 直接建单',
+        acceptance: '必须拒绝',
+        verify_commands: ['pnpm test'],
+        dispatch_key: 'forged-no-trigger',
+        worktree_name: 'forged-no-trigger',
+        workspace: 'billing',
+      }) as { ok: boolean; refused?: string }
+      expect(missingTrigger.ok).toBe(false)
+      expect(missingTrigger.refused).toContain('trigger_id')
+
+      // 桌面正门生成真实受认证老板 trigger 后，方可绑定派单
+      const bossDesk = await h.api('POST', 'secretary/messages', { text: '请核对 computeInvoiceTotal 汇总逻辑' })
+      expect(bossDesk.status).toBe(200)
+      const bossTriggerId = String(bossDesk.body.triggerId)
+
       // 自然语言派单（不含字面文件路径 src/billing/invoice.ts，只提 computeInvoiceTotal 标识符！）
       const dispatched = await h.runTool(h.runtime.masterId, 'secretary_dispatch', {
         title: '核对发票汇总函数',
@@ -190,6 +208,7 @@ describe('里程碑 1：原生秘书总线、三档权限沙箱与两层极速�
         dispatch_key: 'billing-invoice-check',
         worktree_name: 'check-invoice-total',
         workspace: 'billing',
+        trigger_id: bossTriggerId,
       }) as { ok: boolean; reused: boolean; ticket: { ticket_id: string } }
       expect(dispatched).toMatchObject({ ok: true, reused: false })
       const ticketId = dispatched.ticket.ticket_id
@@ -203,8 +222,24 @@ describe('里程碑 1：原生秘书总线、三档权限沙箱与两层极速�
         dispatch_key: 'billing-invoice-check',
         worktree_name: 'check-invoice-total',
         workspace: 'billing',
+        trigger_id: bossTriggerId,
       })
       expect(reused).toMatchObject({ ok: true, reused: true, ticket: { ticket_id: ticketId } })
+
+      // 真实 Runtime.completionGuard 生产态硬闸红绿验证（B1）：shell 盲区下 orchestrator_report(ready) 必须被 deny！
+      h.ctx.emit('tools/result', {
+        callId: 'sh-1', rootCallId: 'sh-1', name: 'bash', arguments: { command: 'echo x' },
+        signal: new AbortController().signal, token: Symbol('t') as never,
+        agent: { id: `worker-${ticketId}`, session: { id: `worker-${ticketId}`, header: { cwd: wsDir } } } as never,
+      } as never, { isError: false, content: [] })
+      const prodPreRes = await h.ctx.waterfall('tools/pre-execute' as never, {
+        callId: 'rep-1', rootCallId: 'rep-1', name: 'orchestrator_report',
+        arguments: { state: 'ready', summary: 'done', declared_paths: [] },
+        signal: new AbortController().signal, token: Symbol('t2') as never,
+        agent: { id: `worker-${ticketId}`, session: { id: `worker-${ticketId}`, header: { cwd: wsDir } } } as never,
+      } as never, (async () => 'allow') as never)
+      expect(prodPreRes).toMatchObject({ kind: 'deny' })
+      expect((prodPreRes as { reason: string }).reason).toContain('shell-blind')
 
       await h.runtime.pump()
       await h.runtime.idle()

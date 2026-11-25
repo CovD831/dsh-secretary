@@ -149,8 +149,7 @@ export async function discoverAndRegisterDeposits(options: DiscoverDepositsOptio
         continue
       }
       const existing = registry.list().find(e => e.id === entry.id)
-      const hasOverride = Object.hasOwn(stageOverrides, m.id)
-      if (existing && (!hasOverride || existing.stage === targetStage)) {
+      if (existing && existing.stage === targetStage) {
         const effEnforce = existing.stage === 'enforce' && (entry.kind !== 'gate' || entry.placement.enforce)
         records.push({ id: m.id, dirName, packageDir, kind: m.kind, ...(m.point ? { point: m.point } : {}), ...(m.trigger?.signal ? { signal: m.trigger.signal } : {}), stage: existing.stage, enforce: effEnforce, trust: m.trust, casesCount: loaded.cases.length, status: 'already-registered', caseReport, manifest: m, entry })
         continue

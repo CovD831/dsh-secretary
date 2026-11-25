@@ -1,7 +1,7 @@
 /** 中文私人秘书结构化五工具与桌面端主对话总线（飞书作为薄出口）。 */
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import { key, liveTicket, reasonText, type ChannelRef, type Engine, type Outbox, type Ticket, type Trigger } from '../../core/index.ts'
+import { liveTicket, reasonText, type ChannelRef, type Engine, type Outbox, type Ticket, type Trigger } from '../../core/index.ts'
 import { WorktreeNameSchema } from '../assessment.ts'
 import { ticketCard } from '../cards.ts'
 import type { GovernanceRuntime } from '../governance.ts'
@@ -240,31 +240,20 @@ export function secretaryCoreTools(host: SecretaryCoreHost): Tool[] {
           return { ok: true, reused: true, dispatch_key: args.dispatch_key, ticket: ticketCard(existing) }
         }
 
-        let triggerId = args.trigger_id
-        if (!triggerId || !host.store.triggers.get(triggerId)) {
-          const synthetic: Trigger = {
-            id: `disp-${key(args.dispatch_key, gov.nowDate().toISOString())}`,
-            source: 'secretary-bus',
-            threads: [{ source: 'secretary-bus', id: `dispatch:${args.dispatch_key}` }],
-            actor: { source: 'secretary-bus', id: 'boss' },
-            human: true,
-            addressed: 'direct',
-            at: gov.nowDate().toISOString(),
-            text: `${args.title}\n\n目标：${args.objective}\n验收标准：${args.acceptance}`,
-            meta: { localAuthenticated: true, dispatchKey: args.dispatch_key },
-          }
-          host.quietly(() => host.engine.receive(synthetic))
-          triggerId = synthetic.id
+        const originTrigger = args.trigger_id ? host.store.triggers.get(args.trigger_id) : undefined
+        if (!args.trigger_id || !originTrigger) {
+          return { ok: false, refused: '必须提供真实已记录的 trigger_id 以溯源授权与污点等级，禁止合成老板授权派单' }
         }
-
-        const verifyBlock = `\`\`\`verify\n${args.verify_commands.join('\n')}\n\`\`\``
+        const triggerId = originTrigger.id
+        const effectiveVerifyCmds = targetWs?.verifyCommands?.length ? [...targetWs.verifyCommands] : args.verify_commands
+        const verifyBlock = `\`\`\`verify\n${effectiveVerifyCmds.join('\n')}\n\`\`\``
         const scope = `${args.objective}\n\n验收标准：${args.acceptance}\n${verifyBlock}`
-        const decision = host.quietly(() => host.engine.decide(triggerId!, {
+        const decision = host.quietly(() => host.engine.decide(triggerId, {
           kind: 'accept', title: args.title, scope, reason: { code: 'explicitRouted' },
           name: args.worktree_name, note: `验收标准: ${args.acceptance.slice(0, 80)}`,
           ...(targetWs ? { workspace: targetWs.id } : {}),
           dispatchKey: args.dispatch_key,
-          verifyCommands: args.verify_commands,
+          verifyCommands: effectiveVerifyCmds,
         }))
         if (decision.kind !== 'accept' || !decision.ticketId) {
           return { ok: false, refused: `派单未创建成功: ${reasonText(decision.reason)}` }

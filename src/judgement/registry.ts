@@ -50,8 +50,8 @@ type GateOutcome =
 const VALID_STAGES = new Set<Stage>(['shadow', 'observe', 'enforce', 'retired'])
 const VALID_ACTIONS = new Set<ActionClass>(['read', 'draft', 'local-write', 'commit', 'push-branch', 'outward-post', 'merge'])
 const VALID_ISOLATIONS = new Set<IsolationTier>(['I1', 'I2', 'I3', 'I4', 'I5'])
-const VALID_CAUSES = new Set<UnmeasuredCause>(['missing-input', 'shell-blind', 'timeout', 'parse-failed', 'threw', 'all-skipped', 'evaluator-stale', 'no-evidence'])
-const HARD_UNMEASURED_CAUSES = new Set<UnmeasuredCause>(['missing-input', 'shell-blind', 'timeout', 'parse-failed', 'threw', 'all-skipped', 'evaluator-stale'])
+const VALID_CAUSES = new Set<UnmeasuredCause>(['missing-input', 'shell-blind', 'timeout', 'parse-failed', 'threw', 'all-skipped', 'evaluator-stale', 'no-evidence', 'no-sandbox'])
+const HARD_UNMEASURED_CAUSES = new Set<UnmeasuredCause>(['missing-input', 'shell-blind', 'timeout', 'parse-failed', 'threw', 'all-skipped', 'evaluator-stale', 'no-sandbox'])
 
 export function isValidScopeStage(point: unknown, allowedScopes: ReadonlySet<string>): point is `${string}.${string}` {
   if (typeof point !== 'string' || /\s/.test(point)) return false

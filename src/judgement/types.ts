@@ -36,6 +36,7 @@ export type UnmeasuredCause =
   | 'all-skipped'
   | 'evaluator-stale'
   | 'no-evidence'
+  | 'no-sandbox'
 
 export type Verdict =
   | { kind: 'allow'; produced?: Readonly<Record<string, unknown>> }
