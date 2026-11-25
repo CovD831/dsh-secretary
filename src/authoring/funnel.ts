@@ -81,7 +81,7 @@ export function validateDepositDraft(draft: DepositDraft): DraftValidationResult
     } else validParams[k] = v
   }
   repaired = { ...repaired, params: validParams }
-  if (Object.keys(draft.params).length === 0 && draft.scope !== 'private') {
+  if (Object.keys(validParams).length === 0 && draft.scope !== 'private') {
     violations.push({
       ruleId: 'params-required-for-shared-scope', field: 'params',
       reason: `params 为空且 scope="${draft.scope}"：无参数沉淀绑定私有假设，严禁外流共享`,
@@ -192,10 +192,10 @@ export function toMemoryProposal(
       confidence: 'stated', taint: 'clean', clearance: ctx.clearance ?? 'workspace',
     }
   }
-  const workspaceKey = rawWs?.trim() ? sanitizeSegment(rawWs, 'default') : undefined
+  const personId = ctx.personId?.trim() ? sanitizeSegment(ctx.personId, 'owner') : undefined
   return {
     layer: 'm2', slug: 'profile', statement: routed.summary,
-    scope: workspaceKey ? `workspace:${workspaceKey}` : 'global',
+    scope: personId ? `person:${personId}` : 'global',
     sourceType: 'user_ruling', sourceRef: routed.sourceRef, author: 'user',
     confidence: 'stated', taint: 'clean', clearance: ctx.clearance ?? 'private',
     m2Kind: ctx.m2Kind ?? 'preference',

@@ -204,6 +204,7 @@ export interface AuthoringMemoryProposal {
 
 export interface MemoryProposalContext {
   readonly workspaceId?: string
+  readonly personId?: string
   readonly slug?: string
   readonly clearance?: 'public' | 'workspace' | 'private'
   readonly m2Kind?: 'preference' | 'veto' | 'shared_event' | 'internal_moniker' | 'correction_repair'
