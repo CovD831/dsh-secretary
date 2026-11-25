@@ -40,8 +40,12 @@ export function decodePngRgba(buf: Uint8Array): { width: number; height: number;
     const type = String.fromCharCode(buf[offset + 4]!, buf[offset + 5]!, buf[offset + 6]!, buf[offset + 7]!)
     const data = buf.subarray(offset + 8, offset + 8 + len)
     if (type === 'IHDR') {
-      width = new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(0, false)
-      height = new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(4, false)
+      const iv = new DataView(data.buffer, data.byteOffset, data.byteLength)
+      width = iv.getUint32(0, false)
+      height = iv.getUint32(4, false)
+      if (data[8] !== 8 || data[9] !== 6) {
+        throw new Error(`Unsupported PNG IHDR bitDepth=${data[8]} colorType=${data[9]}, expected 8-bit RGBA`)
+      }
     } else if (type === 'IDAT') {
       idats.push(data)
     } else if (type === 'IEND') break

@@ -203,11 +203,11 @@ export function renderF1ProofHtml(opts: RenderOptions = {}): string {
 body{margin:0;background:#14100E;color:#E8DCCB;font-family:"PingFang SC","Noto Sans SC",sans-serif;padding:24px}
 .stage{position:relative;width:${DISPLAY_W}px;height:${DISPLAY_H}px;border:2px solid #4A3C34;box-shadow:0 0 0 1px #C9A46A;overflow:hidden}
 canvas{image-rendering:pixelated;display:block;width:${DISPLAY_W}px;height:${DISPLAY_H}px}
-.dlg-text{position:absolute;left:440px;top:640px;width:960px;height:88px;font-size:28px;line-height:40px;color:#E8DCCB}
+.dlg-text{position:absolute;left:440px;top:640px;width:960px;height:88px;font-size:28px;line-height:40px;color:#E8DCCB;background:#302722;padding:4px 12px;box-sizing:border-box}
 .opts{position:absolute;left:440px;top:744px;display:flex;gap:8px}
 .opt{width:312px;height:72px;background:#302722;border:2px solid #4A3C34;box-sizing:border-box;padding:8px 12px}
 .opt b{display:block;font-size:20px;color:#E8DCCB}.opt span{font-size:14px;color:#C9A46A}
-.bar{position:absolute;top:836px;height:36px;display:flex;align-items:center;font-size:15px}
+.bar{position:absolute;top:836px;height:36px;display:flex;align-items:center;font-size:15px;background:#302722;padding:0 10px;box-sizing:border-box}
 .bar-post{left:440px;width:480px;color:#BFA48C}.bar-cnt{left:944px;width:176px;color:#C9A46A}.bar-hist{left:1140px;width:260px;color:#E8DCCB}
 .tray{display:flex;gap:20px;align-items:center;margin-top:18px}img.px{image-rendering:pixelated;border:2px solid #4A3C34}
 button{background:#302722;color:#E8DCCB;border:2px solid #C9A46A;padding:8px 16px;cursor:pointer;font-size:15px}
@@ -218,7 +218,7 @@ button{background:#302722;color:#E8DCCB;border:2px solid #C9A46A;padding:8px 16p
 <div class="bar bar-post">${dlg.postscript}</div><div class="bar bar-cnt">剩余待办：${dlg.pendingCount} 项</div>
 <div class="bar bar-hist">历史回看 · 最近裁决 3 条</div></div><div class="tray">
 <div><div>四态屏幕灯带（工作/卡住/待裁/完成）</div><img class="px" src="${toDataUri(film.rgba, film.width, film.height)}"></div>
-${moodImgs.map((m) => `<div><div>${m.mood}</div><img class="px" width="96" height="120" src="${m.uri}"></div>`).join('')}
+${moodImgs.map((m) => `<div><div>${m.mood}</div><img class="px" width="192" height="240" src="${m.uri}"></div>`).join('')}
 </div><script>
 const srcs={normal:"${toDataUri(normal2x, DISPLAY_W, DISPLAY_H)}",gate:"${toDataUri(gate2x, DISPLAY_W, DISPLAY_H)}"};
 const cv=document.getElementById('cv'),ctx=cv.getContext('2d');ctx.imageSmoothingEnabled=false;

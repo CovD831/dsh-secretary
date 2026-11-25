@@ -223,6 +223,10 @@ describe('F1 Pixel Office Proof & Deterministic Room Engine', () => {
 
     const html = readFileSync(bundle.htmlPath, 'utf8')
     expect(html).toContain('image-rendering:pixelated')
+    expect(html).toContain('width="192" height="240"')
+    expect(html).not.toContain('width="96" height="120"')
+    expect(html).toContain('.dlg-text{')
+    expect(html).toContain('background:#302722')
     expect(html).toContain('worker-1 在合并门前被路径闸拦截')
     expect(html).toContain('剩余待办')
     expect(html).toContain('四态屏幕灯带')
