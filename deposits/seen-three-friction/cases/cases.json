@@ -1,0 +1,34 @@
+[
+  {
+    "name": "green-below-seen-threshold",
+    "expected": "allow",
+    "ctx": {
+      "seenCount": 2,
+      "distinctWorkspaces": 2
+    }
+  },
+  {
+    "name": "green-single-workspace-repeat",
+    "expected": "allow",
+    "ctx": {
+      "seenCount": 5,
+      "distinctWorkspaces": 1
+    }
+  },
+  {
+    "name": "red-seen-three-across-workspaces-triggers-proposal",
+    "expected": "deny",
+    "ctx": {
+      "seenCount": 3,
+      "distinctWorkspaces": 2
+    }
+  },
+  {
+    "name": "unmeasured-missing-distinct-workspaces",
+    "expected": "unmeasured",
+    "expectedCause": "missing-input",
+    "ctx": {
+      "seenCount": 4
+    }
+  }
+]

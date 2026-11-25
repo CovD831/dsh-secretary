@@ -1,0 +1,46 @@
+[
+  {
+    "name": "green-safe-workspace-paths",
+    "expected": "allow",
+    "ctx": {
+      "changedPaths": [
+        "src/judgement/declarative.ts",
+        "tests/milestone2-deposits-gates.spec.ts"
+      ]
+    }
+  },
+  {
+    "name": "red-dotenv-blocked",
+    "expected": "deny",
+    "ctx": {
+      "changedPaths": [
+        "src/app.ts",
+        ".env.local"
+      ]
+    }
+  },
+  {
+    "name": "red-private-key-blocked",
+    "expected": "deny",
+    "ctx": {
+      "changedPaths": [
+        "config/secrets/prod.pem"
+      ]
+    }
+  },
+  {
+    "name": "red-parent-traversal-blocked",
+    "expected": "deny",
+    "ctx": {
+      "changedPaths": [
+        "../../.dsh/config.json"
+      ]
+    }
+  },
+  {
+    "name": "unmeasured-missing-changed-paths",
+    "expected": "unmeasured",
+    "expectedCause": "missing-input",
+    "ctx": {}
+  }
+]

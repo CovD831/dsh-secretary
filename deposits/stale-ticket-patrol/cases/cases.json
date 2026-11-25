@@ -1,0 +1,64 @@
+[
+  {
+    "name": "green-stale-working-ticket-remind-allowed",
+    "expected": "allow",
+    "ctx": {
+      "signal": "ticket.stale",
+      "elapsedMs": 600000,
+      "isolation": "I1",
+      "payload": {
+        "status": "working",
+        "ticketId": "t-101",
+        "idleExceeded": true,
+        "ticketOpen": true,
+        "completedSteps": ["verify-heartbeat-timeout", "confirm-open-ticket"]
+      }
+    }
+  },
+  {
+    "name": "red-idle-not-exceeded-denies-remind",
+    "expected": "deny",
+    "ctx": {
+      "signal": "ticket.stale",
+      "elapsedMs": 600000,
+      "isolation": "I1",
+      "payload": {
+        "status": "working",
+        "ticketId": "t-102",
+        "idleExceeded": false,
+        "ticketOpen": true,
+        "completedSteps": ["verify-heartbeat-timeout", "confirm-open-ticket"]
+      }
+    }
+  },
+  {
+    "name": "red-within-cooldown-window",
+    "expected": "deny",
+    "ctx": {
+      "signal": "ticket.stale",
+      "elapsedMs": 15000,
+      "isolation": "I1",
+      "payload": {
+        "status": "working",
+        "ticketId": "t-103",
+        "idleExceeded": true,
+        "ticketOpen": true,
+        "completedSteps": ["verify-heartbeat-timeout", "confirm-open-ticket"]
+      }
+    }
+  },
+  {
+    "name": "unmeasured-missing-ticket-open-state",
+    "expected": "unmeasured",
+    "expectedCause": "missing-input",
+    "ctx": {
+      "signal": "ticket.stale",
+      "elapsedMs": 600000,
+      "payload": {
+        "status": "working",
+        "ticketId": "t-104",
+        "completedSteps": ["verify-heartbeat-timeout"]
+      }
+    }
+  }
+]

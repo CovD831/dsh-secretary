@@ -1,0 +1,41 @@
+[
+  {
+    "name": "green-high-holdout-generalization-zero-false-blocks",
+    "expected": "allow",
+    "ctx": {
+      "totalCases": 10,
+      "passedCases": 9,
+      "generalizationRatio": 0.9,
+      "falseBlocks": 0
+    }
+  },
+  {
+    "name": "red-low-generalization-and-false-blocks",
+    "expected": "deny",
+    "ctx": {
+      "totalCases": 10,
+      "passedCases": 4,
+      "generalizationRatio": 0.4,
+      "falseBlocks": 2
+    }
+  },
+  {
+    "name": "unmeasured-zero-samples-no-guessing",
+    "expected": "unmeasured",
+    "expectedCause": "no-evidence",
+    "ctx": {
+      "totalCases": 0,
+      "generalizationRatio": 0.9,
+      "falseBlocks": 0
+    }
+  },
+  {
+    "name": "unmeasured-missing-generalization-ratio",
+    "expected": "unmeasured",
+    "expectedCause": "no-evidence",
+    "ctx": {
+      "totalCases": 6,
+      "falseBlocks": 0
+    }
+  }
+]
