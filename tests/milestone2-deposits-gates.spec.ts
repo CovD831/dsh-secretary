@@ -106,6 +106,7 @@ describe('Milestone 2: Zero-Code Building Blocks, 10 Seed Deposits & PreExecute 
           { name: 'deny-failed-cmd', expected: 'deny', ctx: { commands: [{ command: 'pnpm test', exitCode: 1 }] } },
           { name: 'deny-forbidden-flag', expected: 'deny', ctx: { commands: [{ command: 'git commit --no-verify', exitCode: 0 }, { command: 'pnpm test', exitCode: 0 }] } },
           { name: 'unmeasured-timeout', expected: 'unmeasured', expectedCause: 'timeout', ctx: { commands: [{ command: 'pnpm test', exitCode: null, timedOut: true }] } },
+          { name: 'unmeasured-string-without-exitcode', expected: 'unmeasured', expectedCause: 'no-evidence', ctx: { commands: ['pnpm test'] } },
         ],
       },
       {
@@ -236,8 +237,16 @@ describe('Milestone 2: Zero-Code Building Blocks, 10 Seed Deposits & PreExecute 
     expect(d5Blocked.ok).toBe(false)
     if (!d5Blocked.ok) expect(d5Blocked.code).toBe('constitutional-d5')
 
+    const missingEntryRejected = await transitionDepositStage({
+      id: 'friction.seen-three', toStage: 'enforce', registry, stageOverrides: {}, appender,
+    })
+    expect(missingEntryRejected.ok).toBe(false)
+    if (!missingEntryRejected.ok) expect(missingEntryRejected.code).toBe('missing-entry')
+
+    const secLoaded = await loadDepositPackage(join(depositsRoot, 'secret-path-guard'))
+    if (!secLoaded.admission.admitted) throw new Error('expected admitted')
     const promoted = await transitionDepositStage({
-      id: 'verify.secret-path-guard', toStage: 'enforce', registry, stageOverrides: {}, appender, reason: 'all cases green',
+      id: 'verify.secret-path-guard', toStage: 'enforce', registry, stageOverrides: {}, manifest: secLoaded.admission.manifest, appender, reason: 'all cases green',
     })
     expect(promoted.ok).toBe(true)
     expect(events.some(e => e.type === 'deposit.stage_transitioned')).toBe(true)
@@ -330,6 +339,14 @@ describe('Milestone 2: Zero-Code Building Blocks, 10 Seed Deposits & PreExecute 
     expect(pass2).toBe('allow')
     expect(verifyResults.length).toBe(countAfterPass1)
     expect(events.some(e => e.type === 'gate.evaluated')).toBe(true)
+
+    // In-place second edit to same dirty file MUST bust cache revision and rerun verification
+    writeFileSync(join(repoDir, 'src/a.ts'), 'export const a = 999 // broken in-place edit\n', 'utf8')
+    nextCmdResult = { exitCode: 1, stderr: 'broken after second edit' }
+    const rerunAfterEdit = await callPre(makeExec('orchestrator_report', 'p6b', { state: 'ready', summary: 'done', declared_paths: ['src/a.ts', 'src/child.ts'] }, 'worker-t1'))
+    expect(rerunAfterEdit).toMatchObject({ kind: 'deny' })
+    expect(verifyResults.length).toBe(countAfterPass1 + 1)
+    nextCmdResult = { exitCode: 0, stdout: 'all pass' }
 
     // Secret-path-guard integration: touching .env.local even when declared -> deny
     store.tickets.save(makeTicket('t-sec', repoDir, undefined, 'Check ```verify\nnode -e "process.exit(0)"\n```'))

@@ -1,9 +1,9 @@
 /** 执行期事前完成态硬闸守护：监听根会话与子代理工具结果、采样工作区 git 状态、强制路径核对与独立验证重跑。 */
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
-import { stat } from 'node:fs/promises'
-import { isAbsolute, relative } from 'node:path'
+import { readFile, stat } from 'node:fs/promises'
+import { isAbsolute, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Store } from '../app/store.ts'
@@ -256,10 +256,7 @@ export class PreExecuteCompletionGuard {
     const assignCmds = extractVerifyCommandsFromText(ticket?.execution?.assignment)
     const verifyCommands = ticketCmds.length > 0 ? ticketCmds : assignCmds
     if (verifyCommands.length > 0) {
-      const revision = createHash('sha256').update(JSON.stringify({
-        head: git.headRev, dirty: [...(git.gitDirtyPaths ?? [])].sort(),
-        untracked: [...(git.untrackedPaths ?? [])].sort(), diffs: [...sessionDiffPaths].sort(),
-      })).digest('hex').slice(0, 12)
+      const revision = await this.computeWorkspaceRevision(workdir, git, sessionDiffPaths)
       const rerunReport = await executeVerifyRerunCommands(verifyCommands, workdir ?? '', {
         ticketId: rootId, revision, builderRole: 'worker', verifierRole: 'verifier', taskType: 'feature', signal: exec.signal,
         ...(this.deps.runVerifyCommand ? { runCommand: this.deps.runVerifyCommand } : {}),
@@ -273,5 +270,21 @@ export class PreExecuteCompletionGuard {
       }
     }
     return 'allow'
+  }
+
+  private async computeWorkspaceRevision(workdir: string | undefined, git: GitStatusSnapshot, sessionDiffs: readonly string[]): Promise<string> {
+    if (!workdir || git.gitDirtyPaths === null || git.untrackedPaths === null) return `untracked-${randomUUID()}`
+    const h = createHash('sha256').update(git.headRev).update('\0')
+    const touched = [...new Set([...git.gitDirtyPaths, ...git.untrackedPaths, ...sessionDiffs])].sort()
+    for (const rel of touched) {
+      h.update(rel).update('\0')
+      const abs = isAbsolute(rel) ? rel : resolve(workdir, rel)
+      try { h.update(await readFile(abs)).update('\0') }
+      catch (err) {
+        const code = err && typeof err === 'object' ? (err as { code?: unknown }).code : undefined
+        h.update(code === 'ENOENT' ? 'DELETED' : `UNREADABLE:${randomUUID()}`).update('\0')
+      }
+    }
+    return h.digest('hex').slice(0, 16)
   }
 }

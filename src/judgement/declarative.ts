@@ -125,7 +125,7 @@ function evalCommandCheck(rule: CommandCheckConfig, ctx: unknown): Verdict {
         if (typeof code !== 'number' || !Number.isInteger(code)) return { kind: 'unmeasured', cause: 'no-evidence', detail: `命令 "${cmd}" 缺少整数退出码` }
         if (code !== 0) blockers.push(`命令 "${cmd}" 退出码非零 (${code})`)
       }
-    } else if (rule.requireExitZero === true) return { kind: 'unmeasured', cause: 'no-evidence', detail: `命令 "${cmd}" 缺少退出码观测` }
+    } else if (rule.requireExitZero !== false) return { kind: 'unmeasured', cause: 'no-evidence', detail: `命令 "${cmd}" 缺少退出码观测` }
   }
   for (const req of rule.requiredCommands ?? []) if (!cmds.some(c => c === req || c.includes(req))) blockers.push(`缺少必需验证命令: ${req}`)
   return blockers.length > 0 ? { kind: 'deny', blockers: blockers as [string, ...string[]] } : { kind: 'allow', produced: { checkedCommands: cmds } }

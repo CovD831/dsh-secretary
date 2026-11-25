@@ -176,27 +176,25 @@ export async function discoverAndRegisterDeposits(options: DiscoverDepositsOptio
 /** 安全流转沉淀阶段（守 D5 禁升 counter-rule、enforce 须过红绿+变异与 proof），更新 stageOverrides 与注册表并记入 M0。 */
 export async function transitionDepositStage(input: TransitionDepositStageInput): Promise<TransitionDepositStageResult> {
   if (!VALID_STAGES.has(input.toStage)) return { ok: false, code: 'invalid-stage', reason: `非法目标阶段: ${String(input.toStage)}` }
-  const isCounter = input.manifest?.kind === 'counter-rule' || (input.entry?.kind === 'gate' && input.entry.placement.enforce === false)
-  if (isCounter && input.toStage === 'enforce') {
-    return { ok: false, code: 'constitutional-d5', reason: `宪法冲突（D5）：${input.id} 为非强制提案规则，严禁晋升至 enforce` }
-  }
   const existing = input.registry.list().find(e => e.id === input.id)
   const fromStage = existing?.stage ?? 'unregistered'
   const entry = input.entry ?? (input.manifest ? resolveDepositEntry(input.manifest) : undefined)
+  if (!entry) return { ok: false, code: 'missing-entry', reason: `缺少条目 "${input.id}" 的可执行实现（须提供 manifest 或 entry）` }
+  const isCounter = input.manifest?.kind === 'counter-rule' || (entry.kind === 'gate' && entry.placement.enforce === false)
+  if (isCounter && input.toStage === 'enforce') {
+    return { ok: false, code: 'constitutional-d5', reason: `宪法冲突（D5）：${input.id} 为非强制提案规则，严禁晋升至 enforce` }
+  }
   if (input.toStage === 'enforce' && input.cases) {
-    if (!entry) return { ok: false, code: 'missing-entry', reason: `缺少条目 "${input.id}" 的可执行实现` }
     const report = await runDepositCases(entry, input.cases, input.proof ? { proof: input.proof } : {})
     if (!report.ok || !report.mutationPassed) return { ok: false, code: 'cases-failed', reason: report.error || '红绿用例或恒 allow 变异校验未通过' }
   }
-  if (entry?.kind === 'gate' && entry.proof && input.toStage !== 'shadow' && input.toStage !== 'retired') {
+  if (entry.kind === 'gate' && entry.proof && input.toStage !== 'shadow' && input.toStage !== 'retired') {
     if (!input.proof && !input.registry.getProof(input.id)) {
       return { ok: false, code: 'missing-proof', reason: `判据 "${input.id}" 要求有效 ProofRecord 方可晋升至 ${input.toStage}` }
     }
   }
-  if (entry) {
-    if (existing) input.registry.unregister(input.id)
-    input.registry.register(entry, input.toStage)
-  }
+  if (existing) input.registry.unregister(input.id)
+  input.registry.register(entry, input.toStage)
   const nextOverrides: Record<string, Stage> = { ...input.stageOverrides, [input.id]: input.toStage }
   const nowIso = (input.now ?? (() => new Date()))().toISOString()
   const sourceRef = input.appender?.append({
