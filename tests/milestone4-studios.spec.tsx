@@ -1,9 +1,8 @@
 // @vitest-environment jsdom
 // Milestone 4 verification: incremental shard cache, secretary console, three governance studios, and multi-workspace/approval settings.
-import { appendFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { act } from 'react'
 import { expect, it, onTestFinished } from 'vitest'
 import { zh } from '../src/client/locales.ts'
 import { getProjectionShardCacheStats, readDepositsProjection, readSpineProjection } from '../src/projection/index.ts'
@@ -12,7 +11,7 @@ import { server } from './fixtures/panel-server.ts'
 
 usePanel()
 
-it('reuses unchanged M0 shards, reads appended lines incrementally by byte offset, and rereads on truncation', async () => {
+it('reuses unchanged M0 shards, reads appended lines incrementally by byte offset, and rereads on rewrite/replace', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'm4-shard-cache-'))
   onTestFinished(() => { rmSync(dir, { recursive: true, force: true }) })
   const m0 = join(dir, 'memory', 'm0')
@@ -43,11 +42,21 @@ it('reuses unchanged M0 shards, reads appended lines incrementally by byte offse
   expect(s3.incrementalHits).toBe(s2.incrementalHits + 1)
   expect(s3.misses).toBe(s2.misses)
 
-  writeFileSync(shard, `${ev(10, { ticketId: 't1' })}\n`, 'utf8')
+  // In-place O_TRUNC rewrite with larger size: tailSig mismatch forces full reread instead of splicing onto old events.
+  writeFileSync(shard, `${ev(20, { ticketId: 't1', padding: 'x'.repeat(240) })}\n`, 'utf8')
   const p3 = await readSpineProjection(undefined, dir)
   const s4 = getProjectionShardCacheStats()
-  expect(p3.items.map(i => i.seq)).toEqual([10])
+  expect(p3.items.map(i => i.seq)).toEqual([20])
   expect(s4.misses).toBe(s3.misses + 1)
+
+  // Atomic rename replacement with identical size (new inode): ino mismatch forces full reread.
+  const tmpShard = join(m0, 'tmp-replace.jsonl')
+  writeFileSync(tmpShard, `${ev(30, { ticketId: 't1', padding: 'y'.repeat(240) })}\n`, 'utf8')
+  renameSync(tmpShard, shard)
+  const p4 = await readSpineProjection(undefined, dir)
+  const s5 = getProjectionShardCacheStats()
+  expect(p4.items.map(i => i.seq)).toEqual([30])
+  expect(s5.misses).toBe(s4.misses + 1)
 })
 
 it('sends desktop secretary messages, decides single-item ruling with optionId & attribution, and opens L3 worker session', async () => {
@@ -102,7 +111,7 @@ it('sends desktop secretary messages, decides single-item ruling with optionId &
   expect(server.opened).toContain('worker-t-disp')
 })
 
-it('transitions deposit stages in Deposits studio and writes direct memory + approves quote patch in Memory studio', async () => {
+it('transitions deposit stages in Deposits studio and writes direct m2/m3 memory + approves quote patch in Memory studio', async () => {
   server.depositsLedger = {
     markdown: '# Deposits Ledger\n- verify.changed-paths',
     records: [
@@ -132,11 +141,15 @@ it('transitions deposit stages in Deposits studio and writes direct memory + app
 
   await click(tab(zh['studio.memory']))
   expect(text()).toContain('run pnpm check before release')
+  expect([...field<HTMLSelectElement>(zh['studio.mem.layer']).options].map(o => o.value)).toEqual(['m2', 'm1', 'm3'])
+
+  await type(field<HTMLSelectElement>(zh['studio.mem.layer']), 'm3')
+  await type(field<HTMLInputElement>(zh['studio.mem.workspaceKey']), 'app-ws')
+  await type(field<HTMLInputElement>(zh['studio.mem.topicKey']), 'Build Rule')
   await type(field<HTMLInputElement>(zh['studio.mem.statement']), '所有提交必须带测试实证')
-  await type(field<HTMLInputElement>(zh['studio.mem.topicKey']), 'verify-evidence')
   await click(zh['studio.mem.submitDirect'])
   expect(server.requests.find(r => r.path === 'memory/direct' && r.method === 'POST')?.body).toMatchObject({
-    layer: 'm2', statement: '所有提交必须带测试实证', topicKey: 'verify-evidence',
+    layer: 'm3', workspaceKey: 'app-ws', slug: 'build-rule', statement: '所有提交必须带测试实证', topicKey: 'Build Rule',
   })
 
   await click(zh['studio.mem.approvePatch'])
@@ -157,7 +170,9 @@ it('renders RSI workbench, triggers LOO ablation + F1 pixel proof preview, and s
   const iframe = document.querySelector<HTMLIFrameElement>('iframe.dt-pixel-frame')!
   expect(iframe.getAttribute('srcdoc')).toContain('F1 Proof')
   await click(zh['studio.rsi.runAblation'])
-  expect(server.requests.some(r => r.path === 'rsi/ablation' && r.method === 'POST')).toBe(true)
+  const abReq = server.requests.find(r => r.path === 'rsi/ablation' && r.method === 'POST')?.body as { cases: { input: { sessionDiffs?: string[]; gitDirtyPaths?: string[] } }[] }
+  expect(abReq.cases[0]?.input.sessionDiffs).toEqual(['.env'])
+  expect(abReq.cases[0]?.input.gitDirtyPaths).toEqual(['.env'])
   expect(text()).toContain('gate.redundant')
 
   await click(tab(zh['tab.settings']))

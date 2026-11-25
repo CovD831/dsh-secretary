@@ -8,17 +8,22 @@ import { errorText } from './text.ts'
 import { Hint, LoadState, Section } from './widgets.tsx'
 
 const M2_KINDS: readonly M2Kind[] = ['preference', 'veto', 'shared_event', 'internal_moniker', 'correction_repair']
+const toSlug = (raw: string, fallback: string): string => {
+  const s = raw.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^[^a-z0-9]+|-+$/g, '').slice(0, 128)
+  return s || fallback
+}
 
 /** Studio view for M1-M4 memory entries, direct boss writes/corrections, verbatim patch approvals, and M6 attention ledger. */
 export function StudioMemory() {
   const { t, call, notify } = usePanel()
   const { data, error, reload } = usePoll(() => Promise.all([call('GET memory/studio'), call('GET projection/notebook')]), [])
 
-  const [layer, setLayer] = useState<'m1' | 'm2' | 'm3' | 'm4'>('m2')
+  const [layer, setLayer] = useState<'m1' | 'm2' | 'm3'>('m2')
   const [statement, setStatement] = useState('')
   const [topicKey, setTopicKey] = useState('')
   const [m2Kind, setM2Kind] = useState<M2Kind | ''>('')
   const [workspaceKey, setWorkspaceKey] = useState('')
+  const [slug, setSlug] = useState('')
   const [resident, setResident] = useState(false)
   const [overrideTombstone, setOverrideTombstone] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -34,13 +39,15 @@ export function StudioMemory() {
     if (!statement.trim() || saving) return
     setSaving(true)
     try {
+      const resolvedSlug = toSlug(slug || topicKey, 'notes')
+      const resolvedWs = toSlug(workspaceKey, 'default')
       const res = await call('POST memory/direct', {
         body: {
           layer, statement: statement.trim(),
           ...(topicKey.trim() ? { topicKey: topicKey.trim() } : {}),
           ...(m2Kind ? { m2Kind } : {}),
-          ...(layer === 'm3' && workspaceKey.trim() ? { workspaceKey: workspaceKey.trim() } : {}),
-          ...(layer === 'm1' && workspaceKey.trim() ? { slug: workspaceKey.trim() } : {}),
+          ...(layer === 'm3' ? { workspaceKey: resolvedWs, slug: resolvedSlug } : {}),
+          ...(layer === 'm1' ? { slug: resolvedSlug } : {}),
           ...(resident ? { resident: true } : {}),
           ...(overrideTombstone ? { overrideTombstone: true } : {}),
         },
@@ -74,8 +81,8 @@ export function StudioMemory() {
         <div className="dt-grid3">
           <label className="dt-field">
             <span className="dt-field-head">{t('studio.mem.layer')}</span>
-            <select className="dt-select" aria-label={t('studio.mem.layer')} value={layer} onChange={e => setLayer(e.target.value as 'm1' | 'm2' | 'm3' | 'm4')}>
-              <option value="m2">m2</option><option value="m1">m1</option><option value="m3">m3</option><option value="m4">m4</option>
+            <select className="dt-select" aria-label={t('studio.mem.layer')} value={layer} onChange={e => setLayer(e.target.value as 'm1' | 'm2' | 'm3')}>
+              <option value="m2">m2</option><option value="m1">m1</option><option value="m3">m3</option>
             </select>
           </label>
           <label className="dt-field">
@@ -90,14 +97,18 @@ export function StudioMemory() {
             </select>
           </label>
         </div>
-        <div className="dt-grid2">
+        <div className="dt-grid3">
           <label className="dt-field">
             <span className="dt-field-head">{t('studio.mem.statement')}</span>
             <Input aria-label={t('studio.mem.statement')} required value={statement} placeholder={t('studio.mem.statementPlaceholder')} onChange={e => setStatement(e.target.value)} />
           </label>
           <label className="dt-field">
             <span className="dt-field-head">{t('studio.mem.workspaceKey')}</span>
-            <Input aria-label={t('studio.mem.workspaceKey')} value={workspaceKey} onChange={e => setWorkspaceKey(e.target.value)} />
+            <Input aria-label={t('studio.mem.workspaceKey')} value={workspaceKey} placeholder="default" onChange={e => setWorkspaceKey(e.target.value)} />
+          </label>
+          <label className="dt-field">
+            <span className="dt-field-head">{t('studio.mem.slug')}</span>
+            <Input aria-label={t('studio.mem.slug')} value={slug} placeholder="notes" onChange={e => setSlug(e.target.value)} />
           </label>
         </div>
         <div className="dt-actions">

@@ -10,14 +10,14 @@ import { Hint, LoadState, Section } from './widgets.tsx'
 
 const ATTRIBUTIONS: readonly FourWayAttribution[] = ['missing_rule', 'wrong_rule', 'unmeasurable', 'rule_conflict']
 const DEFAULT_ABLATION_CASES: ApiRequest<'POST rsi/ablation'>['body']['cases'] = [
-  { id: 'ab-1', family: 'paths', point: 'verify.changed-paths', expectedOutcome: 'defect', input: { observedCalls: [{ callId: 'c1', tool: 'write', paths: ['.env'] }], allowedPaths: ['src/**'] } },
-  { id: 'ab-2', family: 'paths', point: 'verify.changed-paths', expectedOutcome: 'clean', input: { observedCalls: [{ callId: 'c2', tool: 'write', paths: ['src/app.ts'] }], allowedPaths: ['src/**'] } },
+  { id: 'ab-1', family: 'paths', point: 'verify.changed-paths', expectedOutcome: 'defect', input: { sessionDiffs: ['.env'], gitDirtyPaths: ['.env'], untrackedPaths: [], allowedPaths: ['src/**'] } },
+  { id: 'ab-2', family: 'paths', point: 'verify.changed-paths', expectedOutcome: 'clean', input: { sessionDiffs: ['src/app.ts'], gitDirtyPaths: ['src/app.ts'], untrackedPaths: [], allowedPaths: ['src/**'] } },
 ]
 const DEFAULT_HOLDOUT_CASES: ApiRequest<'POST rsi/holdout'>['body']['cases'] = [
-  { id: 'h-1', family: 'f1', expectedOutcome: 'defect', input: { observedCalls: [{ callId: 'c1', tool: 'write', paths: ['.env'] }], allowedPaths: ['src/**'] } },
-  { id: 'h-2', family: 'f2', expectedOutcome: 'clean', input: { observedCalls: [{ callId: 'c2', tool: 'write', paths: ['src/a.ts'] }], allowedPaths: ['src/**'] } },
-  { id: 'h-3', family: 'f3', expectedOutcome: 'defect', input: { observedCalls: [{ callId: 'c3', tool: 'write', paths: ['secrets.json'] }], allowedPaths: ['src/**'] } },
-  { id: 'h-4', family: 'f4', expectedOutcome: 'clean', input: { observedCalls: [{ callId: 'c4', tool: 'write', paths: ['src/b.ts'] }], allowedPaths: ['src/**'] } },
+  { id: 'h-1', family: 'f1', expectedOutcome: 'defect', input: { sessionDiffs: ['.env'], gitDirtyPaths: ['.env'], untrackedPaths: [], allowedPaths: ['src/**'] } },
+  { id: 'h-2', family: 'f2', expectedOutcome: 'clean', input: { sessionDiffs: ['src/a.ts'], gitDirtyPaths: ['src/a.ts'], untrackedPaths: [], allowedPaths: ['src/**'] } },
+  { id: 'h-3', family: 'f3', expectedOutcome: 'defect', input: { sessionDiffs: ['secrets.json'], gitDirtyPaths: ['secrets.json'], untrackedPaths: [], allowedPaths: ['src/**'] } },
+  { id: 'h-4', family: 'f4', expectedOutcome: 'clean', input: { sessionDiffs: ['src/b.ts'], gitDirtyPaths: ['src/b.ts'], untrackedPaths: [], allowedPaths: ['src/**'] } },
 ]
 
 const pct = (v: number | undefined, fallback: string) => v === undefined ? fallback : `${(v * 100).toFixed(1)}%`

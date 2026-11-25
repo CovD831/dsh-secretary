@@ -1,11 +1,15 @@
-/** 有界只读 M0 分片内存缓存：支持历史不可变分片复用与活跃分片尾部字节偏移增量解析。 */
+/** 有界只读 M0 分片内存缓存：校验 inode/dev 与末尾指纹，支持历史分片复用及尾部字节偏移增量解析。 */
 import { lstat, open, readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import type { SpineEnvelope } from '../spine/types.ts'
 
 interface CachedShard {
+  readonly ino: number
+  readonly dev: number
   readonly mtimeMs: number
   readonly size: number
   readonly completeBytes: number
+  readonly tailSig: Buffer
   readonly events: readonly SpineEnvelope[]
 }
 
@@ -18,6 +22,7 @@ export interface ProjectionShardCacheStats {
 }
 
 const MAX_SHARD_CACHE = 128
+const TAIL_SIG_BYTES = 32
 const shardCache = new Map<string, CachedShard>()
 const cacheStats = { hits: 0, incrementalHits: 0, misses: 0 }
 
@@ -62,45 +67,57 @@ async function readByteRange(filePath: string, offset: number, length: number): 
   } finally { await fh.close() }
 }
 
-function putCachedShard(filePath: string, entry: CachedShard): void {
-  if (shardCache.has(filePath)) shardCache.delete(filePath)
+function putCachedShard(key: string, entry: CachedShard): void {
+  if (shardCache.has(key)) shardCache.delete(key)
   else if (shardCache.size >= MAX_SHARD_CACHE) {
     const oldest = shardCache.keys().next().value
     if (oldest !== undefined) shardCache.delete(oldest)
   }
-  shardCache.set(filePath, entry)
+  shardCache.set(key, entry)
 }
 
-/** 读取单个非符号链接 M0 分片文件，优先复用未变更缓存或按字节偏移增量读取尾部追加行。 */
+function tailSlice(buf: Buffer, end: number): Buffer {
+  return Buffer.from(buf.subarray(Math.max(0, end - TAIL_SIG_BYTES), end))
+}
+
+/** 读取单个非符号链接 M0 分片文件，校验 dev/ino 与 32B 尾指纹后复用缓存或增量读取尾部追加行。 */
 export async function readCachedShardEvents(filePath: string): Promise<readonly SpineEnvelope[]> {
+  const key = resolve(filePath)
   let info
-  try { info = await lstat(filePath) } catch { shardCache.delete(filePath); return [] }
-  if (!info.isFile() || info.isSymbolicLink()) { shardCache.delete(filePath); return [] }
-  const cached = shardCache.get(filePath)
-  if (cached && info.mtimeMs === cached.mtimeMs && info.size === cached.size) {
+  try { info = await lstat(key) } catch { shardCache.delete(key); return [] }
+  if (!info.isFile() || info.isSymbolicLink()) { shardCache.delete(key); return [] }
+  const cached = shardCache.get(key)
+  if (cached && info.ino === cached.ino && info.dev === cached.dev && info.mtimeMs === cached.mtimeMs && info.size === cached.size) {
     cacheStats.hits += 1
-    putCachedShard(filePath, cached)
+    putCachedShard(key, cached)
     return cached.events
   }
-  if (cached && info.size > cached.size && info.size > cached.completeBytes && info.mtimeMs >= cached.mtimeMs) {
-    if (cached.completeBytes > 0) {
-      const raw = await readByteRange(filePath, cached.completeBytes - 1, info.size - cached.completeBytes + 1)
-      if (raw[0] === 0x0a) {
-        const parsed = parseCompleteBuffer(raw.subarray(1))
-        const events = parsed.events.length ? [...cached.events, ...parsed.events] : cached.events
-        cacheStats.incrementalHits += 1
-        putCachedShard(filePath, { mtimeMs: info.mtimeMs, size: info.size, completeBytes: cached.completeBytes + parsed.completeBytes, events })
-        return events
-      }
-    } else {
-      const parsed = parseCompleteBuffer(await readByteRange(filePath, 0, info.size))
+  if (cached && info.ino === cached.ino && info.dev === cached.dev && info.size > cached.size && info.size > cached.completeBytes) {
+    const sigLen = cached.tailSig.length
+    const startOffset = cached.completeBytes - sigLen
+    const raw = await readByteRange(key, startOffset, info.size - startOffset)
+    if (raw.length >= sigLen && raw.subarray(0, sigLen).equals(cached.tailSig)) {
+      const delta = raw.subarray(sigLen)
+      const parsed = parseCompleteBuffer(delta)
+      const events = parsed.events.length ? [...cached.events, ...parsed.events] : cached.events
+      const completeBytes = cached.completeBytes + parsed.completeBytes
+      const mergedTail = parsed.completeBytes >= TAIL_SIG_BYTES
+        ? tailSlice(delta, parsed.completeBytes)
+        : Buffer.from(Buffer.concat([cached.tailSig, delta.subarray(0, parsed.completeBytes)]).subarray(-TAIL_SIG_BYTES))
       cacheStats.incrementalHits += 1
-      putCachedShard(filePath, { mtimeMs: info.mtimeMs, size: info.size, ...parsed })
-      return parsed.events
+      putCachedShard(key, {
+        ino: info.ino, dev: info.dev, mtimeMs: info.mtimeMs, size: info.size,
+        completeBytes, tailSig: mergedTail, events,
+      })
+      return events
     }
   }
-  const parsed = parseCompleteBuffer(await readFile(filePath))
+  const fullBuf = await readFile(key)
+  const parsed = parseCompleteBuffer(fullBuf)
   cacheStats.misses += 1
-  putCachedShard(filePath, { mtimeMs: info.mtimeMs, size: info.size, ...parsed })
+  putCachedShard(key, {
+    ino: info.ino, dev: info.dev, mtimeMs: info.mtimeMs, size: info.size,
+    completeBytes: parsed.completeBytes, tailSig: tailSlice(fullBuf, parsed.completeBytes), events: parsed.events,
+  })
   return parsed.events
 }
