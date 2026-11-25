@@ -1,6 +1,7 @@
 /** 飞书 CardKit 2.0 四分法归因裁决卡与对话式沉淀作者面统一导出。 */
 export type {
   AttributionCategory,
+  AuthoringMemoryProposal,
   AuthoringStage,
   AuthoringTelemetryEvent,
   BuiltFeishuCard,
@@ -19,6 +20,8 @@ export type {
   FeishuCardPayload,
   MachineGateViolation,
   MandateCeiling,
+  MemoryProposalContext,
+  PendingEscalationRuling,
   RulingDecision,
   SpineInput,
   WrittenDepositPackage,
@@ -38,6 +41,7 @@ export {
 export {
   routeEscalationRuling,
   telemetryToSpineInput,
+  toMemoryProposal,
   validateDepositDraft,
-  writeDepositDraftPackage,
 } from './funnel.ts'
+export { writeDepositDraftPackage } from './package-writer.ts'

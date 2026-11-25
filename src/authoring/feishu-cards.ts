@@ -1,9 +1,10 @@
 /** 飞书 Card JSON 2.0 构建器、30KB/分块保护、3 秒自更新回调与 14 天滚动过期处理。 */
 import type { ReplayReportCard } from '../rsi/types.ts'
+import type { SourceRef } from '../spine/types.ts'
 import type {
   AttributionCategory, BuiltFeishuCard, DepositDraft, EscalationCardRequest,
   EscalationRuling, ExpiredCardMeta, FeishuCallbackParseResult, FeishuCardElement,
-  FeishuCardPayload, RulingDecision,
+  FeishuCardPayload, PendingEscalationRuling, RulingDecision,
 } from './types.ts'
 
 export const CARD_TTL_MS = 14 * 24 * 60 * 60 * 1000
@@ -25,6 +26,11 @@ const btnRow = (buttons: readonly FeishuCardElement[]): FeishuCardElement => ({
   tag: 'column_set', flex_mode: 'none',
   columns: buttons.map(b => ({ tag: 'column', width: 'auto', elements: [b] })),
 })
+
+function isValidSourceRef(ref: unknown): ref is SourceRef {
+  return isRec(ref) && typeof ref['seq'] === 'number' && Number.isSafeInteger(ref['seq']) && ref['seq'] > 0
+    && typeof ref['id'] === 'string' && ref['id'].trim().length > 0
+}
 
 function splitOversizedLine(line: string, maxChars: number): string[] {
   const out: string[] = []
@@ -58,24 +64,21 @@ export function assertCardByteLimit(
   const initialBytes = utf8Bytes(card)
   if (initialBytes <= maxBytes) return { card, byteLength: initialBytes, truncated: false }
   const hintText = detailUrl ? `详情已截断，请查看完整内容：[查看详情](${detailUrl})` : '详情过长已截断，请前往面板查看完整上下文。'
-  const interactive = card.body.elements.filter(el => el['tag'] === 'form' || el['tag'] === 'column_set' || el['tag'] === 'action')
+  const safeHeader = card.header && card.header.title.content.length > 80
+    ? { ...card.header, title: { tag: 'plain_text' as const, content: `${card.header.title.content.slice(0, 77)}…` } }
+    : card.header
+  const baseCard: FeishuCardPayload = { ...card, ...(safeHeader ? { header: safeHeader } : {}) }
+  const interactive = baseCard.body.elements.filter(el => el['tag'] === 'form' || el['tag'] === 'column_set' || el['tag'] === 'action')
   const keptMd: FeishuCardElement[] = []
-  let next: FeishuCardPayload = { ...card, body: { elements: [mdEl(hintText), ...interactive] } }
-  for (const el of card.body.elements) {
+  let next: FeishuCardPayload = { ...baseCard, body: { elements: [mdEl(hintText), ...interactive] } }
+  for (const el of baseCard.body.elements) {
     if (el['tag'] !== 'markdown') continue
-    const candidate: FeishuCardPayload = { ...card, body: { elements: [...keptMd, el, mdEl(hintText), ...interactive] } }
+    const candidate: FeishuCardPayload = { ...baseCard, body: { elements: [...keptMd, el, mdEl(hintText), ...interactive] } }
     if (utf8Bytes(candidate) <= maxBytes) { keptMd.push(el); next = candidate } else break
   }
   if (utf8Bytes(next) > maxBytes) {
-    const firstMd = card.body.elements.find(el => el['tag'] === 'markdown')
-    const raw = typeof firstMd?.['content'] === 'string' ? firstMd['content'] : ''
-    let lo = 0, hi = raw.length, best: FeishuCardPayload = { ...card, body: { elements: [mdEl(hintText), ...interactive] } }
-    while (lo <= hi && utf8Bytes(best) > maxBytes) {
-      const mid = (lo + hi) >> 1
-      const c: FeishuCardPayload = { ...card, body: { elements: [...(mid > 0 ? [mdEl(`${raw.slice(0, mid)}…`)] : []), mdEl(hintText), ...interactive] } }
-      if (utf8Bytes(c) <= maxBytes) { best = c; lo = mid + 1 } else hi = mid - 1
-    }
-    next = utf8Bytes(best) <= maxBytes ? best : { ...card, body: { elements: [mdEl(hintText)] } }
+    const hintOnly: FeishuCardPayload = { ...baseCard, body: { elements: [mdEl(hintText)] } }
+    next = utf8Bytes(hintOnly) <= maxBytes ? hintOnly : { schema: '2.0', config: baseCard.config, body: { elements: [mdEl('详情过长已截断')] } }
   }
   return { card: next, byteLength: utf8Bytes(next), truncated: true }
 }
@@ -208,10 +211,16 @@ export function buildReplayReportCard(
   }, issuedAt, options.detailUrl)
 }
 
-/** 校验 card.action.trigger 负载并生成 <3s 同步自更新结果态卡片（含幂等去重）。 */
+/** 校验 card.action.trigger 负载（操作人鉴权、14 天过期、真实 SourceRef、幂等去重）并生成 <3s 锁态卡。 */
 export function parseFeishuCardCallback(
   raw: unknown,
-  options: { readonly seenCallbackIds?: Set<string>; readonly now?: string } = {},
+  options: {
+    readonly seenCallbackIds?: Set<string>
+    readonly now?: string
+    readonly isAllowedOperator?: (openId: string) => boolean
+    readonly verifiedSourceRef?: SourceRef
+    readonly issuedAt?: string
+  } = {},
 ): FeishuCallbackParseResult {
   if (!isRec(raw)) return { ok: false, reason: '回调负载必须为对象' }
   const header = isRec(raw['header']) ? raw['header'] : undefined
@@ -219,38 +228,49 @@ export function parseFeishuCardCallback(
   const operator = isRec(ev['operator']) ? ev['operator'] : undefined
   const operatorOpenId = typeof operator?.['open_id'] === 'string' ? operator['open_id'].trim() : ''
   if (!operatorOpenId) return { ok: false, reason: 'operator.open_id 不能为空' }
+  if (options.isAllowedOperator && !options.isAllowedOperator(operatorOpenId)) return { ok: false, reason: 'unauthorized-operator' }
   const action = isRec(ev['action']) ? ev['action'] : undefined
   if (!action) return { ok: false, reason: '缺少 action 字段' }
   const val = isRec(action['value']) ? action['value'] : {}
   const form = isRec(action['form_value']) ? action['form_value'] : {}
   const ctx = isRec(ev['context']) ? ev['context'] : {}
-  const callbackId = [header?.['event_id'], raw['callback_id'], ev['token'], val['callbackId'], ctx['open_message_id']]
-    .find(v => typeof v === 'string' && v.trim() !== '') as string | undefined ?? `${operatorOpenId}:${String(val['escalationId'] ?? '')}:${String(val['decision'] ?? '')}`
-  if (options.seenCallbackIds?.has(callbackId)) {
-    return { ok: true, duplicate: true, callbackId, operatorOpenId, response: { toast: { type: 'info', content: '重复回调已幂等忽略' } } }
-  }
+  const decidedAt = options.now ?? new Date().toISOString()
+  const issuedAt = options.issuedAt ?? (typeof val['issuedAt'] === 'string' ? val['issuedAt'] : undefined)
+  if (issuedAt !== undefined && isCardExpired(issuedAt, decidedAt)) return { ok: false, reason: 'card-expired' }
+  const ticketId = typeof val['ticketId'] === 'string' ? val['ticketId'].trim() : typeof form['ticketId'] === 'string' ? form['ticketId'].trim() : ''
+  if (!ticketId) return { ok: false, reason: 'missing-ticket-id' }
   const decisionRaw = val['decision'] ?? form['decision']
   const attrRaw = form['attribution'] ?? val['attribution']
   if (typeof decisionRaw !== 'string' || !DECISION_SET.has(decisionRaw)) return { ok: false, reason: '缺少或非法的 decision（approve|reject|revise）' }
   if (typeof attrRaw !== 'string' || !ATTRIBUTION_SET.has(attrRaw)) return { ok: false, reason: '缺少或非法的四分法归因 attribution' }
-  const escalationId = typeof val['escalationId'] === 'string' && val['escalationId'].trim() !== '' ? val['escalationId'] : callbackId
-  const ticketId = typeof val['ticketId'] === 'string' && val['ticketId'].trim() !== '' ? val['ticketId'] : 'unknown-ticket'
-  const decidedAt = options.now ?? new Date().toISOString()
+  let sourceRef: SourceRef | undefined
+  if (options.verifiedSourceRef !== undefined) {
+    if (!isValidSourceRef(options.verifiedSourceRef)) return { ok: false, reason: 'invalid-source-ref' }
+    sourceRef = options.verifiedSourceRef
+  } else if (val['sourceRef'] !== undefined) {
+    if (!isValidSourceRef(val['sourceRef'])) return { ok: false, reason: 'invalid-source-ref' }
+    sourceRef = val['sourceRef']
+  }
+  const callbackId = [header?.['event_id'], raw['callback_id'], ev['token'], val['callbackId'], ctx['open_message_id']]
+    .find(v => typeof v === 'string' && v.trim() !== '') as string | undefined ?? `${operatorOpenId}:${String(val['escalationId'] ?? '')}:${decisionRaw}`
+  if (options.seenCallbackIds?.has(callbackId)) {
+    return { ok: true, duplicate: true, callbackId, operatorOpenId, response: { toast: { type: 'info', content: '重复回调已幂等忽略' } } }
+  }
+  const escalationId = typeof val['escalationId'] === 'string' && val['escalationId'].trim() !== '' ? val['escalationId'].trim() : callbackId
   const noteRaw = form['note'] ?? val['note']
   const note = typeof noteRaw === 'string' && noteRaw.trim() !== '' ? noteRaw.trim() : undefined
   const capRaw = form['captureAsRule'] ?? val['captureAsRule']
   const captureAsRule = capRaw === true || capRaw === 'true' || capRaw === 1
-  const srcRaw = isRec(val['sourceRef']) ? val['sourceRef'] : undefined
-  const sourceRef = typeof srcRaw?.['seq'] === 'number' && typeof srcRaw?.['id'] === 'string' ? { seq: srcRaw['seq'], id: srcRaw['id'] } : { seq: 0, id: callbackId }
   options.seenCallbackIds?.add(callbackId)
   const decision = decisionRaw as RulingDecision
   const attribution = attrRaw as AttributionCategory
-  const ruling: EscalationRuling = { escalationId, ticketId, operatorOpenId, decision, attribution, ...(note ? { note } : {}), captureAsRule, sourceRef, decidedAt }
+  const pendingRuling: PendingEscalationRuling = { escalationId, ticketId, operatorOpenId, decision, attribution, ...(note ? { note } : {}), captureAsRule, decidedAt }
+  const ruling: EscalationRuling | undefined = sourceRef ? { ...pendingRuling, sourceRef } : undefined
   const summaryLine = `已裁决：${DECISION_LABELS[decision]}（${ATTRIBUTION_LABELS[attribution]}） · 操作人 ${operatorOpenId} · ${decidedAt}`
-  const lockedCard: FeishuCardPayload = {
+  const lockedCard = assertCardByteLimit({
     schema: '2.0', config: { update_multi: true },
     header: { template: decision === 'approve' ? 'green' : decision === 'reject' ? 'red' : 'blue', title: { tag: 'plain_text', content: `已裁决：${DECISION_LABELS[decision]}` } },
     body: { elements: [mdEl(summaryLine), ...(note ? [mdEl(`**备注**：${note}`)] : []), ...(captureAsRule ? [mdEl('📌 已勾选「把这条立成规矩」，将自动进入 S1 草稿流程。')] : [])] },
-  }
-  return { ok: true, duplicate: false, callbackId, operatorOpenId, ruling, response: { toast: { type: 'success', content: `${DECISION_LABELS[decision]}已记录` }, card: lockedCard } }
+  }, 30_000).card
+  return { ok: true, duplicate: false, callbackId, operatorOpenId, pendingRuling, ...(ruling ? { ruling } : {}), response: { toast: { type: 'success', content: `${DECISION_LABELS[decision]}已记录` }, card: lockedCard } }
 }

@@ -16,6 +16,17 @@ export interface EscalationRuling {
   readonly decidedAt: string
 }
 
+export interface PendingEscalationRuling {
+  readonly escalationId: string
+  readonly ticketId: string
+  readonly operatorOpenId: string
+  readonly decision: RulingDecision
+  readonly attribution: AttributionCategory
+  readonly note?: string
+  readonly captureAsRule?: boolean
+  readonly decidedAt: string
+}
+
 export type AuthoringStage = 'S0_capture' | 'S1_draft' | 'S2_cases' | 'S3_replay' | 'S4_shadow'
 export type DepositKind = DepositManifest['kind']
 export type MandateCeiling = 'L0' | 'L1' | 'L2' | 'L3'
@@ -132,6 +143,7 @@ export type FeishuCallbackParseResult =
       readonly duplicate: boolean
       readonly callbackId: string
       readonly operatorOpenId: string
+      readonly pendingRuling?: PendingEscalationRuling
       readonly ruling?: EscalationRuling
       readonly response: FeishuCardCallbackResponse
     }
@@ -171,9 +183,31 @@ export type DraftValidationResult =
 
 export type EscalationRouteResult =
   | { readonly route: 'transient-retry'; readonly suppressRuleProposal: true; readonly reason: string }
-  | { readonly route: 'workspace-memory-proposal'; readonly layer: 'm3'; readonly sourceRef: SourceRef; readonly title: string; readonly summary: string }
+  | { readonly route: 'workspace-memory-proposal'; readonly layer: 'm3'; readonly sourceRef: SourceRef; readonly title: string; readonly summary: string; readonly workspace?: string }
   | { readonly route: 'deposit-draft'; readonly draft: DepositDraft; readonly sourceRef: SourceRef }
-  | { readonly route: 'user-ruling-memory-proposal'; readonly layer: 'm2'; readonly sourceRef: SourceRef; readonly title: string; readonly summary: string }
+  | { readonly route: 'user-ruling-memory-proposal'; readonly layer: 'm2'; readonly sourceRef: SourceRef; readonly title: string; readonly summary: string; readonly workspace?: string }
+
+export interface AuthoringMemoryProposal {
+  readonly layer: 'm2' | 'm3'
+  readonly slug?: string
+  readonly workspaceKey?: string
+  readonly statement: string
+  readonly scope: 'global' | `workspace:${string}` | `person:${string}`
+  readonly sourceType: 'user_ruling'
+  readonly sourceRef: SourceRef
+  readonly author: 'user'
+  readonly confidence: 'stated'
+  readonly taint: 'clean'
+  readonly clearance: 'public' | 'workspace' | 'private'
+  readonly m2Kind?: 'preference' | 'veto' | 'shared_event' | 'internal_moniker' | 'correction_repair'
+}
+
+export interface MemoryProposalContext {
+  readonly workspaceId?: string
+  readonly slug?: string
+  readonly clearance?: 'public' | 'workspace' | 'private'
+  readonly m2Kind?: 'preference' | 'veto' | 'shared_event' | 'internal_moniker' | 'correction_repair'
+}
 
 export interface WrittenDepositPackage {
   readonly packageDir: string
