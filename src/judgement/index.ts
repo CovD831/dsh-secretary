@@ -31,6 +31,7 @@ export {
 } from './declarative.ts'
 export {
   OSS_SEEDED_GATE_IDS,
+  RESERVED_BUILTIN_DEPOSIT_IDS,
   discoverAndRegisterDeposits,
   renderDepositsLedgerMarkdown,
   resolveDepositEntry,

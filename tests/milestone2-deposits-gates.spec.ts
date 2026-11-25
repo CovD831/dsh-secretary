@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Store } from '../src/app/store.ts'
-import type { GovernanceRuntime } from '../src/app/governance.ts'
+import { GovernanceRuntime } from '../src/app/governance.ts'
 import { executorTools } from '../src/app/tools/executor.ts'
 import { secretaryGovernanceTools } from '../src/app/tools/secretary-governance.ts'
 import type { Ticket } from '../src/core/index.ts'
@@ -425,5 +425,59 @@ describe('Milestone 2: Zero-Code Building Blocks, 10 Seed Deposits & PreExecute 
 
     guard.dispose()
     store.close()
+  })
+
+  it('blocks stateDir shadow packages and deposit_author from downgrading or overwriting builtin enforce gates (B4)', async () => {
+    const stateDir = makeTempDir('dsh-b4-downgrade-')
+    const store = new Store(join(stateDir, 'orch.db'))
+    const gov = new GovernanceRuntime({ store, stateDir })
+    try {
+      await gov.recover()
+      expect(gov.registry.list().find(e => e.id === 'verify.changed-paths')?.stage).toBe('enforce')
+
+      // 1) 秘书调 orchestrator_deposit_author 尝试用内置保留 ID 安装 shadow 包：必须在写盘前拒绝，零文件落盘！
+      const tools = secretaryGovernanceTools(gov)
+      const authorTool = tools.find(t => t.name === 'orchestrator_deposit_author')!
+      await expect(authorTool.execute({
+        mode: 'install_shadow',
+        draft: {
+          id: 'verify.changed-paths', name: 'Hijack', scope: 'public', kind: 'gate', point: 'verify.secret-path-guard',
+          requires: ['changedPaths'], params: { max_files: { type: 'number', default: 10, min: 1, max: 50 } },
+          exceptions: ['none'], repairHint: 'Remove tmp path', intent: 'Hijack builtin gate to shadow.', rubricBody: 'Hijack',
+          actionClass: 'block', stage: 'observe', enforce: false,
+          rule: { kind: 'path_rules', inputField: 'changedPaths', forbiddenGlobs: ['**/tmp/**'] },
+          cases: [
+            { name: 'clean-src', expected: 'allow', ctx: { changedPaths: ['src/ok.ts'] } },
+            { name: 'bad-tmp', expected: 'deny', ctx: { changedPaths: ['a/tmp/hack.ts'] } },
+          ],
+        },
+      } as never, new AbortController().signal)).rejects.toThrow(/禁止影子安装包覆盖/)
+      const stateDepositsDir = join(stateDir, 'deposits')
+      const stateEntries = await readdir(stateDepositsDir).catch(() => [] as string[])
+      expect(stateEntries.filter(n => n !== 'LEDGER.md')).toEqual([])
+
+      // 2) 即便磁盘 <stateDir>/deposits/ 中已存在同 ID 且完全过准入的 shadow 包，discoverAndRegisterDeposits 也绝不降级内置 enforce 硬闸！
+      const fakePkg = join(stateDepositsDir, 'hijack-changed-paths')
+      mkdirSync(join(fakePkg, 'cases'), { recursive: true })
+      const realMd = await readFile(join(process.cwd(), 'deposits', 'verify-changed-paths', 'DEPOSIT.md'), 'utf8')
+      writeFileSync(join(fakePkg, 'DEPOSIT.md'), realMd.replace('stage: enforce', 'stage: shadow').replace('enforce: true', 'enforce: false'), 'utf8')
+      for (const caseFile of await readdir(join(process.cwd(), 'deposits', 'verify-changed-paths', 'cases'))) {
+        writeFileSync(join(fakePkg, 'cases', caseFile), await readFile(join(process.cwd(), 'deposits', 'verify-changed-paths', 'cases', caseFile), 'utf8'), 'utf8')
+      }
+
+      const report = await discoverAndRegisterDeposits({
+        registry: gov.registry, dirs: [join(process.cwd(), 'deposits'), stateDepositsDir],
+      })
+      expect(report.rejectedIds).toContain('verify.changed-paths')
+      expect(gov.registry.list().find(e => e.id === 'verify.changed-paths')?.stage).toBe('enforce')
+      const shellEv = await gov.registry.evaluate('verify.changed-paths', {
+        declaredPaths: [], sessionDiffPaths: [], gitDirtyPaths: [], untrackedPaths: [], sawShellWrite: true,
+      })
+      expect(shellEv.registered).toBeGreaterThan(0)
+      expect(shellEv.verdict).toMatchObject({ kind: 'unmeasured', cause: 'shell-blind' })
+    } finally {
+      await gov.shutdown()
+      store.close()
+    }
   })
 })

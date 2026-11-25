@@ -68,6 +68,12 @@ export type TransitionDepositStageResult =
 
 const VALID_STAGES = new Set<Stage>(['shadow', 'observe', 'enforce', 'retired'])
 export const OSS_SEEDED_GATE_IDS: ReadonlySet<string> = new Set(['intake.bug-quadruple', 'verify.repro-evidence', 'outward.reply-desk'])
+export const RESERVED_BUILTIN_DEPOSIT_IDS: ReadonlySet<string> = new Set([
+  'workspace.gc.safety', 'ticket.dispatch.isolation-ceiling', 'ticket.adaptive-dispatch',
+  'verify.changed-paths', 'verify.rerun', 'intake.bug-quadruple', 'verify.repro-evidence',
+  'outward.reply-desk', 'verify.secret-path-guard', 'replay.ci-evaluator',
+  'friction.seen-three', 'ticket.stale-patrol',
+])
 
 const BUILTIN_FACTORIES: Readonly<Record<string, () => AnyGateDef>> = {
   'ticket.adaptive-dispatch': () => createAdaptiveDispatchGate(),
@@ -106,6 +112,7 @@ export async function discoverAndRegisterDeposits(options: DiscoverDepositsOptio
   const registeredIds: string[] = []
   const rejectedIds: string[] = []
   const failedCaseIds: string[] = []
+  const seenIds = new Set<string>()
 
   for (const rootDir of dirs) {
     for (const { dirName, packageDir } of await listPackageDirs(rootDir)) {
@@ -121,6 +128,12 @@ export async function discoverAndRegisterDeposits(options: DiscoverDepositsOptio
         continue
       }
       const m = loaded.admission.manifest
+      if (seenIds.has(m.id)) {
+        rejectedIds.push(m.id)
+        records.push({ id: m.id, dirName, packageDir, kind: m.kind, ...(m.point ? { point: m.point } : {}), stage: 'shadow', enforce: false, trust: m.trust, casesCount: loaded.cases.length, status: 'rejected', error: `重复沉淀 ID "${m.id}"：后扫目录不得覆盖先注册判据`, manifest: m })
+        continue
+      }
+      seenIds.add(m.id)
       const targetStage: Stage = stageOverrides[m.id] ?? m.stage ?? 'shadow'
       if (!registerSeededOssGates && OSS_SEEDED_GATE_IDS.has(m.id)) {
         records.push({ id: m.id, dirName, packageDir, kind: m.kind, ...(m.point ? { point: m.point } : {}), stage: targetStage, enforce: false, trust: m.trust, casesCount: loaded.cases.length, status: 'skipped-oss', manifest: m })
@@ -149,7 +162,8 @@ export async function discoverAndRegisterDeposits(options: DiscoverDepositsOptio
         continue
       }
       const existing = registry.list().find(e => e.id === entry.id)
-      if (existing && existing.stage === targetStage) {
+      const hasOverride = Object.hasOwn(stageOverrides, m.id)
+      if (existing && (!hasOverride || existing.stage === targetStage)) {
         const effEnforce = existing.stage === 'enforce' && (entry.kind !== 'gate' || entry.placement.enforce)
         records.push({ id: m.id, dirName, packageDir, kind: m.kind, ...(m.point ? { point: m.point } : {}), ...(m.trigger?.signal ? { signal: m.trigger.signal } : {}), stage: existing.stage, enforce: effEnforce, trust: m.trust, casesCount: loaded.cases.length, status: 'already-registered', caseReport, manifest: m, entry })
         continue

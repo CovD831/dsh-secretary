@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { telemetryToSpineInput, validateDepositDraft, writeDepositDraftPackage, type DepositDraft } from '../../authoring/index.ts'
 import { createAdaptiveDispatchGate, createChangedPathsGate, createVerifyRerunGate } from '../../judgement/gates/index.ts'
 import {
-  auditRequires, compileDeclarativeEntry, evaluateCompiledEntry, loadDepositPackage, parseDepositMarkdown,
+  RESERVED_BUILTIN_DEPOSIT_IDS, auditRequires, compileDeclarativeEntry, evaluateCompiledEntry, loadDepositPackage, parseDepositMarkdown,
   validateDeclarativeRule, type AnyGateDef, type DeclarativeRule, type DepositManifest, type MandateBinding,
   type ParamSpec, type Point, type Verdict,
 } from '../../judgement/index.ts'
@@ -263,12 +263,14 @@ export function secretaryGovernanceTools(gov: GovernanceRuntime): Tool[] {
           return stripUndefined({ installed: false, validation: check.ok ? { ok: false, gate: 'machine', draft, violations: ruleIssues } : check })
         }
         const shadowDraft: DepositDraft = { ...check.draft, stage: 'shadow', enforce: false }
+        const existing = gov.registry.list().find(g => g.id === shadowDraft.id)
+        if (RESERVED_BUILTIN_DEPOSIT_IDS.has(shadowDraft.id) || (existing && existing.stage !== 'shadow')) {
+          throw new Error(`禁止影子安装包覆盖内置保留或非 shadow 阶段判据: ${shadowDraft.id}`)
+        }
         const written = await writeDepositDraftPackage(join(gov.stateDir, 'deposits'), shadowDraft)
         await mergeManifestExtras(written.depositMdPath, args.draft)
         const loaded = await loadDepositPackage(written.packageDir)
         if (!loaded.admission.admitted) throw new Error(`影子包准入异常: ${loaded.admission.violations.map(v => v.reason).join('; ')}`)
-        const existing = gov.registry.list().find(g => g.id === shadowDraft.id)
-        if (existing && existing.stage !== 'shadow') throw new Error(`禁止影子安装包覆盖非 shadow 阶段判据: ${shadowDraft.id}`)
         let registeredInShadow = false
         const m = loaded.admission.manifest
         if (m.rule || m.kind === 'standing-order') {
