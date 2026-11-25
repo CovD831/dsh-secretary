@@ -26,3 +26,36 @@ export {
   type VerifyRerunCtx,
   type VerifyRerunParams,
 } from './verify-rerun.ts'
+export {
+  DEFAULT_ISSUE_INTAKE_PARAMS,
+  createIssueIntakeGate,
+  evaluateIssueIntake,
+  issueIntakeGate,
+  type BugQuadruple,
+  type BugQuadrupleField,
+  type DedupCandidate,
+  type IntakeProposedAction,
+  type IssueIntakeCtx,
+  type IssueIntakeParams,
+  type IssueKind,
+} from './issue-intake.ts'
+export {
+  DEFAULT_REPRO_STATUS_PARAMS,
+  createReproStatusGate,
+  evaluateReproStatus,
+  reproStatusGate,
+  type ReproProposedAction,
+  type ReproStatusCtx,
+  type ReproStatusParams,
+  type ReproTerminalState,
+} from './repro-status.ts'
+export {
+  DEFAULT_REPLY_DESK_PARAMS,
+  createReplyDeskGate,
+  evaluateReplyDesk,
+  replyDeskGate,
+  type RepoAiPolicy,
+  type ReplyDeskCtx,
+  type ReplyDeskParams,
+  type ReplyMessageKind,
+} from './reply-desk.ts'

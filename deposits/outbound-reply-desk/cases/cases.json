@@ -1,0 +1,111 @@
+[
+  {
+    "name": "green-closed-template-with-disclosure",
+    "expected": "allow",
+    "ctx": {
+      "repoAiPolicy": "require_disclosure",
+      "messageKind": "template_needs_info",
+      "body": "Thanks for reporting! Recognized: version. Missing: steps, errorText.",
+      "hasAiDisclosure": true,
+      "threadClosedOrResolved": false,
+      "writesLastMinute": 5,
+      "writesLastHour": 40
+    }
+  },
+  {
+    "name": "green-freeform-reply-human-approved",
+    "expected": "allow",
+    "ctx": {
+      "repoAiPolicy": "allow",
+      "messageKind": "freeform_reply",
+      "body": "We traced the root cause to the cache key mismatch.",
+      "hasAiDisclosure": true,
+      "humanApproved": true,
+      "threadClosedOrResolved": false,
+      "writesLastMinute": 2,
+      "writesLastHour": 15
+    }
+  },
+  {
+    "name": "red-ghostty-forbid-ai-comments",
+    "expected": "deny",
+    "ctx": {
+      "repoAiPolicy": "forbid_ai_comments",
+      "messageKind": "template_ack",
+      "hasAiDisclosure": true,
+      "humanApproved": true,
+      "threadClosedOrResolved": false,
+      "writesLastMinute": 1,
+      "writesLastHour": 10
+    }
+  },
+  {
+    "name": "red-require-disclosure-missing-disclosure",
+    "expected": "deny",
+    "ctx": {
+      "repoAiPolicy": "require_disclosure",
+      "messageKind": "template_ack",
+      "hasAiDisclosure": false,
+      "threadClosedOrResolved": false,
+      "writesLastMinute": 1,
+      "writesLastHour": 10
+    }
+  },
+  {
+    "name": "red-stale-closed-thread",
+    "expected": "deny",
+    "ctx": {
+      "repoAiPolicy": "allow",
+      "messageKind": "template_ack",
+      "threadClosedOrResolved": true,
+      "writesLastMinute": 1,
+      "writesLastHour": 10
+    }
+  },
+  {
+    "name": "red-rate-limit-circuit-breaker",
+    "expected": "deny",
+    "ctx": {
+      "repoAiPolicy": "allow",
+      "messageKind": "template_ack",
+      "threadClosedOrResolved": false,
+      "writesLastMinute": 60,
+      "writesLastHour": 120
+    }
+  },
+  {
+    "name": "red-freeform-without-human-approval",
+    "expected": "deny",
+    "ctx": {
+      "repoAiPolicy": "allow",
+      "messageKind": "freeform_reply",
+      "humanApproved": false,
+      "threadClosedOrResolved": false,
+      "writesLastMinute": 1,
+      "writesLastHour": 10
+    }
+  },
+  {
+    "name": "unmeasured-missing-thread-recheck",
+    "expected": "unmeasured",
+    "expectedCause": "missing-input",
+    "ctx": {
+      "repoAiPolicy": "allow",
+      "messageKind": "template_ack",
+      "threadClosedOrResolved": null,
+      "writesLastMinute": 1,
+      "writesLastHour": 10
+    }
+  },
+  {
+    "name": "unmeasured-missing-message-kind",
+    "expected": "unmeasured",
+    "expectedCause": "missing-input",
+    "ctx": {
+      "repoAiPolicy": "allow",
+      "threadClosedOrResolved": false,
+      "writesLastMinute": 1,
+      "writesLastHour": 10
+    }
+  }
+]
