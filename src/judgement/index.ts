@@ -21,3 +21,31 @@ export {
   type DepositSections,
   type DepositViolation,
 } from './deposit.ts'
+export {
+  GOVERNED_ACTIONS,
+  GOVERNED_SIGNALS,
+  compileDeclarativeEntry,
+  compileDeclarativeRuleFn,
+  evaluateCompiledEntry,
+  validateDeclarativeRule,
+} from './declarative.ts'
+export {
+  OSS_SEEDED_GATE_IDS,
+  discoverAndRegisterDeposits,
+  renderDepositsLedgerMarkdown,
+  resolveDepositEntry,
+  transitionDepositStage,
+  type DiscoverDepositsOptions,
+  type DiscoverDepositsReport,
+  type DiscoveredDepositRecord,
+  type DiscoveredDepositStatus,
+  type TransitionDepositStageInput,
+  type TransitionDepositStageResult,
+} from './ledger-doc.ts'
+export {
+  executeVerifyRerunCommands,
+  extractVerifyCommandsFromText,
+  type ExecuteVerifyRerunOptions,
+  type ExecuteVerifyRerunReport,
+  type VerifyCommandResult,
+} from './gates/verify-rerun.ts'

@@ -1,4 +1,11 @@
+import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { stat } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { promisify } from 'node:util'
 import type { GateDef, Verdict } from '../types.ts'
+
+const execFileAsync = promisify(execFile)
 
 export interface RerunRecord {
   readonly command: string
@@ -34,10 +41,70 @@ export interface VerifyRerunCtx {
   readonly params?: Partial<VerifyRerunParams>
 }
 
+export interface VerifyCommandResult {
+  readonly command: string
+  readonly exitCode: number | null
+  readonly durationMs: number
+  readonly timedOut: boolean
+  readonly aborted: boolean
+  readonly stdoutSha256: string
+  readonly stdoutTail: string
+  readonly stderrTail: string
+}
+
+export interface ExecuteVerifyRerunOptions {
+  readonly ticketId?: string
+  readonly revision?: string | number
+  readonly taskType?: string
+  readonly builderRole?: string
+  readonly verifierRole?: string
+  readonly timeoutMs?: number
+  readonly maxCommands?: number
+  readonly signal?: AbortSignal
+  readonly cache?: Map<string, ExecuteVerifyRerunReport>
+  readonly runCommand?: (command: string, cwd: string, opts: { timeoutMs: number; signal?: AbortSignal }) => Promise<{
+    exitCode: number | null
+    timedOut?: boolean
+    aborted?: boolean
+    stdout?: string
+    stderr?: string
+  }>
+  readonly redGreen?: RedGreenRecord | null
+  readonly params?: Partial<VerifyRerunParams>
+}
+
+export interface ExecuteVerifyRerunReport {
+  readonly ctx: VerifyRerunCtx
+  readonly verdict: Verdict
+  readonly cached: boolean
+  readonly cmdHash: string
+  readonly cacheKey?: string
+  readonly results: readonly VerifyCommandResult[]
+}
+
 declare module '../types.ts' {
   interface PointCatalog {
     'verify.rerun': VerifyRerunCtx
   }
+}
+
+const DEFAULT_RERUN_CACHE = new Map<string, ExecuteVerifyRerunReport>()
+const MAX_CACHE_ENTRIES = 500
+const VERIFY_BLOCK_RE = /```verify\s*\r?\n([\s\S]*?)```/g
+
+/** 从 assignment/acceptance 文本的 ```` ```verify ```` 代码块中提取可执行验证命令列表。 */
+export function extractVerifyCommandsFromText(text?: string): string[] {
+  if (!text) return []
+  const cmds: string[] = []
+  VERIFY_BLOCK_RE.lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = VERIFY_BLOCK_RE.exec(text)) !== null) {
+    for (const line of match[1]!.split(/\r?\n/)) {
+      const trimmed = line.trim()
+      if (trimmed !== '') cmds.push(trimmed)
+    }
+  }
+  return cmds
 }
 
 /** 反自报完成核证硬门：强制独立方重跑通过，且 fix 类任务须附撤修复红灯记录。 */
@@ -113,6 +180,97 @@ export function evaluateVerifyRerun(
       ...(ctx.taskType === 'fix' && p.require_red_green ? { redGreenVerified: true } : {}),
     },
   }
+}
+
+async function runShellVerifyCommand(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal) {
+  try {
+    const out = await execFileAsync('sh', ['-c', command], {
+      cwd, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, encoding: 'utf8',
+      ...(signal ? { signal } : {}),
+    })
+    return { exitCode: 0, timedOut: false, aborted: false, stdout: out.stdout, stderr: out.stderr }
+  } catch (err) {
+    const e = err as { code?: unknown; killed?: boolean; signal?: unknown; name?: string; stdout?: unknown; stderr?: unknown }
+    const aborted = Boolean(signal?.aborted || e.name === 'AbortError')
+    const timedOut = !aborted && Boolean(e.killed || e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT')
+    const exitCode = typeof e.code === 'number' && Number.isInteger(e.code) ? e.code : null
+    return {
+      exitCode, timedOut, aborted,
+      stdout: typeof e.stdout === 'string' ? e.stdout : '',
+      stderr: typeof e.stderr === 'string' ? e.stderr : '',
+    }
+  }
+}
+
+/** 受控重跑验证命令集（支持超时、`ticketId+revision+cmdHash` 幂等缓存、SHA-256 摘要），并交由 `verifyRerunGate` 裁决。 */
+export async function executeVerifyRerunCommands(
+  commands: readonly string[],
+  cwd: string,
+  options: ExecuteVerifyRerunOptions = {},
+): Promise<ExecuteVerifyRerunReport> {
+  const normalized = commands.map(c => c.trim()).filter(Boolean)
+  const cmdHash = createHash('sha256').update(JSON.stringify(normalized)).digest('hex').slice(0, 16)
+  const cacheKey = options.ticketId !== undefined ? `${options.ticketId}:${String(options.revision ?? 0)}:${cmdHash}` : undefined
+  const storeKey = cacheKey ? `${resolve(cwd || '.')}|${cacheKey}` : undefined
+  const cache = options.cache ?? DEFAULT_RERUN_CACHE
+  if (storeKey) {
+    const hit = cache.get(storeKey)
+    if (hit && hit.verdict.kind === 'allow') return { ...hit, cached: true }
+  }
+
+  const builderRole = options.builderRole ?? 'worker'
+  const verifierRole = options.verifierRole ?? 'verifier'
+  const taskType = options.taskType ?? 'feature'
+  const baseCtx = (rerun: RerunRecord | null): VerifyRerunCtx => ({
+    taskType, builderRole, claimedDone: true, rerun,
+    ...(options.redGreen !== undefined ? { redGreen: options.redGreen } : {}),
+    ...(options.params ? { params: options.params } : {}),
+  })
+  const finalize = (ctx: VerifyRerunCtx, results: VerifyCommandResult[]): ExecuteVerifyRerunReport => {
+    const verdict = evaluateVerifyRerun(ctx, options.params)
+    const report: ExecuteVerifyRerunReport = { ctx, verdict, cached: false, cmdHash, ...(cacheKey ? { cacheKey } : {}), results }
+    if (storeKey && verdict.kind === 'allow') {
+      if (cache.size >= MAX_CACHE_ENTRIES) {
+        const oldest = cache.keys().next().value
+        if (oldest !== undefined) cache.delete(oldest)
+      }
+      cache.set(storeKey, report)
+    }
+    return report
+  }
+
+  const maxCmds = options.maxCommands ?? 10
+  if (normalized.length === 0 || normalized.length > maxCmds) {
+    return finalize(baseCtx(null), [])
+  }
+  const cwdOk = await stat(cwd).then(s => s.isDirectory(), () => false)
+  if (!cwdOk) {
+    return finalize(baseCtx(null), [])
+  }
+
+  const timeoutMs = Math.min(Math.max(1000, options.timeoutMs ?? 120_000), 600_000)
+  const runner = options.runCommand ?? ((cmd, dir, opts) => runShellVerifyCommand(cmd, dir, opts.timeoutMs, opts.signal))
+  const results: VerifyCommandResult[] = []
+  let finalRerun: RerunRecord = { command: normalized.join(' && '), exitCode: 0, verifierRole }
+
+  for (const command of normalized) {
+    const started = Date.now()
+    const raw = await runner(command, cwd, { timeoutMs, ...(options.signal ? { signal: options.signal } : {}) })
+    const stdout = raw.stdout ?? ''
+    const stderr = raw.stderr ?? ''
+    const timedOut = Boolean(raw.timedOut)
+    const aborted = Boolean(raw.aborted)
+    results.push({
+      command, exitCode: raw.exitCode, durationMs: Date.now() - started, timedOut, aborted,
+      stdoutSha256: createHash('sha256').update(stdout).digest('hex'),
+      stdoutTail: stdout.slice(-500), stderrTail: stderr.slice(-500),
+    })
+    if (timedOut || aborted || raw.exitCode === null || raw.exitCode !== 0) {
+      finalRerun = { command, exitCode: raw.exitCode, verifierRole, ...(timedOut ? { timedOut: true } : {}), ...(aborted ? { aborted: true } : {}) }
+      break
+    }
+  }
+  return finalize(baseCtx(finalRerun), results)
 }
 
 export function createVerifyRerunGate(boundParams?: Partial<VerifyRerunParams>): GateDef<'verify.rerun'> {

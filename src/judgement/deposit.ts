@@ -1,10 +1,13 @@
 import { readdir, readFile, realpath } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
+import { evaluateCompiledEntry, validateDeclarativeRule } from './declarative.ts'
 import { createJudgementRegistry, isValidScopeStage } from './registry.ts'
+import { auditRequires } from './requires.ts'
 import { parseFrontmatterData } from './yaml.ts'
 import {
-  BASE_SCOPES, type AnyGateDef, type DepositManifest, type EvaluatorDef,
-  type ParamSpec, type Point, type ProofRecord, type Stage, type UnmeasuredCause, type Verdict,
+  BASE_SCOPES, type AnyGateDef, type AnyStandingOrderDef, type DeclarativeRule, type DepositManifest, type EvaluatorDef,
+  type MandateBinding, type ParamSpec, type Point, type ProofRecord, type RegistryEntry,
+  type Stage, type UnmeasuredCause, type Verdict,
 } from './types.ts'
 
 export interface DepositSections { readonly intent: string; readonly criterion: string; readonly examples: string; readonly exceptions: string; readonly repairHint: string }
@@ -80,9 +83,7 @@ function isValidParamSpec(spec: unknown): spec is ParamSpec {
   return false
 }
 
-function isPlainRecord(val: unknown): val is Record<string, unknown> {
-  return Boolean(val && typeof val === 'object' && !Array.isArray(val))
-}
+const isPlainRecord = (val: unknown): val is Record<string, unknown> => Boolean(val && typeof val === 'object' && !Array.isArray(val))
 
 function validateManifestFields(raw: Record<string, unknown>, prose: string): { manifest?: DepositManifest; violations: DepositViolation[] } {
   const violations: DepositViolation[] = []
@@ -128,12 +129,17 @@ function validateManifestFields(raw: Record<string, unknown>, prose: string): { 
   }
   const stage = raw['stage']
   if (stage !== undefined && (typeof stage !== 'string' || !VALID_STAGES.has(stage))) fail('invalid-stage', 'stage', `非法 stage "${String(stage)}"`, '设置为 shadow | observe | enforce | retired')
+  const side = raw['side']
+  if (side !== undefined && side !== 'hard' && side !== 'soft') fail('invalid-side', 'side', `非法 side "${String(side)}"`, '设置为 hard | soft')
+  const reqsRaw = raw['requires']
+  if (reqsRaw !== undefined && (!Array.isArray(reqsRaw) || reqsRaw.some(r => typeof r !== 'string' || !r.trim() || r.includes('..') || r.startsWith('.') || r.endsWith('.') || /\s/.test(r)))) {
+    fail('invalid-requires', 'requires', 'requires 必须为合法点分路径字符串数组', '移除空字符串或 ".." 路径')
+  }
   const actionRaw = raw['action']
   let validAction = false
   if (actionRaw !== undefined) {
-    if (!isPlainRecord(actionRaw) || typeof actionRaw['name'] !== 'string' || actionRaw['name'].trim() === '') {
-      fail('invalid-action', 'action', 'action 必须为含非空 name 的对象', '示例：{ name: "proposal.create" }')
-    } else validAction = true
+    if (!isPlainRecord(actionRaw) || typeof actionRaw['name'] !== 'string' || actionRaw['name'].trim() === '') fail('invalid-action', 'action', 'action 必须为含非空 name 的对象', '示例：{ name: "proposal.create" }')
+    else validAction = true
   }
   const trigger = raw['trigger']
   if (kind === 'standing-order' && (!isPlainRecord(trigger) || typeof trigger['signal'] !== 'string' || trigger['signal'].trim() === '')) fail('missing-trigger-signal', 'trigger.signal', 'standing-order 必须绑定受治理信号 trigger.signal', '设置 trigger: { signal: "<signal-name>" }')
@@ -146,13 +152,11 @@ function validateManifestFields(raw: Record<string, unknown>, prose: string): { 
     const actionName = validAction ? ((actionRaw as Record<string, unknown>)['name'] as string) : ''
     const actionOk = actionRaw === undefined || (validAction && ALLOWED_COUNTER_ACTION_RE.test(actionName))
     if (!stageOk || !enforceOk || !placementOk || !classOk || !actionOk) {
-      fail(
-        'constitutional-d5-counter-rule', 'kind / stage / enforce / action',
-        '宪法冲突（裁决 D5）：counter-rule（如 Seen>=3）仅具九级梯 Rung 1 提案权，禁止 enforce: true 或直接晋升/修改规则',
-        '请改写为 stage: "shadow"|"observe"、enforce: false、actionClass: "observe"，动作仅限 proposal.*/defect.*/rule-defect.*',
-        'stage: shadow\nenforce: false\nactionClass: observe\naction: { name: "proposal.create" }',
-      )
+      fail('constitutional-d5-counter-rule', 'kind / stage / enforce / action', '宪法冲突（裁决 D5）：counter-rule（如 Seen>=3）仅具九级梯 Rung 1 提案权，禁止 enforce: true 或直接晋升/修改规则', '请改写为 stage: "shadow"|"observe"、enforce: false、actionClass: "observe"，动作仅限 proposal.*/defect.*/rule-defect.*', 'stage: shadow\nenforce: false\nactionClass: observe\naction: { name: "proposal.create" }')
     }
+  }
+  if (raw['rule'] !== undefined) {
+    for (const issue of validateDeclarativeRule(raw['rule'])) fail('invalid-declarative-rule', issue.field, issue.reason, '修正零代码声明式 rule 配置')
   }
   if (violations.length > 0) return { violations }
   return {
@@ -160,11 +164,17 @@ function validateManifestFields(raw: Record<string, unknown>, prose: string): { 
     manifest: {
       id, version, kind: kind as DepositManifest['kind'], params: paramsRaw as Readonly<Record<string, ParamSpec>>, trust: trust as DepositManifest['trust'], prose, cases,
       ...(point !== undefined ? { point: point as Point } : {}),
-      ...(isPlainRecord(trigger) && typeof trigger['signal'] === 'string' ? { trigger: { signal: trigger['signal'] as never } } : {}),
+      ...(isPlainRecord(trigger) && typeof trigger['signal'] === 'string' ? { trigger: { signal: trigger['signal'] as never, ...(isPlainRecord(trigger['match']) ? { match: trigger['match'] } : {}) } } : {}),
+      ...(Array.isArray(reqsRaw) ? { requires: reqsRaw as readonly string[] } : {}),
       ...(raw['proof'] ? { proof: raw['proof'] as DepositManifest['proof'] } : {}), ...(stage ? { stage: stage as Stage } : {}),
       ...(enforceRaw !== undefined ? { enforce: enforceRaw as boolean } : {}), ...(validPlacement ? { placement: placementRaw as DepositManifest['placement'] } : {}),
+      ...(side ? { side: side as 'hard' | 'soft' } : {}),
       ...((raw['actionClass'] ?? raw['action_class']) ? { actionClass: (raw['actionClass'] ?? raw['action_class']) as DepositManifest['actionClass'] } : {}),
       ...(validAction ? { action: actionRaw as DepositManifest['action'] } : {}),
+      ...(isPlainRecord(raw['mandate']) ? { mandate: raw['mandate'] as unknown as MandateBinding } : {}),
+      ...(typeof raw['measures'] === 'string' && raw['measures'].trim() ? { measures: raw['measures'].trim() } : {}),
+      ...(typeof raw['cooldownMs'] === 'number' && Number.isFinite(raw['cooldownMs']) ? { cooldownMs: raw['cooldownMs'] } : {}),
+      ...(isPlainRecord(raw['rule']) ? { rule: raw['rule'] as unknown as DeclarativeRule } : {}),
     },
   }
 }
@@ -210,35 +220,62 @@ export async function loadDepositPackage(depositDir: string): Promise<{ admissio
   return { admission, cases: await loadDepositCases(casesReal) }
 }
 
-/** 通用红绿 `cases/` 运行器：校验正例/反例/缺输入例，并执行恒 allow 禁用变异检查。 */
+async function resolveObserveGateVerdict(gate: AnyGateDef, ctx: unknown, ev: Awaited<ReturnType<ReturnType<typeof createJudgementRegistry>['evaluate']>>): Promise<Verdict> {
+  if (ev.verdict.kind !== 'allow') return { kind: 'deny', blockers: ['非强制判据违反不阻塞原则'] }
+  const hit = ev.ran.find(r => r.id === gate.id)
+  if (!hit || hit.outcome === 'skipped') return { kind: 'unmeasured', cause: 'all-skipped', detail: 'skipped' }
+  if (hit.outcome === 'allow') return { kind: 'allow' }
+  if (hit.outcome === 'deny') return { kind: 'deny', blockers: [hit.detail || 'denied'] }
+  if (!auditRequires(ctx, gate.requires).ok) return { kind: 'unmeasured', cause: 'missing-input', detail: hit.detail || 'missing-input' }
+  try { return await gate.gate(ctx as never) } catch { return { kind: 'unmeasured', cause: 'threw', detail: hit.detail || 'threw' } }
+}
+
+/** 通用红绿 `cases/` 运行器：支持 gate / counter-rule / standing-order / evaluator，并执行恒 allow 禁用变异检查。 */
 export async function runDepositCases(
-  gate: AnyGateDef,
+  entry: RegistryEntry,
   cases: readonly DepositCase[],
   options: { readonly proof?: ProofRecord; readonly evaluator?: EvaluatorDef } = {},
 ): Promise<DepositCasesReport> {
-  const redCases = cases.filter(c => c.expected === 'deny')
-  const greenCases = cases.filter(c => c.expected === 'allow')
+  const redCases = cases.filter(c => c.expected === 'deny'), greenCases = cases.filter(c => c.expected === 'allow')
   if (redCases.length === 0 || greenCases.length === 0) {
     return { ok: false, total: cases.length, passed: 0, failed: cases.length, mutationPassed: false, results: [], error: '红绿 fixture 不完整：至少需 1 条 allow 正例与 1 条 deny 反例' }
   }
-  const makeReg = (target: AnyGateDef) => {
+  const makeReg = (target: RegistryEntry) => {
     const reg = createJudgementRegistry({ ...(options.proof ? { proofs: [options.proof] } : {}) })
     if (options.evaluator) reg.register(options.evaluator, 'enforce')
     reg.register(target, 'enforce')
     return reg
   }
-  const reg = makeReg(gate)
+  const reg = makeReg(entry)
   const results: DepositCaseResult[] = []
   for (const c of cases) {
-    const ev = await reg.evaluate(gate.point, c.ctx as never)
-    const causeOk = c.expectedCause === undefined || (ev.verdict.kind === 'unmeasured' && ev.verdict.cause === c.expectedCause)
-    results.push({ name: c.name, expected: c.expected, actual: ev.verdict, passed: ev.verdict.kind === c.expected && causeOk })
+    let actual: Verdict
+    if (entry.kind === 'gate') {
+      const ev = await reg.evaluate(entry.point, c.ctx as never)
+      actual = entry.placement.enforce ? ev.verdict : await resolveObserveGateVerdict(entry, c.ctx, ev)
+    } else {
+      actual = await evaluateCompiledEntry(entry, c.ctx)
+    }
+    const causeOk = c.expectedCause === undefined || (actual.kind === 'unmeasured' && actual.cause === c.expectedCause)
+    results.push({ name: c.name, expected: c.expected, actual, passed: actual.kind === c.expected && causeOk })
   }
-  const mutant = makeReg({ ...gate, gate: () => ({ kind: 'allow' }) } as AnyGateDef)
   let mutationPassed = true
-  for (const red of redCases) {
-    const ev = await mutant.evaluate(gate.point, red.ctx as never)
-    if (ev.verdict.kind !== 'allow') { mutationPassed = false; break }
+  if (entry.kind === 'gate') {
+    const mutantGate = { ...entry, gate: () => ({ kind: 'allow' }) } as AnyGateDef
+    const mutant = makeReg(mutantGate)
+    for (const red of redCases) {
+      const ev = await mutant.evaluate(entry.point, red.ctx as never)
+      const v = entry.placement.enforce ? ev.verdict : await resolveObserveGateVerdict(mutantGate, red.ctx, ev)
+      if (v.kind !== 'allow') { mutationPassed = false; break }
+    }
+  } else {
+    const mutantEntry: RegistryEntry = entry.kind === 'standing-order'
+      ? { ...entry, trigger: { signal: entry.trigger.signal }, cooldownMs: undefined } as AnyStandingOrderDef
+      : { ...entry, evaluate: () => ({ verdict: 'effective', probability: 1, reasons: ['mutant'] }) }
+    for (const red of redCases) {
+      const v = await evaluateCompiledEntry(mutantEntry, red.ctx)
+      if (v.kind !== 'allow') { mutationPassed = false; break }
+    }
   }
   const passed = results.filter(r => r.passed).length
   return { ok: results.length === passed && mutationPassed, total: results.length, passed, failed: results.length - passed, mutationPassed, results }

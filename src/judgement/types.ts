@@ -91,8 +91,20 @@ export interface GateDef<P extends Point = Point> {
   proof?: ProofRequirement
 }
 
-export interface SignalCatalog {}
-export interface ActionCatalog {}
+export interface SignalCatalog {
+  'ticket.stale': { ticketId: string; stage: string; staleMinutes: number }
+  'friction.repeated': { patternId: string; seenCount: number; distinctWorkspaces: number }
+  'verify.failed': { ticketId: string; point: string; blockerCount: number }
+  'ci.replay_completed': { totalCases: number; catches: number; falseBlocks: number }
+}
+export interface ActionCatalog {
+  'proposal.create': { title?: string; draftKind?: string }
+  'defect.record': { summary: string }
+  'rule-defect.record': { summary: string }
+  'ticket.remind': { message: string }
+  'ticket.escalate': { reason: string }
+  'ticket.tag': { tag: string }
+}
 export type SignalName = keyof SignalCatalog & string
 export type ActionName = keyof ActionCatalog & string
 
@@ -157,12 +169,34 @@ export type ParamSpec =
   | { type: 'boolean'; default?: boolean }
   | { type: 'enum'; values: readonly [string, ...string[]]; default?: string }
 
+export type PredicateOp = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'matches' | 'non_empty'
+export interface PathRulesConfig {
+  readonly kind: 'path_rules'; readonly inputField?: string; readonly forbiddenGlobs?: readonly string[]
+  readonly allowedPrefixes?: readonly string[]; readonly maxChangedFiles?: number; readonly maxChangedFilesParam?: string; readonly rejectTraversal?: boolean
+}
+export interface CommandCheckConfig {
+  readonly kind: 'command_check'; readonly inputField?: string; readonly requiredCommands?: readonly string[]
+  readonly forbidPatterns?: readonly string[]; readonly requireExitZero?: boolean
+}
+export interface PredicateClause {
+  readonly path: string; readonly op: PredicateOp; readonly value?: unknown; readonly param?: string; readonly required?: boolean; readonly message?: string
+}
+export interface PredicatesConfig { readonly kind: 'predicates'; readonly mode?: 'all' | 'any'; readonly invert?: boolean; readonly clauses: readonly PredicateClause[] }
+export interface WorkflowSopStep { readonly id: string; readonly requiredField?: string; readonly mustBeTrueField?: string; readonly message?: string }
+export interface WorkflowSopConfig {
+  readonly kind: 'workflow_sop'; readonly steps: readonly WorkflowSopStep[]; readonly signal?: SignalName
+  readonly action?: { readonly name: ActionName; readonly params?: unknown }; readonly checklistField?: string
+}
+export type DeclarativeRule = PathRulesConfig | CommandCheckConfig | PredicatesConfig | WorkflowSopConfig
+export interface DeclarativeRuleIssue { readonly field: string; readonly reason: string }
+
 export interface DepositManifest {
   id: string
   version: number
   kind: RegistryEntry['kind'] | 'counter-rule'
   point?: Point
-  trigger?: { signal: SignalName }
+  trigger?: { signal: SignalName; match?: Readonly<Record<string, unknown>> }
+  requires?: readonly string[]
   params: Readonly<Record<string, ParamSpec>>
   trust: 'owner' | 'collaborator' | 'public'
   prose: string
@@ -171,8 +205,13 @@ export interface DepositManifest {
   stage?: Stage
   enforce?: boolean
   placement?: Placement
+  side?: 'hard' | 'soft'
   actionClass?: 'observe' | 'block' | 'side-effecting'
   action?: { name: string; params?: unknown }
+  mandate?: MandateBinding
+  measures?: string
+  cooldownMs?: number
+  rule?: DeclarativeRule
 }
 
 export interface RunEntry {
