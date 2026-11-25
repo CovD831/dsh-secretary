@@ -40,6 +40,18 @@
     }
   },
   {
+    "name": "red-require-disclosure-missing-disclosure",
+    "expected": "deny",
+    "ctx": {
+      "repoAiPolicy": "require_disclosure",
+      "messageKind": "template_ack",
+      "hasAiDisclosure": false,
+      "threadClosedOrResolved": false,
+      "writesLastMinute": 1,
+      "writesLastHour": 10
+    }
+  },
+  {
     "name": "red-stale-closed-thread",
     "expected": "deny",
     "ctx": {
@@ -81,6 +93,17 @@
       "repoAiPolicy": "allow",
       "messageKind": "template_ack",
       "threadClosedOrResolved": null,
+      "writesLastMinute": 1,
+      "writesLastHour": 10
+    }
+  },
+  {
+    "name": "unmeasured-missing-message-kind",
+    "expected": "unmeasured",
+    "expectedCause": "missing-input",
+    "ctx": {
+      "repoAiPolicy": "allow",
+      "threadClosedOrResolved": false,
       "writesLastMinute": 1,
       "writesLastHour": 10
     }

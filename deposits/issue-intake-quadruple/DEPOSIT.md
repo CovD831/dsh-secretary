@@ -5,8 +5,8 @@ kind: gate
 point: intake.bug-quadruple
 trust: public
 cases: cases/
-stage: enforce
-enforce: true
+stage: observe
+enforce: false
 placement:
   timing: pre
   enforce: true

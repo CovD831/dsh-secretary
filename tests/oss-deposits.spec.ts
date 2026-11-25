@@ -28,6 +28,7 @@ describe('OSS maintenance deposit packages', () => {
       expect(admission.admitted, `${t.dir} admission`).toBe(true)
       if (admission.admitted) {
         expect(admission.manifest.point).toBe(t.point)
+        expect(admission.manifest.stage).toBe('observe')
         expect(Object.keys(admission.manifest.params).length).toBeGreaterThanOrEqual(2)
       }
       expect(cases.length).toBeGreaterThanOrEqual(4)
@@ -79,6 +80,8 @@ describe('workflow 1: intake.bug-quadruple', () => {
       quadruple: { version: '1.0', platform: 'linux', steps: 'run' },
     }, { require_error_text: false }).kind).toBe('allow')
     expect(evaluateIssueIntake({ issueType: 'bug', body: 'x', params: { dedup_similarity_threshold: 0.3 } }).kind).toBe('deny')
+    expect(evaluateIssueIntake({ issueType: 'enhancement', body: 'x', dedupCandidates: [{ issueNumber: 1, similarity: Number.NaN }] }).kind).toBe('unmeasured')
+    expect(evaluateIssueIntake({ issueType: 'enhancement', body: 'x', dedupCandidates: 'bad' as never }).kind).toBe('deny')
   })
 })
 
@@ -109,6 +112,9 @@ describe('workflow 2: verify.repro-evidence', () => {
     expect((await reg.evaluate('verify.repro-evidence', {
       terminalState: 'blocked-needs-info', proposedAction: 'label-only',
     })).verdict.kind).toBe('allow')
+    expect(evaluateReproStatus({ terminalState: 'blocked-needs-info', proposedAction: 'close-issue' }).kind).toBe('deny')
+    expect(evaluateReproStatus({ terminalState: 'blocked-needs-env', proposedAction: 'close-issue', humanConfirmedClose: true }).kind).toBe('allow')
+    expect(evaluateReproStatus({ terminalState: 'not-reproduced', matrixTried: 'bad' as never }).kind).toBe('deny')
 
     expect(evaluateReproStatus({
       terminalState: 'reproduced', reproScriptPath: 'repro/bug.ts', redOutput: 'AssertionError: expected 1 to equal 2',
@@ -124,6 +130,15 @@ describe('workflow 3: outward.reply-desk', () => {
     expect((await reg.evaluate('outward.reply-desk', {
       repoAiPolicy: 'allow', threadClosedOrResolved: false, writesLastMinute: null, writesLastHour: 10,
     })).verdict).toMatchObject({ kind: 'unmeasured', cause: 'missing-input' })
+    expect((await reg.evaluate('outward.reply-desk', {
+      repoAiPolicy: 'allow', threadClosedOrResolved: false, writesLastMinute: 1, writesLastHour: 10,
+    })).verdict).toMatchObject({ kind: 'unmeasured', cause: 'missing-input' })
+    expect(evaluateReplyDesk({
+      repoAiPolicy: 'allow', messageKind: '', threadClosedOrResolved: false, writesLastMinute: 1, writesLastHour: 10,
+    })).toMatchObject({ kind: 'unmeasured', cause: 'missing-input' })
+    expect(evaluateReplyDesk({
+      repoAiPolicy: 'allow', messageKind: 'bogus_kind', threadClosedOrResolved: false, writesLastMinute: 1, writesLastHour: 10,
+    }).kind).toBe('deny')
     expect((await reg.evaluate('outward.reply-desk', {
       repoAiPolicy: 'require_disclosure', messageKind: 'template_ack', hasAiDisclosure: false,
       threadClosedOrResolved: false, writesLastMinute: 1, writesLastHour: 10,

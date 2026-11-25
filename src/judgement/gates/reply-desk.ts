@@ -54,21 +54,22 @@ export function evaluateReplyDesk(
   if (paramErr) return { kind: 'deny', blockers: [paramErr] }
 
   const policyMissing = ctx.repoAiPolicy === undefined || ctx.repoAiPolicy === null || (typeof ctx.repoAiPolicy === 'string' && ctx.repoAiPolicy.trim() === '')
+  const kindMissing = ctx.messageKind === undefined || ctx.messageKind === null || (typeof ctx.messageKind === 'string' && ctx.messageKind.trim() === '')
   const threadMissing = typeof ctx.threadClosedOrResolved !== 'boolean'
   const minMissing = typeof ctx.writesLastMinute !== 'number' || !Number.isFinite(ctx.writesLastMinute)
   const hourMissing = typeof ctx.writesLastHour !== 'number' || !Number.isFinite(ctx.writesLastHour)
-  if (policyMissing || threadMissing || minMissing || hourMissing) {
+  if (policyMissing || kindMissing || threadMissing || minMissing || hourMissing) {
     return {
       kind: 'unmeasured',
       cause: 'missing-input',
-      detail: '缺少 repoAiPolicy、threadClosedOrResolved 或写速率限额观测值，严禁盲发对外回复',
+      detail: '缺少 repoAiPolicy、messageKind、threadClosedOrResolved 或写速率限额观测值，严禁盲发对外回复',
     }
   }
 
   if (typeof ctx.repoAiPolicy !== 'string' || !VALID_POLICIES.has(ctx.repoAiPolicy)) {
     return { kind: 'deny', blockers: [`未知目标仓 AI 政策 "${String(ctx.repoAiPolicy)}"`] }
   }
-  if (ctx.messageKind !== undefined && (typeof ctx.messageKind !== 'string' || !VALID_MESSAGE_KINDS.has(ctx.messageKind))) {
+  if (typeof ctx.messageKind !== 'string' || !VALID_MESSAGE_KINDS.has(ctx.messageKind)) {
     return { kind: 'deny', blockers: [`未知消息类型 "${String(ctx.messageKind)}"`] }
   }
   if (ctx.writesLastMinute! < 0 || ctx.writesLastHour! < 0) {
@@ -112,7 +113,7 @@ export function createReplyDeskGate(boundParams?: Partial<ReplyDeskParams>): Gat
     description: 'Reply Desk 对外合规门：目标仓 AI 政策、线程重查、写限额熔断与自由文本人批校验',
     side: 'hard',
     placement: { timing: 'pre', enforce: true },
-    requires: ['repoAiPolicy', 'threadClosedOrResolved', 'writesLastMinute', 'writesLastHour'],
+    requires: ['repoAiPolicy', 'messageKind', 'threadClosedOrResolved', 'writesLastMinute', 'writesLastHour'],
     gate: ctx => evaluateReplyDesk(ctx, boundParams),
   }
 }

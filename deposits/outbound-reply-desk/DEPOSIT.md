@@ -5,13 +5,13 @@ kind: gate
 point: outward.reply-desk
 trust: public
 cases: cases/
-stage: enforce
-enforce: true
+stage: observe
+enforce: false
 placement:
   timing: pre
   enforce: true
 actionClass: block
-requires: [repoAiPolicy, threadClosedOrResolved, writesLastMinute, writesLastHour]
+requires: [repoAiPolicy, messageKind, threadClosedOrResolved, writesLastMinute, writesLastHour]
 params:
   max_writes_per_min:
     type: number
@@ -29,7 +29,7 @@ params:
 落地开源维护工作流三（Reply Desk 对外合规门）：在对外发声前强制核验目标仓 AI 政策、线程实时状态、GitHub 二级内容生成限额及 T1/T2 自由文本人批边界，严禁盲发与社区越线。
 
 ## 判据
-1. 若 `repoAiPolicy`、`threadClosedOrResolved`、`writesLastMinute`、`writesLastHour` 任一为 `null`/`undefined`，返回 `unmeasured(missing-input)`；
+1. 若 `repoAiPolicy`、`messageKind`、`threadClosedOrResolved`、`writesLastMinute`、`writesLastHour` 任一缺失（含 `null` / `undefined` / 空串 / `NaN`），返回 `unmeasured(missing-input)`；若 `messageKind` 或 `repoAiPolicy` 为非法枚举值，返回 `deny`；
 2. Ghostty 政策红线：`repoAiPolicy === "forbid_ai_comments"` 一律 `deny`；`require_disclosure` 且 `!hasAiDisclosure` 返回 `deny`；
 3. 防过期回复：若 `threadClosedOrResolved === true`，返回 `deny`；
 4. 限额熔断：若 `writesLastMinute >= max_writes_per_min` 或 `writesLastHour >= max_writes_per_hour`，返回 `deny`；

@@ -64,8 +64,14 @@ export function evaluateReproStatus(
     return { kind: 'deny', blockers: [`未知复现后继动作 "${String(ctx.proposedAction)}"`] }
   }
 
+  if (ctx.matrixTried !== undefined && ctx.matrixTried !== null && !Array.isArray(ctx.matrixTried)) {
+    return { kind: 'deny', blockers: ['matrixTried 必须为字符串数组'] }
+  }
+
   const blockers: string[] = []
-  const matrix = (ctx.matrixTried ?? []).map(s => (typeof s === 'string' ? s.trim() : '')).filter(Boolean)
+  const matrix = Array.isArray(ctx.matrixTried)
+    ? ctx.matrixTried.map(s => (typeof s === 'string' ? s.trim() : '')).filter(Boolean)
+    : []
 
   if (ctx.terminalState === 'not-reproduced') {
     if (ctx.proposedAction === 'close-issue' && ctx.humanConfirmedClose !== true) {
@@ -74,6 +80,12 @@ export function evaluateReproStatus(
     if (matrix.length === 0) {
       blockers.push('not-reproduced 终态必须携带非空 matrixTried 声明已测试的环境矩阵范围')
     }
+  } else if (
+    (ctx.terminalState === 'blocked-needs-info' || ctx.terminalState === 'blocked-needs-env') &&
+    ctx.proposedAction === 'close-issue' &&
+    ctx.humanConfirmedClose !== true
+  ) {
+    blockers.push(`${ctx.terminalState} 未经人工确认严禁触发关单`)
   }
 
   if (ctx.terminalState === 'reproduced') {

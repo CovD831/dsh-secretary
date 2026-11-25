@@ -81,8 +81,20 @@ export function evaluateIssueIntake(
     return { kind: 'deny', blockers: ['去重天花板为 T1 提议对照表：严禁自动关闭重复 Issue，必须由维护者人工确认'] }
   }
 
+  if (ctx.dedupCandidates !== undefined && !Array.isArray(ctx.dedupCandidates)) {
+    return { kind: 'deny', blockers: ['dedupCandidates 必须为数组'] }
+  }
+  for (const c of ctx.dedupCandidates ?? []) {
+    if (!c || typeof c !== 'object' || typeof c.similarity !== 'number' || !Number.isFinite(c.similarity)) {
+      return { kind: 'unmeasured', cause: 'missing-input', detail: 'dedupCandidates 包含缺失或非有限 similarity（NaN/Infinity）' }
+    }
+    if (!Number.isInteger(c.issueNumber) || c.issueNumber <= 0 || c.similarity < 0 || c.similarity > 1) {
+      return { kind: 'deny', blockers: [`dedupCandidates 条目非法：issueNumber=${String(c.issueNumber)}, similarity=${String(c.similarity)}`] }
+    }
+  }
+
   const dedupProposals = (ctx.dedupCandidates ?? [])
-    .filter(c => Number.isFinite(c.similarity) && c.similarity >= p.dedup_similarity_threshold)
+    .filter(c => c.similarity >= p.dedup_similarity_threshold)
     .sort((a, b) => b.similarity - a.similarity)
     .map(c => ({
       issueNumber: c.issueNumber,

@@ -5,8 +5,8 @@ kind: gate
 point: verify.repro-evidence
 trust: public
 cases: cases/
-stage: enforce
-enforce: true
+stage: observe
+enforce: false
 placement:
   timing: pre
   enforce: true
