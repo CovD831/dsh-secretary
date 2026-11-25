@@ -1,0 +1,47 @@
+/** 飞书 CardKit 2.0 四分法归因裁决卡与对话式沉淀作者面统一导出。 */
+export type {
+  AttributionCategory,
+  AuthoringMemoryProposal,
+  AuthoringStage,
+  AuthoringTelemetryEvent,
+  BuiltFeishuCard,
+  DepositDraft,
+  DepositFixtureCase,
+  DepositKind,
+  DepositTriggerDraft,
+  DraftValidationResult,
+  EscalationCardRequest,
+  EscalationRouteResult,
+  EscalationRuling,
+  ExpiredCardMeta,
+  FeishuCallbackParseResult,
+  FeishuCardCallbackResponse,
+  FeishuCardElement,
+  FeishuCardPayload,
+  MachineGateViolation,
+  MandateCeiling,
+  MemoryProposalContext,
+  PendingEscalationRuling,
+  RulingDecision,
+  SpineInput,
+  WrittenDepositPackage,
+} from './types.ts'
+export {
+  CARD_TTL_MS,
+  assertCardByteLimit,
+  buildDepositDraftCard,
+  buildEscalationCard,
+  buildExpiredCardReplacement,
+  buildReplayReportCard,
+  computeCardExpiresAt,
+  isCardExpired,
+  parseFeishuCardCallback,
+  splitMarkdownElements,
+} from './feishu-cards.ts'
+export {
+  routeEscalationRuling,
+  telemetryToSpineInput,
+  toMemoryProposal,
+  validateDepositDraft,
+} from './funnel.ts'
+export { writeDepositDraftPackage } from './package-writer.ts'
