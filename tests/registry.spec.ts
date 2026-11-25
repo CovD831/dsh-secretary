@@ -158,5 +158,10 @@ describe('Source registry', () => {
     const reply: OutboundMessage = { id: 'reply-1', channel, text: 'Done', kind: 'reply' }
     expect(await sources.send(reply, commands)).toBe('sent')
     expect(run.mock.calls[0]![1]).toEqual(expect.arrayContaining(['+messages-reply', '--message-id', 'om_dm']))
+    expect(run.mock.calls[0]![1]).not.toContain('--reply-in-thread')
+    const groupTrigger = feishuTrigger({ message_id: 'om_grp', chat_id: 'oc_grp', chat_type: 'group', sender_id: 'ou_alice', sender_type: 'user',
+      content: '@bot hi', create_time: '1757376000000', mentions: [{ id: 'ou_bot' }] }, 'ou_bot', 'cli_bot')!
+    expect(await sources.send({ id: 'reply-2', channel: groupTrigger.channel!, text: 'Done', kind: 'reply' }, commands)).toBe('sent')
+    expect(run.mock.calls[1]![1]).toContain('--reply-in-thread')
   })
 })

@@ -26,11 +26,14 @@ export type FeishuMessage = z.infer<typeof messageSchema>
 const threadSchema = z.object({ messages: z.array(z.unknown()), has_more: z.boolean(), page_token: z.string().optional(),
   thread_id: z.string() })
 
-/** Hydrates flat `lark-cli >= 1.0.59` `event consume` payloads that omit `sender_type`, `mentions`, and thread links. */
+/** Hydrates flat `lark-cli >= 1.0.59` `event consume` payloads; fast-paths 1:1 `ou_*` direct chats and fetches group metadata via `mget`. */
 export async function hydrateLiveEvent(commands: Commands, raw: unknown): Promise<unknown> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw
   const event = raw as Record<string, unknown>
   if (event['sender_type'] !== undefined || typeof event['message_id'] !== 'string') return raw
+  if (event['chat_type'] === 'p2p' && typeof event['sender_id'] === 'string' && /^ou_[a-zA-Z0-9]+$/.test(event['sender_id'])) {
+    return { ...event, sender_type: 'user', mentions: [] }
+  }
   const id = messageId.parse(event['message_id'])
   const result = z.object({ messages: z.array(messageSchema) }).parse(await commands.lark(['im', '+messages-mget', '--message-ids', id, '--no-reactions']))
   const message = result.messages.find(item => item.message_id === id)

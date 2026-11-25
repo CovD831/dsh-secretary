@@ -1097,18 +1097,15 @@ describe('feishu event consumer', () => {
     expect(health.feishu).toMatchObject({ state: 'error', detail: expect.stringContaining('JSON') })
     controller.abort(); await running; store.close()
   }, 20_000)
-  it('hydrates lark-cli 1.0.59 flat live events missing sender_type via +messages-mget without elevating bots', async () => {
+  it('hydrates lark-cli 1.0.59 flat live events: fast-paths p2p user chats and mgets group events without elevating bots', async () => {
     const flatUser = JSON.stringify({ event_id: 'ev_1', type: 'im.message.receive_v1', id: 'om_flat_user', message_id: 'om_flat_user',
       chat_id: 'oc_dm', chat_type: 'p2p', message_type: 'text', sender_id: 'ou_alice', content: '你好', create_time: '1757376000000' })
     const flatBot = JSON.stringify({ event_id: 'ev_2', type: 'im.message.receive_v1', id: 'om_flat_bot', message_id: 'om_flat_bot',
       chat_id: 'oc_group', chat_type: 'group', message_type: 'text', sender_id: '', content: '@Bot ping', create_time: '1757376001000' })
     writeFileSync(join(dir, 'events'), `${flatUser}\n${flatBot}\n`)
+    const mgetIds: string[] = []
     const lark = vi.spyOn(Commands.prototype, 'lark').mockImplementation(async args => {
-      if (args[1] === '+messages-mget' && args[3] === 'om_flat_user') {
-        return { messages: [{ message_id: 'om_flat_user', chat_id: 'oc_dm', msg_type: 'text', content: '你好',
-          sender: { id: 'ou_alice', name: 'Alice', sender_type: 'user' }, create_time: '1757376000000',
-          message_app_link: 'https://applink.feishu.cn/msg/1' }] }
-      }
+      if (args[1] === '+messages-mget') mgetIds.push(args[3]!)
       if (args[1] === '+messages-mget' && args[3] === 'om_flat_bot') {
         return { messages: [{ message_id: 'om_flat_bot', chat_id: 'oc_group', msg_type: 'text', content: '@_user_1 ping',
           sender: { id: 'cli_other', open_bot_id: 'ou_other_bot', sender_type: 'app' }, create_time: '1757376001000',
@@ -1119,8 +1116,9 @@ describe('feishu event consumer', () => {
     const { ctx, health, store } = consumerSource(cli('events'))
     running = runFeishu(ctx, controller.signal)
     await vi.waitFor(() => expect(store.triggers.get(feishuTriggerId('om_flat_bot'))).toBeDefined(), until)
+    expect(mgetIds).toEqual(['om_flat_bot'])
     expect(store.triggers.get(feishuTriggerId('om_flat_user'))).toMatchObject({
-      actor: { id: 'ou_alice' }, human: true, addressed: 'direct', text: '你好', url: 'https://applink.feishu.cn/msg/1',
+      actor: { id: 'ou_alice' }, human: true, addressed: 'direct', text: '你好',
     })
     expect(store.triggers.get(feishuTriggerId('om_flat_bot'))).toMatchObject({
       actor: { id: 'ou_other_bot' }, human: false, addressed: 'mention', text: '@Bot ping',
