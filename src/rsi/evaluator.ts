@@ -5,6 +5,8 @@ import type {
   FamilySplit,
   GenericMetricReading,
   ReplayCase,
+  ReplayCaseClassification,
+  ReplayReportCard,
   SplitBucket,
   SplitRatios,
   TaskBehaviorRecord,
@@ -123,7 +125,7 @@ export function computeBehavioralMetrics(records: readonly TaskBehaviorRecord[])
   }
 }
 
-function fnv1a32(input: string): number {
+export function fnv1a32(input: string): number {
   let h = 0x811c9dc5
   for (let i = 0; i < input.length; i++) {
     h ^= input.charCodeAt(i)
@@ -218,4 +220,18 @@ export function assertCaseSetEquality(
   if (missing.length > 0 || extra.length > 0) {
     throw new Error(`${label} 作废：样本集不一致（缺失 [${missing.join(', ')}]，多出 [${extra.join(', ')}]）`)
   }
+}
+
+/** 将单条回放分类转为净收益分值，供配对 Bootstrap 与 Holdout 泛化比共用。 */
+export function scoreReplayClassification(classification: ReplayCaseClassification): number {
+  if (classification === 'catch' || classification === 'true-allow') return 1
+  if (classification === 'miss' || classification === 'false-block' || classification === 'unmeasured') return -1
+  return 0
+}
+
+/** 计算基线与候选在同一冻结样本集上的逐样本配对净收益差值向量。 */
+export function pairedCaseDeltas(baseline: ReplayReportCard, candidate: ReplayReportCard): number[] {
+  assertCaseSetEquality(baseline.caseIds, candidate.caseIds, 'paired-replay')
+  const baseById = new Map(baseline.cases.map(c => [c.caseId, scoreReplayClassification(c.classification)]))
+  return candidate.cases.map(c => scoreReplayClassification(c.classification) - (baseById.get(c.caseId) ?? 0))
 }

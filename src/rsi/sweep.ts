@@ -39,7 +39,7 @@ function cmpOptionalAsc(a: number | undefined, b: number | undefined): number {
   return a - b
 }
 
-function assertSplitIsolation<I>(split: FamilySplit<I>): void {
+export function assertSplitIsolation<I>(split: FamilySplit<I>): void {
   const seenFamily = new Map<string, string>()
   const seenId = new Map<string, string>()
   for (const [name, list] of [['train', split.train], ['validation', split.validation], ['holdout', split.holdout]] as const) {

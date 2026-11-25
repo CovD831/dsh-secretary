@@ -1,5 +1,6 @@
 /** 可信记忆系统 M1–M6 公共类型契约（双时态溯源、M6 注意力账本与预算账单）。 */
 import type { SourceRef, Taint as SpineTaint } from '../spine/types.ts'
+import type { MemoryFtsIndex } from './fts-index.ts'
 
 export type MemoryLayer = 'm1' | 'm2' | 'm3' | 'm4' | 'm6'
 export type FactLayer = Exclude<MemoryLayer, 'm6'>
@@ -124,6 +125,7 @@ export interface MemoryProposal {
   resident?: boolean
   overrideTombstone?: boolean
   invalidationReason?: string
+  expectedRevision?: number
 }
 
 export type WriteRejectReason =
@@ -136,6 +138,8 @@ export type WriteRejectReason =
   | 'm4-threshold-not-met'
   | 'tombstone-blocked'
   | 'verbatim-quote-mismatch'
+  | 'revision-conflict'
+  | 'resident-budget-exceeded'
 
 export type WriteResult =
   | {
@@ -205,6 +209,13 @@ export interface MemoryBudgets {
   attentionMaxChars: number
 }
 
+export const DEFAULT_MEMORY_BUDGETS: MemoryBudgets = {
+  residentMaxChars: 2200,
+  triggeredMaxChars: 2000,
+  retrievedMaxChars: 2000,
+  attentionMaxChars: 1200,
+}
+
 export interface BucketReceipt {
   budgetChars: number
   usedChars: number
@@ -229,6 +240,7 @@ export interface AssemblePromptOptions {
   budgets?: Partial<MemoryBudgets>
   halfLifeDays?: number
   rrfK?: number
+  ftsIndex?: MemoryFtsIndex
 }
 
 export interface AssembledMemoryPrompt {
@@ -254,4 +266,34 @@ export class ResidentBudgetExceededError extends Error {
     this.maxChars = maxChars
     this.entryIds = entryIds
   }
+}
+
+export interface UserDirectMemoryInput {
+  readonly statement: string; readonly layer?: 'm1' | 'm2' | 'm3'; readonly slug?: string; readonly workspaceKey?: string
+  readonly scope?: MemoryScope; readonly topicKey?: string; readonly m2Kind?: M2Kind; readonly clearance?: Clearance
+  readonly resident?: boolean; readonly importance?: number; readonly triggerKeys?: TriggerKeys
+  readonly overrideTombstone?: boolean; readonly expectedRevision?: number; readonly invalidationReason?: string
+  readonly eventId?: string; readonly actorRef?: string; readonly now?: Date | string
+}
+export interface UserDirectMemoryResult { readonly sourceRef: SourceRef; readonly writeResult: WriteResult; readonly tombstonedIds: readonly string[] }
+export interface TicketPatchCandidate {
+  readonly layer: FactLayer; readonly slug?: string; readonly workspaceKey?: string; readonly statement: string
+  readonly scope: MemoryScope; readonly sourceType?: SourceType; readonly sourceRef: SourceRef; readonly author?: string
+  readonly topicKey?: string; readonly patternKey?: string; readonly verbatimQuote?: string; readonly evidenceText?: string
+  readonly workspacesSeen?: readonly string[]; readonly seenCount?: number; readonly triggerKeys?: TriggerKeys
+  readonly importance?: number; readonly clearance?: Clearance; readonly resident?: boolean
+}
+export type PendingPatchProposal = MemoryProposal & { readonly expectedRevision: number; readonly targetRelPath: string }
+export interface RejectedPatchCandidate { readonly candidate: TicketPatchCandidate; readonly reason: string; readonly detail: string }
+export interface ProposeTicketPatchesResult {
+  readonly proposals: readonly PendingPatchProposal[]; readonly m4Proposals: readonly PendingPatchProposal[]
+  readonly rejected: readonly RejectedPatchCandidate[]; readonly writeResults?: readonly WriteResult[]
+}
+export interface TickM6LifecycleResult {
+  readonly tickedIds: readonly string[]; readonly seenIds: readonly string[]
+  readonly expiredIds: readonly string[]; readonly untouchedIds: readonly string[]
+}
+export interface MemoryBelievabilityMetrics {
+  readonly repeatQuestionRate: number; readonly falseRecallCount: number; readonly weeklyCorrectedMemories: number
+  readonly totalQuestions: number; readonly repeatQuestions: number; readonly windowDays: number
 }

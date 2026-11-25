@@ -1,13 +1,28 @@
-/** RSI 离线回放、事件脊指针桥接与零耦合评估器模块统一导出。 */
+/** RSI 离线回放、事件脊指针桥接、在线采集回填与统计校准模块统一导出。 */
 export type {
+  AblationCase,
+  AttributionSummary,
   BehavioralMetricsReading,
+  BootstrapCIResult,
+  CalibratedDecision,
+  CalibratedGateRecord,
+  CalibrationBin,
   CommandOutcome,
   DomainEventBridgeMeta,
+  ExpectedCalibrationReport,
   ExpectedOutcome,
   FamilySplit,
+  FourWayAttribution,
+  FrictionCluster,
   GenericMetricReading,
+  HoldoutEvaluationResult,
   JoinedSessionMetricRow,
+  LabelledEventRecord,
+  LeaveOneOutGateImpact,
+  LeaveOneOutResult,
   MarginalCostEstimate,
+  NaturalBackfillLabel,
+  OnlineCollectionResult,
   ParamCandidateEvaluation,
   ParamSweepOptions,
   ParamSweepResult,
@@ -19,11 +34,13 @@ export type {
   ReplayGateOutcome,
   ReplayOptions,
   ReplayReportCard,
+  RuleConflictPair,
   SessionEventPtr,
   SessionTokenSummary,
   SplitBucket,
   SplitRatios,
   TaskBehaviorRecord,
+  TemperatureScaler,
   WindowCompareOptions,
   WindowComparison,
   WindowSample,
@@ -40,6 +57,9 @@ export {
   compareWindows,
   computeBehavioralMetrics,
   confidenceOf,
+  fnv1a32,
+  pairedCaseDeltas,
+  scoreReplayClassification,
   splitByFamily,
   toEvaluationReading,
 } from './evaluator.ts'
@@ -47,5 +67,23 @@ export {
   runHistoricalReplay,
 } from './replay.ts'
 export {
+  assertSplitIsolation,
   compareParamCandidates,
 } from './sweep.ts'
+export {
+  collectOnlineRsiSnapshot,
+  readM0Events,
+  type OnlineCollectOptions,
+} from './online-collector.ts'
+export {
+  bootstrapDeltaCI,
+  buildCalibratedGateRecord,
+  calibrateProbability,
+  classifyThresholdBand,
+  computeExpectedCalibrationError,
+  evaluateSealedHoldout,
+  evaluateSweepAndHoldout,
+  fitTemperatureScaler,
+  runLeaveOneOutAblation,
+  type EvaluateSealedHoldoutOptions,
+} from './calibration.ts'
