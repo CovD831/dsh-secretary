@@ -28,6 +28,7 @@ import { settingsView } from './views/settings.ts'
 import { sourcesStatus, type SetupState } from './views/sources.ts'
 import { decisionList, search, threadDetail, threadList } from './views/threads.ts'
 import { executorLoad, ticketDetail, ticketList } from './views/tickets.ts'
+import { readDepositsProjection, readNotebookProjection, readSpineProjection, readStateProjection } from '../projection/index.ts'
 
 export interface HttpHost {
   readonly store: Store
@@ -145,6 +146,7 @@ const DecisionsQuery = z.object({ kind: z.string().default(''), window: z.litera
   limit: limit(30, 200) })
 const count = z.coerce.number().int().nonnegative()
 const PromptsQuery = z.object({ revision: count.optional(), offset: count.default(0) })
+const SpineQuery = z.object({ sinceSeq: count.optional(), limit: limit(50, 200), ticketId: z.string().max(128).optional(), type: z.string().max(128).optional() })
 const SourceBlock = z.templateLiteral(['source:', z.string().regex(/^[a-z][a-z0-9-]*$/)])
 const SettingsBlockSchema = z.union([z.enum(['policy', 'eval', 'executor']), SourceBlock])
 const SaveRequest = z.object({ value: z.unknown(), revision: z.number().int().nonnegative() })
@@ -211,6 +213,10 @@ function routes(runtime: HttpHost): Routes {
       return savePrompts(runtime, request.config, request.baseRevision, 'panel')
     },
     'POST prompts/preview': async input => runtime.prompts.preview(await promptBody(input)),
+    'GET projection/state': () => readStateProjection(store, runtime.machine.stateDir),
+    'GET projection/notebook': () => readNotebookProjection(runtime.machine.stateDir),
+    'GET projection/spine': ({ query }) => readSpineProjection(store, runtime.machine.stateDir, SpineQuery.parse(query)),
+    'GET projection/deposits': () => readDepositsProjection(store, runtime.machine.stateDir),
   }
 }
 function decoded(segment: string): string {
