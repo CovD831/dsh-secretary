@@ -1,5 +1,5 @@
 /** 可信记忆系统 M1–M6 公共类型契约（双时态溯源、M6 注意力账本与预算账单）。 */
-import type { SourceRef } from '../spine/types.ts'
+import type { SourceRef, Taint as SpineTaint } from '../spine/types.ts'
 
 export type MemoryLayer = 'm1' | 'm2' | 'm3' | 'm4' | 'm6'
 export type FactLayer = Exclude<MemoryLayer, 'm6'>
@@ -7,7 +7,12 @@ export type MemoryScope = 'global' | `workspace:${string}` | `person:${string}`
 export type SourceType = 'user_direct' | 'user_ruling' | 'session' | 'external_doc' | 'inference'
 export type Confidence = 'stated' | 'corroborated' | 'inferred'
 export type Taint = 'clean' | 'external_untrusted'
+export type MemoryTaint = Taint
 export type Clearance = 'public' | 'workspace' | 'private'
+
+export function memoryTaintOf(taint: SpineTaint): Taint {
+  return taint === 'untrusted' ? 'external_untrusted' : 'clean'
+}
 export type TriggerLogic = 'AND_ANY' | 'AND_ALL' | 'NOT_ANY' | 'NOT_ALL'
 export type M2Kind = 'preference' | 'veto' | 'shared_event' | 'internal_moniker' | 'correction_repair'
 
@@ -124,6 +129,7 @@ export interface MemoryProposal {
 export type WriteRejectReason =
   | 'secret-detected'
   | 'missing-source-ref'
+  | 'unknown-source-ref'
   | 'caller-id-forbidden'
   | 'invalid-input'
   | 'scope-mismatch'

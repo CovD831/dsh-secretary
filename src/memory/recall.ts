@@ -50,23 +50,28 @@ export function matchesTriggerKeys(scanText: string, triggerKeys: TriggerKeys): 
   }
 }
 
+const clearanceRankOf = (c?: Clearance): number | undefined =>
+  c && Object.hasOwn(CLEARANCE_RANK, c) ? CLEARANCE_RANK[c] : undefined
+
 export function canCallerReadEntry(caller: RecallCaller, layer: MemoryLayer, entry: MemoryEntry, relPath?: string): boolean {
-  if (CLEARANCE_RANK[entry.clearance] > CLEARANCE_RANK[caller.maxClearance]) return false
+  const entryRank = clearanceRankOf(entry.clearance)
+  const callerRank = clearanceRankOf(caller.maxClearance)
+  if (entryRank === undefined || callerRank === undefined || entryRank > callerRank) return false
   if (caller.role === 'worker') {
     if (entry.clearance === 'private' || layer === 'm2' || layer === 'm6') return false
     if (entry.scope.startsWith('workspace:')) {
       if (!caller.workspaceId || entry.scope !== `workspace:${caller.workspaceId}`) return false
     }
-    if (layer === 'm3' && relPath) {
-      const wsSeg = relPath.split('/')[1]
-      if (!caller.workspaceId || wsSeg !== caller.workspaceId) return false
+    if (layer === 'm3') {
+      if (!caller.workspaceId || entry.scope !== `workspace:${caller.workspaceId}`) return false
+      if (relPath && relPath.split('/')[1] !== caller.workspaceId) return false
     }
   }
   return true
 }
 
 export function isEntryActiveAt(entry: MemoryEntry, nowMs: number): boolean {
-  if (entry.invalidatedBy) return false
+  if (!Number.isFinite(nowMs) || entry.invalidatedBy) return false
   if (entry.validTo !== undefined) {
     const end = Date.parse(entry.validTo)
     if (!Number.isFinite(end) || end <= nowMs) return false
@@ -77,6 +82,7 @@ export function isEntryActiveAt(entry: MemoryEntry, nowMs: number): boolean {
 }
 
 export function isAttentionVisible(item: AttentionItem, nowMs: number): boolean {
+  if (!Number.isFinite(nowMs)) return false
   if (item.status === 'approved' || item.status === 'dismissed' || item.status === 'expired') return false
   if (item.seenCount < item.delaySeen) return false
   if (item.status === 'asked' && (item.remainingStickyTurns ?? 0) > 0) return true
@@ -163,19 +169,22 @@ export async function assembleMemoryPrompt(options: AssemblePromptOptions): Prom
   const budgets: MemoryBudgets = { ...DEFAULT_MEMORY_BUDGETS, ...options.budgets }
   const nowMs = options.now instanceof Date
     ? options.now.getTime()
-    : (options.now ? Date.parse(options.now) : Date.now())
+    : (options.now !== undefined ? Date.parse(options.now) : Date.now())
+  if (!Number.isFinite(nowMs)) throw new Error(`非法召回时间戳 now: "${String(options.now)}"`)
   const halfLifeDays = options.halfLifeDays ?? 14
   const rrfK = options.rrfK ?? 60
 
   const pages = existsSync(options.dir) ? await listMemoryPages(options.dir) : []
   const eligibleFacts: MemoryEntry[] = []
   const ledgerItems: AttentionItem[] = []
+  const callerRank = clearanceRankOf(options.caller.maxClearance)
 
   for (const { relPath, page } of pages) {
     if (page.layer === 'm6') {
-      if (options.caller.role === 'secretary') {
+      if (options.caller.role === 'secretary' && callerRank !== undefined) {
         for (const item of page.items) {
-          if (CLEARANCE_RANK[item.clearance ?? 'workspace'] <= CLEARANCE_RANK[options.caller.maxClearance] && isAttentionVisible(item, nowMs)) {
+          const itemRank = clearanceRankOf(item.clearance ?? 'workspace')
+          if (itemRank !== undefined && itemRank <= callerRank && isAttentionVisible(item, nowMs)) {
             ledgerItems.push(item)
           }
         }

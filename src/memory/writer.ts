@@ -10,22 +10,17 @@ import { GitRepoLock } from '../spine/git-sink.ts'
 import { redactValue } from '../spine/redact.ts'
 import type { SourceRef } from '../spine/types.ts'
 import {
-  formatChangeLogLine, listMemoryPages, readMemoryPage,
-  resolveMemoryRelPath, writeMemoryPage,
+  formatChangeLogLine, listMemoryPages, readMemoryPage, resolveMemoryRelPath, writeMemoryPage,
 } from './codec.ts'
 import type {
-  AttentionItem, AttentionProposal, AttentionTransition, FactLayer, FactPage,
-  LedgerPage, MemoryEntry, MemoryProposal, MemoryScope, TombstoneInput,
-  TombstoneResult, WriteRejectReason, WriteResult,
+  AttentionItem, AttentionProposal, AttentionTransition, FactLayer, FactPage, LedgerPage,
+  MemoryEntry, MemoryProposal, MemoryScope, TombstoneInput, TombstoneResult, WriteRejectReason, WriteResult,
 } from './types.ts'
 
 const execFileAsync = promisify(execFile)
-const ISOLATED_ENV_KEYS = [
-  'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY',
+const ISOLATED_ENV_KEYS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY',
   'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT',
-  'GIT_AUTHOR_NAME', 'GIT_COMMITTER_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_EMAIL',
-] as const
-
+  'GIT_AUTHOR_NAME', 'GIT_COMMITTER_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_EMAIL'] as const
 const normText = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, ' ')
 const validRef = (ref?: SourceRef): ref is SourceRef =>
   Boolean(ref && Number.isSafeInteger(ref.seq) && ref.seq > 0 && typeof ref.id === 'string' && ref.id.trim())
@@ -44,14 +39,15 @@ function isolatedGitEnv(): NodeJS.ProcessEnv {
 function validateProposal(p: MemoryProposal): { error: WriteResult } | { targetRel: string } {
   if ('id' in p && (p as { id?: unknown }).id !== undefined) return { error: reject('caller-id-forbidden', '记忆 id 必须由宿主分配') }
   if ('changeLog' in p && (p as { changeLog?: unknown }).changeLog !== undefined) return { error: reject('invalid-input', '禁止篡改 Change Log') }
-  if (hasSecret([p.statement, p.verbatimQuote, p.invalidationReason, p.topicKey, ...(p.triggerKeys?.primary ?? []), ...(p.triggerKeys?.secondary ?? [])])) {
+  if (hasSecret([p.statement, p.verbatimQuote, p.invalidationReason, p.topicKey, p.scope, p.author, p.sourceRef?.id,
+    ...(p.workspacesSeen ?? []), ...(p.triggerKeys?.primary ?? []), ...(p.triggerKeys?.secondary ?? [])])) {
     return { error: reject('secret-detected', '检测到秘密或凭据形状，已触发拒写门') }
   }
   if (!validRef(p.sourceRef)) return { error: reject('missing-source-ref', '缺少有效的 M0 sourceRef (seq > 0 且 id 非空)') }
   if (!p.statement.trim() || !p.author.trim()) return { error: reject('invalid-input', 'statement 与 author 不能为空') }
   if (p.importance !== undefined && (!Number.isFinite(p.importance) || p.importance < 0 || p.importance > 10)) return { error: reject('invalid-input', 'importance 须在 0–10 间') }
-  if ((p.observedAt && !Number.isFinite(Date.parse(p.observedAt))) || (p.validFrom && !Number.isFinite(Date.parse(p.validFrom)))) {
-    return { error: reject('invalid-input', 'observedAt 或 validFrom 时间戳非法') }
+  if ([p.observedAt, p.validFrom, p.lastAccessedAt].some(ts => ts !== undefined && !Number.isFinite(Date.parse(ts)))) {
+    return { error: reject('invalid-input', '时间戳格式非法') }
   }
   const validScope = p.scope === 'global' || /^workspace:[^\s]+$/.test(p.scope) || /^person:[^\s]+$/.test(p.scope)
   if (!validScope || (p.layer === 'm4' && p.scope !== 'global') || (p.layer === 'm2' && p.scope.startsWith('workspace:'))) {
@@ -89,25 +85,26 @@ function buildEntry(p: MemoryProposal, id: string, nowIso: string, isInf: boolea
   }
 }
 
-export interface MemoryWriterOptions { dir: string; lock?: GitRepoLock; userName?: string; userEmail?: string; now?: () => Date }
+export interface MemoryWriterOptions {
+  dir: string; lock: GitRepoLock; resolveRef?: (ref: SourceRef) => boolean | Promise<boolean>
+  userName?: string; userEmail?: string; now?: () => Date
+}
 
 /** 唯一记忆写入服务（与 M0 共用 GitRepoLock），强守秘密拒写、防复活与冲突转 M6 纪律。 */
 export class MemoryWriter {
   readonly dir: string
   readonly lock: GitRepoLock
-  private readonly userName: string
-  private readonly userEmail: string
-  private readonly now: () => Date
+  private readonly opts: MemoryWriterOptions
   private initialized = false
 
   constructor(options: MemoryWriterOptions) {
+    if (!options.lock) throw new Error('MemoryWriter 必须显式传入共享 GitRepoLock')
     this.dir = resolve(options.dir)
-    this.lock = options.lock ?? new GitRepoLock()
-    this.userName = options.userName ?? 'dsh-memory'
-    this.userEmail = options.userEmail ?? 'memory@dsh.local'
-    this.now = options.now ?? (() => new Date())
+    this.lock = options.lock
+    this.opts = options
   }
 
+  private now(): Date { return (this.opts.now ?? (() => new Date()))() }
   init(): Promise<void> { return this.lock.run(() => this.ensureInit()) }
 
   private async git(args: string[]): Promise<string> {
@@ -118,7 +115,7 @@ export class MemoryWriter {
     if (this.initialized) return
     await mkdir(this.dir, { recursive: true })
     if (!existsSync(join(this.dir, '.git'))) await this.git(['init'])
-    for (const [k, v] of [['user.name', this.userName], ['user.email', this.userEmail]] as const) {
+    for (const [k, v] of [['user.name', this.opts.userName ?? 'dsh-memory'], ['user.email', this.opts.userEmail ?? 'memory@dsh.local']] as const) {
       if (!(await this.git(['config', '--local', '--get', '--', k]).then(s => s.trim(), () => ''))) await this.git(['config', '--local', '--', k, v])
     }
     this.initialized = true
@@ -165,6 +162,9 @@ export class MemoryWriter {
     return this.lock.run(async () => {
       const checked = validateProposal(proposal)
       if ('error' in checked) return checked.error
+      if (this.opts.resolveRef && !(await this.opts.resolveRef(proposal.sourceRef))) {
+        return reject('unknown-source-ref', `sourceRef 未在事件脊中确认: seq=${proposal.sourceRef.seq}, id=${proposal.sourceRef.id}`)
+      }
       const now = this.now(), nowMs = now.getTime(), nowIso = now.toISOString()
       const isInf = proposal.sourceType === 'inference' || proposal.author === 'consolidator' || proposal.author.startsWith('consolidator:')
       if (isInf) {
@@ -182,24 +182,27 @@ export class MemoryWriter {
         .filter((p): p is { relPath: string; page: FactPage } => p.page.layer !== 'm6')
         .flatMap(p => p.page.entries.map(entry => ({ relPath: p.relPath, page: p.page, entry })))
       const normStmt = normText(proposal.statement), normTopic = proposal.topicKey?.trim()
-      const isUserAuth = proposal.sourceType === 'user_direct' || proposal.sourceType === 'user_ruling'
+      const isUserAuth = !isInf && (proposal.sourceType === 'user_direct' || proposal.sourceType === 'user_ruling')
       const isOverride = isUserAuth && proposal.overrideTombstone === true
+      const isActiveVeto = (e: MemoryEntry) => e.m2Kind === 'veto' && !e.invalidatedBy && (!e.validTo || Date.parse(e.validTo) > nowMs)
       const activeTopics = new Set(allEntries
         .filter(({ entry: e }) => !e.invalidatedBy && e.m2Kind !== 'veto' && (!e.validTo || Date.parse(e.validTo) > nowMs) && e.topicKey?.trim())
         .map(({ entry: e }) => `${e.scope}::${e.topicKey!.trim()}`))
 
-      const conflicts = allEntries.filter(({ entry: e }) => {
-        if (!e.invalidatedBy && e.m2Kind !== 'veto') return false
+      const tombHits = allEntries.filter(({ entry: e }) => {
+        const activeVeto = isActiveVeto(e)
+        if (!activeVeto && !e.invalidatedBy) return false
+        if (!activeVeto && e.scope !== 'global' && e.scope !== proposal.scope) return false
         const sameStmt = normText(e.statement) === normStmt
-        const deadTopic = Boolean(normTopic && e.topicKey?.trim() === normTopic) && (e.m2Kind === 'veto' || (e.scope === proposal.scope && !activeTopics.has(`${e.scope}::${normTopic}`)))
+        const deadTopic = Boolean(normTopic && e.topicKey?.trim() === normTopic) && (activeVeto || (e.scope === proposal.scope && !activeTopics.has(`${e.scope}::${normTopic}`)))
         return sameStmt || deadTopic
       })
-      if (conflicts.length > 0 && !isOverride) return reject('tombstone-blocked', `命中防复活墓碑/否决条目 ${conflicts[0]!.entry.id}`)
+      if (tombHits.length > 0 && !isOverride) return reject('tombstone-blocked', `命中防复活墓碑/否决条目 ${tombHits[0]!.entry.id}`)
 
       const activeConflicts = allEntries.filter(({ entry: e }) =>
         !e.invalidatedBy && (!e.validTo || Date.parse(e.validTo) > nowMs) && e.scope === proposal.scope
         && normTopic && e.topicKey?.trim() === normTopic && normText(e.statement) !== normStmt)
-      const toInvalidate = [...conflicts.filter(c => !c.entry.invalidatedBy && c.entry.m2Kind === 'veto'), ...activeConflicts]
+      const toInvalidate = [...tombHits.filter(c => isActiveVeto(c.entry)), ...activeConflicts]
         .filter((c, i, arr) => arr.findIndex(x => x.entry.id === c.entry.id) === i)
 
       if (toInvalidate.length > 0 && !isUserAuth) {
@@ -232,7 +235,10 @@ export class MemoryWriter {
 
   tombstone(input: TombstoneInput): Promise<TombstoneResult> {
     return this.lock.run(async () => {
-      if (!validRef(input.sourceRef) || hasSecret([input.reason])) throw new Error('tombstone 缺少合法 sourceRef 或含秘密形状')
+      if (!validRef(input.sourceRef) || hasSecret([input.reason, input.author, input.sourceRef.id])) {
+        throw new Error('tombstone 缺少合法 sourceRef 或含秘密形状')
+      }
+      if (this.opts.resolveRef && !(await this.opts.resolveRef(input.sourceRef))) throw new Error('tombstone sourceRef 未在事件脊确认')
       const relPath = resolveMemoryRelPath(input.target)
       const page = await readMemoryPage(this.dir, relPath)
       if (!page || page.layer === 'm6') throw new Error(`未找到记忆页: ${relPath}`)
@@ -249,13 +255,20 @@ export class MemoryWriter {
 
   upsertAttention(input: AttentionProposal, author = 'secretary'): Promise<{ item: AttentionItem; commit?: string }> {
     return this.lock.run(async () => {
-      if (!input.sourceRefs.length || !input.sourceRefs.every(validRef) || hasSecret([input.question])) throw new Error('M6 事项需要合法 sourceRef 且不得含秘密形状')
+      if (!input.sourceRefs.length || !input.sourceRefs.every(validRef)
+        || hasSecret([input.question, author, ...input.sourceRefs.map(r => r.id), ...(input.conflictingEntryIds ?? [])])) {
+        throw new Error('M6 事项需要合法 sourceRef 且不得含秘密形状')
+      }
+      if (this.opts.resolveRef) {
+        for (const r of input.sourceRefs) if (!(await this.opts.resolveRef(r))) throw new Error(`M6 sourceRef 未确认: ${r.id}`)
+      }
       return this.appendAttention(input, this.now().toISOString(), author)
     })
   }
 
   transitionAttention(input: AttentionTransition, author = 'secretary'): Promise<{ item: AttentionItem; commit?: string }> {
     return this.lock.run(async () => {
+      if (hasSecret([author])) throw new Error('M6 操作者含秘密形状，拒绝写入')
       const now = this.now(), nowIso = now.toISOString(), ledger = await this.loadLedger(nowIso)
       const item = ledger.items.find(i => i.id === input.id)
       if (!item) throw new Error(`M6 账本不存在事项: ${input.id}`)

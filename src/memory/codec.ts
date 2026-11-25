@@ -1,4 +1,5 @@
 /** 记忆实体页与 M6 账本的确定性 Markdown + YAML 编解码及路径防逃逸读写。 */
+import type { Dirent } from 'node:fs'
 import { lstat, mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { parseFrontmatterData } from '../judgement/yaml.ts'
@@ -224,11 +225,12 @@ export async function writeMemoryPage(memoryGitDir: string, relPath: string, pag
   return relPath
 }
 
-async function listDirSafe(absDir: string): Promise<string[]> {
+async function listDirSafe(absDir: string): Promise<Dirent[]> {
   try {
     const info = await lstat(absDir)
     if (info.isSymbolicLink()) throw new Error(`拒绝扫描符号链接目录: ${absDir}`)
-    return await readdir(absDir)
+    if (!info.isDirectory()) return []
+    return (await readdir(absDir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
     throw error
@@ -242,12 +244,20 @@ export async function listMemoryPages(
   const root = resolve(memoryGitDir)
   const relPaths: string[] = []
   if (layers.includes('m1')) {
-    for (const f of (await listDirSafe(join(root, 'm1'))).filter(n => n.endsWith('.md')).sort()) relPaths.push(`m1/${f}`)
+    for (const f of await listDirSafe(join(root, 'm1'))) {
+      const rel = `m1/${f.name}`
+      if ((f.isFile() || f.isSymbolicLink()) && SAFE_REL_PATH_RE.test(rel)) relPaths.push(rel)
+    }
   }
   if (layers.includes('m2')) relPaths.push('m2/profile.md')
   if (layers.includes('m3')) {
-    for (const ws of (await listDirSafe(join(root, 'm3'))).sort()) {
-      for (const f of (await listDirSafe(join(root, 'm3', ws))).filter(n => n.endsWith('.md')).sort()) relPaths.push(`m3/${ws}/${f}`)
+    for (const ws of await listDirSafe(join(root, 'm3'))) {
+      if (ws.isSymbolicLink()) throw new Error(`拒绝扫描符号链接目录: m3/${ws.name}`)
+      if (!ws.isDirectory() || !SAFE_SEGMENT_RE.test(ws.name)) continue
+      for (const f of await listDirSafe(join(root, 'm3', ws.name))) {
+        const rel = `m3/${ws.name}/${f.name}`
+        if ((f.isFile() || f.isSymbolicLink()) && SAFE_REL_PATH_RE.test(rel)) relPaths.push(rel)
+      }
     }
   }
   if (layers.includes('m4')) relPaths.push('m4/patterns.md')
