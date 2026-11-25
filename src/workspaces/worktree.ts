@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
-import { realpathSync } from 'node:fs'
+import { existsSync, lstatSync, realpathSync } from 'node:fs'
+import { cp, mkdir } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { SpineAppender } from '../spine/types.ts'
@@ -112,7 +113,50 @@ export async function provisionWorktree(input: ProvisionWorktreeInput): Promise<
     throw error
   }
   const draft: ProvisionedDraft = { ticketId: input.ticketId, workspace: workspace.id, branch, base }
+  if (workspace.cowPaths?.length) {
+    await copyCowDependencies(workspace.repository, input.targetDir, workspace.cowPaths, opts)
+  }
   return input.appender ? recordProvisioned(input.appender, draft) : draft
+}
+
+const FORBIDDEN_COW_NAME_RE = /^\.env(?:\..+)?$/i
+
+/** 将主仓已声明的依赖目录（如 `node_modules`）以 APFS CoW `cp -Rc` 快拷至新 worktree，严禁拷入 `.env*` 或越界软链。 */
+export async function copyCowDependencies(
+  repoDir: string,
+  targetDir: string,
+  cowPaths: readonly string[],
+  options: GitRunOptions = {},
+): Promise<string[]> {
+  const copied: string[] = []
+  const repoReal = normalizePath(repoDir)
+  const targetReal = normalizePath(targetDir)
+  for (const rawRel of cowPaths) {
+    const clean = rawRel.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+    if (!clean || clean.split('/').some(seg => seg === '..' || FORBIDDEN_COW_NAME_RE.test(seg))) continue
+    const src = resolve(repoReal, clean)
+    if (!existsSync(src) || !sameOrWithin(src, repoReal)) continue
+    const stat = lstatSync(src)
+    if (stat.isSymbolicLink() && !sameOrWithin(realpathSync(src), repoReal)) continue
+    const dst = resolve(targetReal, clean)
+    if (!sameOrWithin(dst, targetReal) || existsSync(dst)) continue
+    await mkdir(dirname(dst), { recursive: true })
+    if (process.platform === 'darwin') {
+      try {
+        await execFileAsync('cp', ['-Rc', src, dst], { timeout: options.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS, signal: options.signal })
+        copied.push(clean)
+        continue
+      } catch {
+        // 非 APFS 卷自动回退 Node 递归拷贝（过滤 .env*）。
+      }
+    }
+    await cp(src, dst, {
+      recursive: true,
+      filter: candidate => !FORBIDDEN_COW_NAME_RE.test(basename(candidate)),
+    })
+    copied.push(clean)
+  }
+  return copied
 }
 
 export function parseWorktreeListPorcelain(output: string): ParsedStanza[] {

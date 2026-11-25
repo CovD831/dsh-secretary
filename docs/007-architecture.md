@@ -322,6 +322,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/memory/types.ts`, `codec.ts`, `writer.ts`, `recall.ts`, `index.ts` | M1–M6 memory types, Markdown+YAML codec, anti-resurrection tombstone & secret-guarded writer, and tag-overlap recall engine |
 | `src/authoring/types.ts`, `feishu-cards.ts`, `funnel.ts`, `package-writer.ts`, `index.ts` | Feishu interactive card builders, safe deposit authoring funnel (tombstone/counter-rule/param guards), and `DEPOSIT.md` package writer |
 | `src/app/governance.ts` | Runtime governance wiring for spine, judgement gates, workspace provisioning, context capsules, and memory recall/writer |
+| `src/app/ruling-queue.ts` | Unified single-item ruling queue merging secretary questions, DeepSeek Harness `approval/request` prompts, and circuit-breaker/unknown-side-effect escalations |
 | `src/app/governance-ruling.ts` | Governance ruling handler for Feishu interactive card callbacks: operator authorization, idempotency, M1–M6 memory persistence, and M0 spine recording |
 | `src/projection/types.ts`, `avatar-state.ts`, `reader.ts`, `index.ts` | Read-only projection engine deriving pixel-frontend state and avatar bark from M0 spine and Store without mutating sources of truth |
 | `src/app/runtime.ts` | The Runtime, the composition root, with its start and stop |
@@ -352,6 +353,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/resources.ts` | `RESOURCES` and `readResource`: what `orchestrator_read` reads, for each role |
 | `src/app/tools/tool.ts` | The `Tool` type, `readTool`, the `orchestrator_read` of both roles, and `AcknowledgementSchema` |
 | `src/app/tools/main.ts` | The main Session's tools |
+| `src/app/tools/secretary-core.ts` | Chinese personal secretary structured speaking, cross-workspace dispatch, status tools, and local desktop message bus |
 | `src/app/tools/secretary-governance.ts` | Zero-execution secretary governance tools for memory recall, status queries, and Feishu deposit/ruling card dispatch |
 | `src/app/tools/executor.ts` | An Executor Session's tools |
 | `src/app/http.ts` | The `/orchestrator/api` routes: the same-origin check, request limits and one status per kind of failure |
@@ -364,7 +366,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/views/settings.ts` | The settings page's view: each block with its revision, each Source's settings with its kind's form, and the execution environment |
 | `src/app/views/overview.ts` | The overview: Tickets that need a person, problems, the last day's flow and the Executor's load |
 | `src/executor/dsh.ts` | The DshExecutor, `WorkerSlots`, `ticketExecution`, `inputMessage` and `mandateInstructions` |
-| `src/executor/capsule-hook.ts` | Pre-launch context capsule builder for Executor assignments |
+| `src/executor/capsule-hook.ts` | Pre-launch context capsule builder and natural-language keyword `rg` locator for Executor assignments |
+| `src/executor/runtime-guard.ts` | Execution-time 3-tier approval gate, `approval/request` waterfall bridge, native trace M0 capture, and runaway circuit breakers |
 | `src/executor/background.ts` | A worker's background work in DeepSeek Harness, the shell jobs its Session owns (`ctx.jobs`) and its subagents (`ctx.subagents`): `runningJobs`, `untilQuiet`, `killJobs`, `collectJobs`, `stopSubagents`, `stopBackground`, `until`, and `cancelled`, the workers whose turn a stop of their subagents cancelled |
 | `src/infra/commands.ts` | `Commands`, the CLI transport: `run`; `api` and `pages`, limited to the configured repository and validated; `lark` as the bot; `git`. `CliError` carries the code a command's output reports, such as a GitHub HTTP status, and a command that prints nothing fails with how it ended, never with its arguments; `validItems` skips and counts the malformed items of a list |
 | `src/infra/environment.ts` | The agent's process environment: command shims, the git configuration and credential helper, `runAsWorker`, and the checks of the environment and of a Ticket's directory |
@@ -469,6 +472,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/class-docs.spec.ts` | Every class in `src` has a JSDoc block before it |
 | `tests/docs.spec.ts` | Numbered documents link only to earlier ones, every local link resolves, no document has merge conflict markers, and this document's tables list every module and every test |
 | `tests/e2e-full-loop.spec.ts` | End-to-end disaster recovery (torn M0 shard + SQLite deletion rebuild), Feishu Card 2.0 ruling to M2/M6 and read-only projections, and 43-case RSI parameter sweep |
+| `tests/milestone1-backbone.spec.ts` | Milestone 1 verification: Chinese secretary tools, desktop bus, 3-tier approval & `approval/request` ruling queue, multi-workspace worktree + CoW + prepare, keyword `rg` capsule, Solo/Team & thinking-tier switching, taint guard, circuit breakers, and crash-unknown side-effect halt |
 
 `tests/fixtures/` holds what several tests share: `host.ts`, a simulated DeepSeek Harness host; `panel-server.ts` and `panel.tsx`, the fake management API and the panel around a page; `deployment.ts`, a resolved deployment; `git.ts`, the environment of every git the tests start, which names no repository; and `async.ts`.
 

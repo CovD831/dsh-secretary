@@ -88,15 +88,23 @@ export const EvalConfigSchema = z.object({
 }).strict()
 const CommandNameSchema = z.string().regex(/^[A-Za-z0-9._-]+$/).refine(name => name !== '.' && name !== '..', 'Not a command name')
   .refine(name => !WORKER_COMMANDS.includes(name), `${WORKER_COMMANDS.join(', ')} cannot be blocked`)
-/** Executor settings: worker model, concurrency, ticket directory root (empty defaults to `<stateDir>/work`), `prepare` command, and blocked commands. */
+export const ApprovalModeSchema = z.enum(['always-ask', 'smart-auto', 'full-trust'])
+export type ApprovalMode = z.infer<typeof ApprovalModeSchema>
+/** Executor settings: worker model, concurrency, ticket directory root (empty defaults to `<stateDir>/work`), `prepare` command, blocked commands, 3-tier approval mode, and runaway circuit-breaker caps. */
 export const ExecutorConfigSchema = z.object({
   model: RoleModelSchema.nullable().default(null),
   maxWorkers: z.number().int().min(LIMITS.maxWorkers.min).max(LIMITS.maxWorkers.max).default(3),
   directory: z.string().trim().refine(path => path === '' || path.startsWith('/'), 'An absolute path, or empty for <stateDir>/work').default(''),
   prepare: z.string().max(LIMITS.prepareCommand).default(''),
   blockedCommands: z.array(CommandNameSchema).default([]),
+  approvalMode: ApprovalModeSchema.optional(),
+  maxTurns: z.number().int().min(1).max(200).optional(),
+  maxStallTurns: z.number().int().min(1).max(50).optional(),
+  maxTokens: z.number().int().min(100).max(50_000_000).optional(),
 }).strict()
 const SAFE_GIT_REF = /(?:^\/|\/\/|\.\.|[\x00-\x20\x7f~^:?*\[\\]|\.lock$|^@\{)/
+const RelativeRepoDirSchema = z.string().trim().min(1).max(200)
+  .refine(p => !p.startsWith('/') && !p.startsWith('-') && !p.split('/').includes('..'), 'Relative repository path required')
 export const WorkspaceConfigSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]*$/),
   repository: z.string().trim().refine(path => isAbsolute(path), 'An absolute path'),
@@ -105,6 +113,9 @@ export const WorkspaceConfigSchema = z.object({
   branchPrefix: z.string().trim().refine(v => v === '' || (!v.startsWith('-') && !SAFE_GIT_REF.test(v)), 'Invalid branchPrefix'),
   isolation: z.enum(['I1', 'I2', 'I3', 'I4', 'I5']),
   prepare: z.string().max(LIMITS.prepareCommand).optional(),
+  approvalMode: ApprovalModeSchema.optional(),
+  cowPaths: z.array(RelativeRepoDirSchema).optional(),
+  verifyCommands: z.array(z.string().trim().min(1).max(500)).optional(),
 }).strict()
 export const SourceInstanceSchema = z.object({ enabled: z.boolean().default(true), config: z.record(z.string(), z.unknown()).default({}) }).strict()
 export const SettingsSchema = z.object({
@@ -203,6 +214,9 @@ export function settingsPolicy(settings: Settings, sources: SourceScope): Policy
   return {
     version, paused: settings.paused, evalTimeoutMs: settings.eval.timeoutSeconds * 1000,
     gate(trigger: Trigger, thread, tickets) {
+      if (trigger.source === 'secretary-bus' && trigger.human && trigger.addressed === 'direct' && trigger.meta.localAuthenticated === true) {
+        return { admissible: true, strength: 'explicit', basis: { source: 'secretary-bus', via: 'addressed', addressed: 'direct', sender: 'Boss' } }
+      }
       if (!trigger.human) return machineGate(trigger)
       const allowed = allowedSender(settings, trigger.actor)
       const scope = listened(sources, trigger.source, trigger.meta)
@@ -228,6 +242,7 @@ export function settingsPolicy(settings: Settings, sources: SourceScope): Policy
       // Revalidation rules follow docs/002 (Eval path; Resume revalidates).
       const { basis } = mandate
       const { source } = basis
+      if (source === 'secretary-bus') return true
       const current = source && basis.scope ? listened(sources, source, basis.scope) : undefined
       if (current && !current.listened) return false
       const rulesOn = (rules: string[] | undefined) => (rules ?? []).every(id => settings.policy.rules.some(rule => rule.enabled && rule.id === id))

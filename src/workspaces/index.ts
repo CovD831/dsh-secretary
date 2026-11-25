@@ -21,6 +21,7 @@ export {
   type WorkspaceSettingsReader,
 } from './registry.ts'
 export {
+  copyCowDependencies,
   deriveBranchName,
   findWorktreeObservation,
   isBranchMergedIntoBase,

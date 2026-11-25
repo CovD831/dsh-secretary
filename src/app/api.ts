@@ -14,6 +14,8 @@ import type {
   SpineProjectionView,
   StateProjectionView,
 } from '../projection/types.ts'
+import type { DecideRulingInput, RulingItem, RulingStatus } from './ruling-queue.ts'
+import type { SecretaryFeedEntry } from './tools/secretary-core.ts'
 
 export const TICKET_FILTERS = ['open', 'person', 'working', 'idle', 'ended'] as const
 export const THREAD_FILTERS = ['subscribed', 'evaluating', 'recent', 'all'] as const
@@ -53,6 +55,10 @@ export interface Api {
   'GET projection/notebook': { response: NotebookProjectionView }
   'GET projection/spine': { query?: { sinceSeq?: number; limit?: number; ticketId?: string; type?: string }; response: SpineProjectionView }
   'GET projection/deposits': { response: DepositsProjectionView }
+  'GET rulings': { query?: { status?: RulingStatus }; response: { active: RulingItem | null; pendingCount: number; items: RulingItem[] } }
+  'POST rulings/:id/decide': { body: Omit<DecideRulingInput, 'id' | 'actorId'> & { actorId?: string }; response: { ok: boolean; item?: RulingItem; duplicate?: boolean; reason?: string } }
+  'GET secretary/feed': { response: { items: SecretaryFeedEntry[]; activeRuling: RulingItem | null; pendingCount: number } }
+  'POST secretary/messages': { body: { text: string; threadId?: string }; response: { triggerId: string; received: string } }
 }
 type Path<K> = K extends `${string} ${infer P}` ? P : never
 type Params<P> = P extends `${string}:${infer Name}/${infer Rest}` ? Record<Name, string> & Params<Rest>

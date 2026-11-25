@@ -13,7 +13,7 @@ import { AgentDelivery, messageId } from './delivery.ts'
 import type { Effects } from './effects.ts'
 import type { Variable } from './execution-environment.ts'
 import { RetryHealth } from './retry-health.ts'
-import { initializeRoleModel } from './role-models.ts'
+import { initializeRoleModel, applyThinkingTier } from './role-models.ts'
 import { bundledSkills } from './skill-files.ts'
 import { SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
 import type { Store } from './store.ts'
@@ -42,7 +42,19 @@ export interface SessionsHost {
  * What Sessions registered for an agent it decorated: the releases of its prompt section, tools and skill scope, the scope
  * its skills are registered in, and the skills of one prompt revision; for a worker's subagent, only its tool limits.
  */
-interface SessionBinding { disposers: (() => void)[]; scope?: Context; skills?: { revision: number; dispose: () => void }; subagent?: true }
+interface SessionBinding {
+  disposers: (() => void)[]
+  restrictDispose?: () => void
+  lastAllow?: string
+  scope?: Context
+  skills?: { revision: number; dispose: () => void }
+  subagent?: true
+}
+
+const SECRETARY_CHINESE_PROTOCOL = `## 中文私人秘书协议（主入口规范）
+- 你是老板唯一的中文私人秘书入口，永不亲自读写业务代码、跑命令或排障；一切执行工作派给独立工作区会话。
+- 对老板说话优先使用结构化说话工具：\`secretary_say\`（≤40 字带表情）、\`secretary_ask\`（≤3 选项写清后果与推荐项，进入单件待裁队列）、\`secretary_handover\`（结论/理由/影响三段式带证据引用）；跨会话派活使用 \`secretary_dispatch\`（写明可独立复查的验收标准、验证命令与稳定 dispatch_key）；查进度使用 \`secretary_status\`（没查到如实说「没查到」）。
+- 分清老板原话、你的推断与未查明事实，一次只问最关键的一件事。`
 
 /** The agent presets Executor Sessions and the main Session are created with, which the bundle's patch defines. */
 export const WORKER_PRESET = 'dsh-superagent-worker', ROUTER_PRESET = 'dsh-superagent-router'
@@ -58,9 +70,10 @@ declare module '@deepseek-ai/cordis' {
  * changes the profile, schedules work or starts goals outside the worker slots, the pause and a person's hold, starts or
  * messages other Sessions, or edits documents.
  */
-const WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search',
-  'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent', 'wait_agent',
-  'team_task_create', 'team_task_list', 'team_task_get', 'team_task_update']
+const SOLO_WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search',
+  'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent', 'wait_agent']
+const TEAM_ONLY_TOOLS = ['team_task_create', 'team_task_list', 'team_task_get', 'team_task_update']
+const WORK_TOOLS = [...SOLO_WORK_TOOLS, ...TEAM_ONLY_TOOLS]
 
 /**
  * Creates and decorates orchestrator and worker DSH `Agent` sessions with role models, system prompt sections from `Prompts`, runtime skills, and restricted tool sets.
@@ -129,9 +142,35 @@ export class Sessions {
     const settings = this.host.store.settings()
     await initializeRoleModel(ctx, result.agent, role === 'orchestrator' ? settings.eval.model : settings.executor.model)
     await this.decorate(result.agent)
-    ctx.permissionPresets.set(result.agent.session, 'danger-full-access')
+    const ticket = role === 'worker' ? this.ticketOf(result.agent) : undefined
+    ctx.permissionPresets.set(result.agent.session, this.permissionPresetFor(settings, role, ticket))
     await ctx.sessionController.rename({ sessionId: id as SessionId, title })
     return result.agent
+  }
+  private permissionPresetFor(settings: ReturnType<Store['settings']>, role: 'orchestrator' | 'worker', ticket?: Ticket): string {
+    if (role === 'orchestrator') return 'workspace-write'
+    const wsId = ticket?.execution?.workspace
+    const ws = wsId ? (settings.workspaces ?? []).find(w => w.id === wsId) : undefined
+    const mode = ws?.approvalMode ?? settings.executor.approvalMode ?? 'smart-auto'
+    return mode === 'full-trust' ? 'danger-full-access' : 'workspace-write'
+  }
+  /** Applies launch-time adaptive dispatch (`solo | team` tool set, `thinkingTier` model selection, and 3-tier sandbox preset) onto `agent`. */
+  async applyWorkerDispatch(agent: Agent, ticket: Ticket): Promise<void> {
+    const settings = this.host.store.settings()
+    this.ctx.permissionPresets.set(agent.session, this.permissionPresetFor(settings, 'worker', ticket))
+    await applyThinkingTier(this.ctx, agent, settings.executor.model, ticket.execution?.thinkingTier)
+    const binding = this.bindings.get(agent)
+    if (binding && !binding.subagent) {
+      const parent = scopeParentOf(agent)
+      const pool = ticket.execution?.executionMode === 'solo' ? SOLO_WORK_TOOLS : WORK_TOOLS
+      const allow = pool.filter(name => agent.ctx.tools.get(name, parent))
+      const keyAllow = JSON.stringify(allow)
+      if (binding.lastAllow !== keyAllow) {
+        binding.restrictDispose?.()
+        binding.restrictDispose = agent.ctx.tools.restrict({ allow })
+        binding.lastAllow = keyAllow
+      }
+    }
   }
   /** Returns whether `sessionId` already holds the message delivered under `requestId`, or `false` if the session does not exist. */
   async holds(sessionId: string, requestId: string): Promise<boolean> {
@@ -254,7 +293,8 @@ export class Sessions {
       const version = this.promptFor(agent, context.signal !== undefined)
       const current = ticket && host.store.tickets.get(ticket.id)
       const composed = host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)
-      return `[dsh-superagent prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
+      const secretaryHead = master ? `${SECRETARY_CHINESE_PROTOCOL}\n\n` : ''
+      return `[dsh-superagent prompt revision ${version.revision}]\n${secretaryHead}${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
     }, ...(master ? { complete: true } : {}) }))
     const register = this.registerTool(agent, binding)
     for (const tool of host.tools(agent, ticket)) register(tool.name, tool.description, tool.schema, tool.execute)
@@ -263,7 +303,10 @@ export class Sessions {
       binding.disposers.push(agent.ctx.tools.restrict({ allow: [] }))
     } else {
       // An Executor Session keeps the profile's work tools it has, which DSH requires to be known; its own tools are not masked.
-      binding.disposers.push(...this.workOnly(agent, ticket!.id))
+      const { disposers: workDisposers, allowKey } = this.workOnlyWithKey(agent, ticket!.id)
+      binding.restrictDispose = workDisposers[0]
+      binding.lastAllow = allowKey
+      binding.disposers.push(() => { binding.restrictDispose?.(); binding.restrictDispose = undefined }, ...workDisposers.slice(1))
     }
     // A recreated skill scope (e.g. after the skills service restarts) starts empty, so reset `binding.skills` before rebinding.
     const skillScope = agent.ctx.inject(['skills'], scope => {
@@ -282,14 +325,22 @@ export class Sessions {
    * (see the executor). Read inherited tools through the parent scope, which includes the preset's tools. The global view
    * misses preset tools; the agent's own view also includes local tools such as subagent, which restrict refuses to name.
    */
-  private workOnly(agent: Agent, ticketId: string): (() => void)[] {
+  private workOnlyWithKey(agent: Agent, ticketId: string): { disposers: (() => void)[]; allowKey: string } {
     const store = this.host.store
     const parent = scopeParentOf(agent)
-    const allow = WORK_TOOLS.filter(name => agent.ctx.tools.get(name, parent))
-    return [agent.ctx.tools.restrict({ allow }), agent.ctx.tools.guard(() => {
-      const current = store.tickets.get(ticketId)
-      return !current || !liveTicket(current) ? 'Ticket ended; new work needs a new authorized ticket' : undefined
-    })]
+    const ticket = store.tickets.get(ticketId)
+    const pool = ticket?.execution?.executionMode === 'solo' ? SOLO_WORK_TOOLS : WORK_TOOLS
+    const allow = pool.filter(name => agent.ctx.tools.get(name, parent))
+    return {
+      allowKey: JSON.stringify(allow),
+      disposers: [agent.ctx.tools.restrict({ allow }), agent.ctx.tools.guard(() => {
+        const current = store.tickets.get(ticketId)
+        return !current || !liveTicket(current) ? 'Ticket ended; new work needs a new authorized ticket' : undefined
+      })],
+    }
+  }
+  private workOnly(agent: Agent, ticketId: string): (() => void)[] {
+    return this.workOnlyWithKey(agent, ticketId).disposers
   }
   /**
    * A subagent of an Executor Session, or of one of its subagents, which runs under DSH's `standard` preset with the worker's

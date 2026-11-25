@@ -21,6 +21,9 @@ export interface WorkspaceDef {
   branchPrefix: string
   isolation: IsolationTier
   prepare?: string
+  approvalMode?: 'always-ask' | 'smart-auto' | 'full-trust'
+  cowPaths?: readonly string[]
+  verifyCommands?: readonly string[]
 }
 
 export interface WorktreeObservation {

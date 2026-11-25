@@ -6,19 +6,20 @@ import { join, resolve } from 'node:path'
 import type { Assignment, DomainEvent, OutboundMessage, Ticket } from '../core/index.ts'
 import { prepareLaunchCapsule, type PreparedLaunchCapsule } from '../executor/capsule-hook.ts'
 import { adaptiveDispatchGate, verifyChangedPathsGate, verifyRerunGate } from '../judgement/gates/index.ts'
-import { createJudgementRegistry, type ExtendedJudgementRegistry, type Verdict } from '../judgement/index.ts'
+import { createJudgementRegistry, type ActionClass, type ExtendedJudgementRegistry, type Verdict } from '../judgement/index.ts'
 import { MemoryWriter } from '../memory/index.ts'
 import { domainEventToSpineDraft } from '../rsi/trace-bridge.ts'
 import {
-  GitRepoLock, createGitShardSink, createSpineAppender, createSpineFlusher, ensureSpineSchema,
-  type FlushReport, type GitShardSink, type SourceRef, type SpineAppender, type SpineDraft, type SpineEnvelope, type SpineFlusher,
+  GitRepoLock, createGitShardSink, createSpineAppender, createSpineFlusher, ensureSpineSchema, joinTaint,
+  type FlushReport, type GitShardSink, type SourceRef, type SpineAppender, type SpineDraft, type SpineEnvelope, type SpineFlusher, type Taint,
 } from '../spine/index.ts'
 import {
   createWorkspaceRegistry, executeWorkspaceGc, findWorktreeObservation, isBranchMergedIntoBase,
-  observeWorktrees, planWorkspaceGc, registerWorkspaceGcGate,
-  type GcSubject, type WorkspaceRegistry, type WorktreeObservation,
+  observeWorktrees, planWorkspaceGc, registerDispatchIsolationGate, registerWorkspaceGcGate,
+  type GcSubject, type WorkspaceDef, type WorkspaceRegistry, type WorktreeObservation,
 } from '../workspaces/index.ts'
 import { ingestFeishuCardAction, type FeishuCardIngestResult, type IngestFeishuCardOptions } from './governance-ruling.ts'
+import { RulingQueue, type RulingItem } from './ruling-queue.ts'
 import type { Store } from './store.ts'
 
 export interface OutboxSendCtx {
@@ -36,6 +37,8 @@ export interface GovernanceOptions {
   readonly stateDir: string
   readonly onError?: (error: unknown) => void
   readonly now?: () => Date
+  readonly onRulingQueued?: (item: RulingItem) => void
+  readonly onRulingDecided?: (item: RulingItem) => void
 }
 
 const SHARD_NAME_RE = /^\d{4}-\d{2}-\d{2}\.jsonl$/
@@ -79,6 +82,7 @@ export class GovernanceRuntime {
   readonly memory: MemoryWriter
   readonly registry: ExtendedJudgementRegistry
   readonly workspaces: WorkspaceRegistry
+  readonly rulings: RulingQueue
   private readonly store: Store
   private readonly onError: (error: unknown) => void
   private readonly now: () => Date
@@ -103,12 +107,39 @@ export class GovernanceRuntime {
     this.appender = createSpineAppender(this.store, { kick: () => { if (!this.closed && !this.shuttingDown) this.flusher.kick() } })
     this.memory = new MemoryWriter({ dir: this.memoryDir, lock: this.memoryRepoLock, resolveRef: ref => this.resolveSpineRefUnlocked(ref), now: this.now })
     this.workspaces = createWorkspaceRegistry(this.store)
+    this.rulings = new RulingQueue({
+      store: this.store, appender: this.appender, memory: this.memory, memoryDir: this.memoryDir, memoryRepoLock: this.memoryRepoLock,
+      now: this.now,
+      ...(options.onRulingQueued ? { onQueued: options.onRulingQueued } : {}),
+      ...(options.onRulingDecided ? { onDecided: options.onRulingDecided } : {}),
+    })
 
     this.registry = createJudgementRegistry({ scopes: ['outbox'] })
     registerWorkspaceGcGate(this.registry, 'enforce')
+    registerDispatchIsolationGate(this.registry, 'enforce')
     this.registry.register(adaptiveDispatchGate, 'enforce')
     this.registry.register(verifyChangedPathsGate, 'shadow')
     this.registry.register(verifyRerunGate, 'shadow')
+  }
+
+  /** 返回当前最新事件脊序号（无记录时为 0）。 */
+  latestSpineSeq(): number {
+    if (!this.closed) {
+      const row = this.store.db.prepare('SELECT MAX(seq) AS seq FROM event_spine').get() as { seq?: number | null } | undefined
+      if (row && typeof row.seq === 'number' && row.seq > 0) return row.seq
+    }
+    return readSyncTailSeq(this.memoryDir)
+  }
+
+  /** 事前校验工单派发动作级别与目标工作区隔离档配对律，并将参评结果入脊。 */
+  async evaluateTicketDispatch(mandateCeiling: ActionClass, workspace?: WorkspaceDef, ticketId?: string): Promise<Verdict> {
+    const ev = await this.registry.evaluate('ticket.dispatch', { mandateCeiling, ...(workspace ? { workspace } : {}) })
+    if (ev.registered > 0 || ev.observed.length > 0) {
+      this.recordGate('ticket.dispatch', ticketId ?? (workspace?.id ?? 'default'), 'governance.dispatch-isolation', ticketId, {
+        mandateCeiling, ...(workspace ? { workspace: workspace.id, isolation: workspace.isolation } : {}), verdict: ev.verdict,
+      })
+    }
+    return ev.verdict
   }
 
   /** 返回当前治理时钟时间。 */
@@ -182,14 +213,21 @@ export class GovernanceRuntime {
     return undefined
   }
 
-  /** 在调用方的 `store.atomic()` 事务内原子写入领域事件并预约提交后异步刷盘。 */
+  /** 在调用方的 `store.atomic()` 事务内原子写入领域事件并预约提交后异步刷盘（外部触发严格保留 untrusted 污点）。 */
   recordDomainEvent(event: DomainEvent): void {
     if (this.closed) return
     const ticketId = this.ticketIdOf(event)
     const sessionId = ticketId ? `worker-${ticketId}` : undefined
     const sessionPtr = sessionId ? `dsh-session:${sessionId}` : undefined
+    let taint: Taint | undefined
+    if (event.type === 'trigger.received') {
+      const trig = this.store.triggers.get(event.data.triggerId)
+      const isLocalTrusted = trig?.source === 'secretary-bus' && trig.meta.localAuthenticated === true
+      taint = isLocalTrusted ? 'trusted' : joinTaint('trusted', 'untrusted')
+    }
     const draft = domainEventToSpineDraft(event, {
       id: `dom:${event.type}:${this.bootId}:${++this.eventSeq}`,
+      ...(taint ? { taint } : {}),
       ...(sessionId ? { sessionId } : {}),
       ...(sessionPtr ? { evidence: [{ kind: 'event', ref: sessionPtr }] } : {}),
     })

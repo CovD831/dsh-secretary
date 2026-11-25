@@ -21,6 +21,7 @@ import type { Deployment, Machine } from '../deployment.ts'
 import { environmentOf, ticketEnvironment, type Variable } from './execution-environment.ts'
 import type { SetupProblem } from '../setup.ts'
 import { DshExecutor, sourceTrigger, triggerMessage, workerSessionId } from '../executor/dsh.ts'
+import { RuntimeGuard } from '../executor/runtime-guard.ts'
 import { ticketCard } from './cards.ts'
 import { MasterAssessor } from './assessment.ts'
 import { KV } from '../kv.ts'
@@ -71,6 +72,7 @@ export class Runtime extends Service implements SourceHost {
   readonly assessor: MasterAssessor
   readonly outbox: Outbox
   readonly governance: GovernanceRuntime
+  readonly guard: RuntimeGuard
   readonly engine: Engine
   readonly passes: Passes
   readonly ready: Promise<void>
@@ -99,7 +101,32 @@ export class Runtime extends Service implements SourceHost {
     try {
       const report = (error: unknown) => { ctx.logger.warn('dsh-superagent: %s', String(error)) }
       const store = opened = this.store = new Store(join(machine.stateDir, 'orchestrator.sqlite'), report)
-      const governance = this.governance = new GovernanceRuntime({ store, stateDir: machine.stateDir, onError: report })
+      const governance = this.governance = new GovernanceRuntime({
+        store, stateDir: machine.stateDir, onError: report,
+        onRulingDecided: item => {
+          if (this.closing()) return
+          const summary = `老板已拍板 (${item.decision})${item.selectedOptionId ? ` [选项: ${item.selectedOptionId}]` : ''}${item.note ? ` 附言: ${item.note}` : ''}`
+          if (item.ticketId && item.kind !== 'dsh_approval') {
+            const tk = store.tickets.get(item.ticketId)
+            if (tk && !tk.ended) {
+              if (item.decision === 'approve' && item.escalationType === 'unknown_side_effect') {
+                this.quietly(() => { this.engine.note(tk.id, `人工确认外部副作用后继续: ${summary}`); this.engine.retryTicket(tk.id) })
+              } else if (item.decision === 'reject' && (item.escalationType === 'unknown_side_effect' || item.escalationType === 'runaway_breaker')) {
+                this.quietly(() => { this.engine.stopTicket(tk.id, summary) })
+              } else {
+                this.quietly(() => { this.engine.note(tk.id, summary) })
+              }
+              this.passes.request()
+            }
+          }
+          this.sessions?.relay(`ruling-decided:${item.id}`, JSON.stringify({
+            kind: 'ruling_decided', ruling_id: item.id, decision: item.decision,
+            ...(item.ticketId ? { ticket_id: item.ticketId } : {}),
+            ...(item.selectedOptionId ? { option_id: item.selectedOptionId } : {}),
+            ...(item.note ? { note: item.note } : {}),
+          }))
+        },
+      })
       const setup = this.setup = new Setup({ context: ctx, machine, lifetime: this.lifetime, restart })
       const deployed = () => setup.configured()
         ? environmentOf({ deployment: setup.deployment, sources: this.sources, settings: store.settings() }) : undefined
@@ -133,7 +160,22 @@ export class Runtime extends Service implements SourceHost {
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
         repliedTo: trigger => repliedTo({ store, sources }, trigger),
         prepareCapsule: input => governance.prepareLaunchCapsule(input),
-        onCapsuleError: (ticket, assignment, error) => governance.recordCapsuleUnmeasured(ticket, assignment, error) })
+        onCapsuleError: (ticket, assignment, error) => governance.recordCapsuleUnmeasured(ticket, assignment, error),
+        spineAppender: governance.appender,
+        evaluateDispatch: (ticket, ws) => governance.evaluateTicketDispatch('local-write', ws, ticket.id),
+        onUnknownSideEffect: (ticket, assignment) => {
+          void governance.rulings.enqueue({
+            kind: 'system_escalation',
+            escalationType: 'unknown_side_effect',
+            ticketId: ticket.id,
+            ...(ticket.execution?.workspace ? { workspace: ticket.execution.workspace } : {}),
+            question: `工单「${ticket.title}」(Assignment ${assignment.id}) 在宿主重启前执行过外部副作用（${(ticket.execution?.externalSideEffects ?? []).join(', ')}），请确认外部结果后再决定重跑或停止。`,
+            options: [
+              { id: 'resume', label: '确认未重复并继续', consequence: '追加说明并开启新 Assignment 恢复执行', recommended: false },
+              { id: 'stop', label: '停止工单防重发', consequence: '安全终止工单，不再自动重放副作用', recommended: true },
+            ],
+          })
+        } })
       this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return setup.deployment }, effects,
         settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),
         deliver: (id, text) => sessions.prompt(masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
@@ -169,10 +211,14 @@ export class Runtime extends Service implements SourceHost {
         get deployment() { return setup.deployment }, configured: () => setup.configured(),
         get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },
         receive: trigger => passes.receive(trigger), handleCardAction: raw => runtime.handleFeishuCardCallback(raw) }
-      this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources, governance,
+      this.guard = new RuntimeGuard({
+        context: ctx, store, get engine() { return runtime.engine }, appender: governance.appender,
+        rulings: governance.rulings, relayToMaster: (id, text) => sessions.relay(id, text),
+      })
+      this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources, governance, outbox,
         get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
         requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
-        quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
+        quietly: run => this.quietly(run) }
       this.ready = this.initialize()
     } catch (error) {
       // Release the database and state lock if initialization fails so an in-process restart can reacquire them.
@@ -211,6 +257,10 @@ export class Runtime extends Service implements SourceHost {
   idle(): Promise<void> { return this.passes.idle() }
   pump(): Promise<void> { return this.passes.pump() }
   sendReplies(): Promise<void> { return this.outbox.sent() }
+  private quietly<T>(run: () => T): T {
+    this.quiet++
+    try { return run() } finally { this.quiet-- }
+  }
   private closing(): boolean { return this.closingFlag }
   /** Hold evaluation, dispatch, and outbound delivery while paused or awaiting setup; sources still record incoming triggers. */
   private paused(): boolean { return !this.setup.configured() || this.store.settings().paused }
@@ -225,6 +275,7 @@ export class Runtime extends Service implements SourceHost {
     }
     this.sessions.install()
     this.executor.install()
+    this.guard.install()
     await this.sessions.ensure(this.masterId, this.machine.stateDir, 'dsh-superagent orchestrator', 'orchestrator')
     for (const id of this.settings.syncable()) await this.settings.sync(id).catch(() => { /* sync() records its failure in health. */ })
     // If stop() was called while awaiting setup, session creation, or policy sync, do not start background loops.
@@ -236,8 +287,8 @@ export class Runtime extends Service implements SourceHost {
   }
   private httpHost(): HttpHost {
     const runtime = this
-    const { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, setup, passes } = this
-    return { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks,
+    const { store, sources, prompts, sessions, settings, engine, executor, governance, health, machine, masterId, ready, sourceLinks, setup, passes } = this
+    return { store, sources, prompts, sessions, settings, engine, executor, governance, health, machine, masterId, ready, sourceLinks,
       get deployment() { return setup.deployment },
       get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),
@@ -255,6 +306,7 @@ export class Runtime extends Service implements SourceHost {
       await Promise.allSettled([passes, this.effects.drain(), ...agents.map(agent => agent.whenIdle())])
       // The workers' jobs and subagents stop too: their ends would start worker turns without the tool limits released below.
       await this.executor.shutdown()
+      this.guard.dispose()
       this.executor.dispose()
       this.sessions.dispose()
       for (const dispose of this.disposers.reverse()) dispose()

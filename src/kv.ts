@@ -3,7 +3,9 @@
  * Readers and writers refer to a record by its entry here so each key is spelled once with its value type.
  */
 import type { PromptVersion } from './app/prompts.ts'
+import type { RulingItem } from './app/ruling-queue.ts'
 import type { SettingsVersion } from './app/store.ts'
+import type { SecretaryFeedEntry } from './app/tools/secretary-core.ts'
 import type { SettingsSave } from './policy.ts'
 import type { Retry } from './sources/github.ts'
 
@@ -33,6 +35,11 @@ export const KV = {
   runtime: {
     masterId: record<string>('master-id'),
     masters: record<Record<string, string>>('masters'),
+  },
+  /** Governance: unified single-item ruling queue and secretary conversation feed. */
+  governance: {
+    rulings: record<RulingItem[]>('governance-rulings'),
+    feed: record<SecretaryFeedEntry[]>('governance-feed'),
   },
   /** Sessions: prompt revisions each Session has worked under, ordered oldest first; the last entry (`.at(-1)`) is its active revision. */
   sessions: { prompts: family<number[], [session: string]>('session-prompts:') },

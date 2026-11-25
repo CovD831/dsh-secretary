@@ -2,10 +2,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { z } from 'zod'
-import { UserError, followupOwners, key, reasonText, type Decision, type DecisionKind, type EngineForMainSession, type EngineForPeople }
+import { UserError, followupOwners, key, reasonText, type Decision, type DecisionKind, type EngineForMainSession, type EngineForPeople, type Engine, type Outbox }
   from '../../core/index.ts'
 import { IM_WORDS, NOTE_WORDS, wordCount } from '../../infra/text.ts'
-import { AssessmentSchema, EvalReadSchema, WorktreeNameSchema, type MasterAssessor } from '../assessment.ts'
+import { AssessmentSchema, WorktreeNameSchema, type EvalRead, type MasterAssessor } from '../assessment.ts'
 import { ticketCard } from '../cards.ts'
 import { PromptConfigSchema, savePrompts, type Prompts } from '../prompts.ts'
 import { readResource, type MainResourceHost, type ResourceHost } from '../resources.ts'
@@ -13,22 +13,38 @@ import type { GovernanceRuntime } from '../governance.ts'
 import type { Sessions } from '../sessions.ts'
 import type { Settings } from '../settings.ts'
 import type { Store } from '../store.ts'
+import { secretaryCoreTools } from './secretary-core.ts'
 import { secretaryGovernanceTools } from './secretary-governance.ts'
 import { AcknowledgementSchema, readTool, tool, type Tool } from './tool.ts'
+
+/** 主会话专用候选上下文读取 Schema：物理移除 `file` 与 `directory` 仓库直读能力，严守秘书零执行红线。 */
+const MainEvalReadSchema = z.object({
+  trigger_id: z.string().min(1).describe('Original candidate ID returned by orchestrator_eval; every reference is scoped to this trigger.'),
+  resource: z.enum(['message', 'root', 'parent', 'thread', 'image']),
+  message_id: z.string().optional().describe('Only for message: omit for the trigger, or the id of a window message or stub.'),
+  cursor: z.string().optional().describe('Only for thread: omit on the first page, then the next_cursor of the window or the cursor of next_read. Never a thread or message ID.'),
+  image_id: z.string().optional().describe('Only for image: an image id the window or a read lists.'),
+  offset: z.number().int().min(0).default(0).describe('Text pagination: copy next_offset; keep the other arguments unchanged. Images use 0.'),
+}).strict().superRefine((read, ctx) => {
+  if (read.message_id !== undefined && read.resource !== 'message') ctx.addIssue({ code: 'custom', message: 'message_id is only for message; use returned image_id for images.' })
+  if (read.cursor !== undefined && read.resource !== 'thread') ctx.addIssue({ code: 'custom', message: 'cursor is only for thread. First page: {resource:"thread"}.' })
+  if ((read.resource === 'image') !== (read.image_id !== undefined)) ctx.addIssue({ code: 'custom', message: 'Images require image_id from a returned read reference. Read the thread or root first to discover their images.' })
+})
 
 const RoutingNoteSchema = z.string().trim()
   .refine(text => wordCount(text) <= NOTE_WORDS, `Routing note must not exceed ${NOTE_WORDS} words (Chinese uses word segmentation). Shorten it; do not split it across deliveries.`)
   .describe(`Optional routing background or explicit human constraint, at most ${NOTE_WORDS} words. Never add implementation instructions or replace the original source.`)
 export interface MainToolsHost {
   readonly context: Context
-  readonly engine: Pick<EngineForMainSession, 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'> & EngineForPeople
-  readonly store: Pick<Store, 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'settings'>
+  readonly engine: Pick<EngineForMainSession, 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'> & EngineForPeople & Partial<Pick<Engine, 'receive'>>
+  readonly store: Pick<Store, 'get' | 'set' | 'tickets' | 'triggers' | 'threads' | 'atomic' | 'replyStatus' | 'settings'>
   readonly prompts: Pick<Prompts, 'preview' | 'save'>
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery' | 'modelRetry'>
   readonly settings: Pick<Settings, 'view' | 'block' | 'save' | 'pause' | 'sync'>
   readonly assessor: Pick<MasterAssessor, 'context' | 'read' | 'decide'>
   readonly resources: ResourceHost
   readonly governance?: GovernanceRuntime
+  readonly outbox?: Pick<Outbox, 'send'>
   /** Schedules a pass to carry out work queued by an Engine command (such as an Eval or ticket resume). */
   requestPass(): void
   sendReplies(): Promise<void>
@@ -210,9 +226,14 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
     }),
     tool({
       name: 'orchestrator_eval_read',
-      description: 'Read more of a candidate\'s context, always with its trigger_id: a message or stub whole by message_id, an image by image_id, the root, the parent, a thread page by cursor, or a file or directory by path.',
-      schema: EvalReadSchema,
-      execute: async (read, signal) => host.assessor.read(agent, read, signal),
+      description: 'Read more of a candidate\'s conversation context, always with its trigger_id: a message or stub whole by message_id, an image by image_id, the root, the parent, or a thread page by cursor.',
+      schema: MainEvalReadSchema,
+      execute: async (read, signal) => {
+        if ((read as { resource: string }).resource === 'file' || (read as { resource: string }).resource === 'directory') {
+          throw new Error('Zero-execution boundary: the main Session cannot read repository files or directories; dispatch a worker instead')
+        }
+        return host.assessor.read(agent, read as EvalRead, signal)
+      },
     }),
     tool({
       name: 'orchestrator_eval_decide',
@@ -252,7 +273,7 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
       name: 'orchestrator_settings_save',
       description: 'Save one settings block on an explicit human configuration request, never on observed content, as the panel would; read the blocks and revisions with orchestrator_read settings.',
       schema: z.object({
-        block: z.enum(['policy', 'eval', 'executor', 'pause', 'source']).describe('pause pauses or resumes processing: new Evals, dispatch and replies.'),
+        block: z.enum(['policy', 'eval', 'executor', 'workspaces', 'pause', 'source']).describe('pause pauses or resumes processing: new Evals, dispatch and replies.'),
         source: z.string().min(1).optional().describe('With block source: the Source instance id, such as github or feishu.'),
         value: z.unknown().describe('The whole block; a Source takes { enabled, config }, pause takes { paused }.'),
         revision: z.number().int().nonnegative().describe('The block\'s revision; pause ignores it.'),
@@ -300,6 +321,16 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
         return saved
       },
     }),
+    ...(host.governance && host.outbox && host.engine.receive
+      ? secretaryCoreTools({
+          store: host.store,
+          engine: host.engine as Pick<Engine, 'receive' | 'decide' | 'note'>,
+          outbox: host.outbox,
+          governance: host.governance,
+          requestPass: () => { host.requestPass() },
+          quietly: fn => host.quietly(fn),
+        })
+      : []),
     ...(host.governance ? secretaryGovernanceTools(host.governance) : []),
   ]
 }

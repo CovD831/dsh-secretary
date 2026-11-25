@@ -1494,7 +1494,7 @@ it('fails a ticket at once on a worker error that is not passing, and relays it'
 it('removes the main Session noWait guard, enforces restrict({ allow: [] }) with only orchestrator_* tools visible, and leaves workers unblocked while active', async () => {
   expect(guards.get(runtime.masterId)).toBeUndefined()
   expect(restricts.get(runtime.masterId)).toEqual([{ allow: [] }])
-  expect([...tools.get(runtime.masterId)!.keys()].every(name => name.startsWith('orchestrator_'))).toBe(true)
+  expect([...tools.get(runtime.masterId)!.keys()].every(name => name.startsWith('orchestrator_') || name.startsWith('secretary_'))).toBe(true)
   // A worker works as it needs without a main-session guard.
   const { sessionId } = await acceptedTicket()
   expect(guards.get(sessionId)!()).toBeUndefined()

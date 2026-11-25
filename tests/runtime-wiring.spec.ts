@@ -79,7 +79,11 @@ describe('阶段三 Runtime 主干全链路治理接入', () => {
     try {
       await governance.recover()
       expect(governance.registry.list().map(g => [g.id, g.stage])).toEqual([
-        ['workspace.gc.safety', 'enforce'], ['ticket.adaptive-dispatch', 'enforce'], ['verify.changed-paths', 'shadow'], ['verify.rerun', 'shadow'],
+        ['workspace.gc.safety', 'enforce'],
+        ['ticket.dispatch.isolation-ceiling', 'enforce'],
+        ['ticket.adaptive-dispatch', 'enforce'],
+        ['verify.changed-paths', 'shadow'],
+        ['verify.rerun', 'shadow'],
       ])
       governance.registry.unregister('verify.changed-paths'); governance.registry.register(verifyChangedPathsGate, 'enforce')
 

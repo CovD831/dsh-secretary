@@ -17,7 +17,9 @@ import type { Sessions } from '../app/sessions.ts'
 import { WorktreeNameSchema } from '../app/assessment.ts'
 import { resultRelay } from '../app/notices.ts'
 import type { HealthEntry } from '../infra/health.ts'
-import { createWorkspaceRegistry, provisionWorktree } from '../workspaces/index.ts'
+import { createWorkspaceRegistry, provisionWorktree, type WorkspaceDef } from '../workspaces/index.ts'
+import type { Verdict } from '../judgement/types.ts'
+import type { SpineAppender } from '../spine/types.ts'
 import { cancelled, collectJob, killJobs, runningJobs, stopBackground, stopSubagents, until, untilQuiet } from './background.ts'
 import type { PreparedLaunchCapsule } from './capsule-hook.ts'
 
@@ -72,7 +74,9 @@ export interface ExecutorHost {
   readonly machine: Pick<Machine, 'stateDir'>
   readonly lifetime: AbortSignal
   /** Session manager for worker sessions and for relaying worker reports to the main Session. */
-  readonly sessions: Pick<Sessions, 'ensure' | 'prompt' | 'promptedId' | 'relay' | 'holds'>
+  readonly sessions: Pick<Sessions, 'ensure' | 'prompt' | 'promptedId' | 'relay' | 'holds'> & {
+    applyWorkerDispatch?: Sessions['applyWorkerDispatch']
+  }
   closing(): boolean
   /** Whether processing is paused, which holds launches and input deliveries. */
   paused(): boolean
@@ -85,6 +89,12 @@ export interface ExecutorHost {
   prepareCapsule?(input: { ticket: Ticket; assignment: Assignment; workspaceDir: string; triggerText?: string }): Promise<PreparedLaunchCapsule | undefined>
   /** Optional recorder invoked when launch-time capsule preparation throws unexpectedly. */
   onCapsuleError?(ticket: Ticket, assignment: Assignment, error: unknown): void
+  /** Optional M0 spine appender for recording `workspace.provisioned` lineage. */
+  readonly spineAppender?: SpineAppender
+  /** Optional pre-dispatch Mandate × Isolation ceiling check. */
+  evaluateDispatch?(ticket: Ticket, workspace?: WorkspaceDef): Promise<Verdict>
+  /** Optional escalation hook when a running assignment with recorded external side-effects crashes mid-flight. */
+  onUnknownSideEffect?(ticket: Ticket, assignment: Assignment): void
 }
 /** Looks up a ticket's origin trigger in Store. */
 export const sourceTrigger = (host: { store: Pick<Store, 'triggers'> }, ticket: Ticket): Trigger | undefined =>
@@ -103,7 +113,16 @@ export function mandateInstructions(mandate: Pick<Mandate, 'strength'>): string 
 export function ticketExecution(ticket: Ticket, outcome: Extract<AssessmentOutcome, { kind: 'accept' }>, settings: Settings,
   stateDir: string): Execution {
   const name = ticketWorktreeName(outcome.name ?? '', ticket.id)
-  const source = ticket.origin.triggerId
+  const configuredWorkspaces = settings.workspaces ?? []
+  const matchedWs = outcome.workspace
+    ? configuredWorkspaces.find(w => w.id === outcome.workspace)
+    : configuredWorkspaces.find(w => w.source && w.source === ticket.mandate.actor.source)
+      ?? (configuredWorkspaces.length === 1 ? configuredWorkspaces[0] : undefined)
+  const workspace = outcome.workspace ?? matchedWs?.id
+  const verifyCommands = outcome.verifyCommands ?? (matchedWs?.verifyCommands ? [...matchedWs.verifyCommands] : undefined)
+  const verifySection = verifyCommands?.length && !outcome.scope.includes('```verify')
+    ? `\n\`\`\`verify\n${verifyCommands.join('\n')}\n\`\`\``
+    : ''
   const note = outcome.note ? `\nRouting note (not the source request): ${outcome.note}` : ''
   const ruleIds = ticket.mandate.basis.rules
   const rules = settings.policy.rules.filter(rule => ruleIds?.includes(rule.id))
@@ -111,9 +130,16 @@ export function ticketExecution(ticket: Ticket, outcome: Extract<AssessmentOutco
   const precedence = rules ? `\nMatched rules; their procedure and communication instructions take precedence over the default acknowledgement and messaging policy for this ticket:${rules}` : ''
   // The origin trigger is delivered alongside the assignment, so `assignment` omits the trigger text.
   const assignment = ticket.mandate.strength === 'inferred' && ruleIds
-    ? `Proactively accepted under ${ruleIds.join(', ')}. Scope: ${outcome.scope}.${precedence}${note}`
-    : note.trim()
-  return { name, directory: join(executionRoot(settings, stateDir), name), assignment }
+    ? `Proactively accepted under ${ruleIds.join(', ')}. Scope: ${outcome.scope}.${precedence}${note}${verifySection}`
+    : `${note.trim()}${verifySection}`.trim()
+  return {
+    name,
+    directory: join(executionRoot(settings, stateDir), name),
+    assignment,
+    ...(workspace ? { workspace } : {}),
+    ...(outcome.dispatchKey ? { dispatchKey: outcome.dispatchKey } : {}),
+    ...(verifyCommands?.length ? { verifyCommands } : {}),
+  }
 }
 /** Character limits for inline assignment and trigger text in worker messages; longer text is read via its resource. */
 const ASSIGNMENT_CHARS = 1500, TRIGGER_CHARS = 600
@@ -265,7 +291,13 @@ export class DshExecutor implements Executor {
       // Remove an empty directory left by a failed prepare step so a later retry does not treat it as already prepared.
       await rmdir(directory).catch(() => { /* Absent, or holding what the command wrote, which the output explains. */ })
     }
-    if (workspace && !command) {
+    if (workspace) {
+      if (this.host.evaluateDispatch) {
+        const dispatchVerdict = await this.host.evaluateDispatch(ticket, workspace)
+        if (dispatchVerdict.kind === 'deny') {
+          throw new PrepareFailed(`Workspace isolation denied: ${dispatchVerdict.blockers.join('; ')}`)
+        }
+      }
       await provisionWorktree({
         ticketId: ticket.id,
         workspace,
@@ -273,10 +305,17 @@ export class DshExecutor implements Executor {
         targetDir: directory,
         signal,
         timeoutMs: PREPARE_TIMEOUT_MS,
+        ...(this.host.spineAppender ? { appender: this.host.spineAppender } : {}),
       }).catch(async (error: unknown) => {
         await cleanEmptyDir()
         throw new PrepareFailed(`The workspace worktree failed: ${error instanceof Error ? error.message : String(error)}`)
       })
+      if (command) {
+        await runAsWorker(this.host.context.subprocess, ['sh', '-c', command], directory, signal, env)
+          .catch((error: unknown) => {
+            throw new PrepareFailed(`The prepare command failed: ${error instanceof Error ? error.message : String(error)}`)
+          })
+      }
     } else if (command) await runAsWorker(this.host.context.subprocess, ['sh', '-c', command], dirname(directory), signal, env)
       .catch(async (error: unknown) => {
         await cleanEmptyDir()
@@ -495,6 +534,20 @@ export class DshExecutor implements Executor {
     }
     if (!current()) return
     if (prepared?.blocked?.length) throw new PrepareFailed(`Adaptive dispatch denied: ${prepared.blocked.join('; ')}`)
+    let effectiveTicket = this.host.store.tickets.get(ticket.id) ?? ticket
+    if (prepared?.dispatch && effectiveTicket.execution) {
+      effectiveTicket = {
+        ...effectiveTicket,
+        execution: {
+          ...effectiveTicket.execution,
+          executionMode: prepared.dispatch.executionMode,
+          thinkingTier: prepared.dispatch.thinkingTier,
+        },
+      }
+      this.host.store.tickets.save(effectiveTicket)
+    }
+    await this.host.sessions.applyWorkerDispatch?.(agent, effectiveTicket)
+    if (!current()) return
     const text = told ? JSON.stringify({ ticket_id: ticket.id, assignment: ticket.assignments.length, ...retried })
       : JSON.stringify({ ticket_id: ticket.id, title: ticket.title, ...(brief ? { assignment: brief } : {}),
         ...(read ? { assignment_chars: chars, assignment_read: read } : {}), ...(card ? { trigger: card } : {}),
@@ -569,7 +622,17 @@ export class DshExecutor implements Executor {
         // Input that was handed over but not yet taken.
         this.host.context.agents.get(workerSessionId(ticket.id) as SessionId)?.cancel({ kind: 'user' }, { keepInbox: true })
         this.stopWork(ticket.id, 'dsh-superagent restarted', true)
-        this.host.engine.assignmentInterrupted(ticket.id, running.id)
+        if (ticket.execution?.externalSideEffects?.length) {
+          const effectsList = ticket.execution.externalSideEffects.join(', ')
+          const summary = `宿主重启中断时检测到在途外部副作用（${effectsList}），状态 unknown，已暂停自动重跑等待人工确认。`
+          this.host.store.atomic(() => {
+            const updated = this.host.engine.report(ticket.id, { state: 'blocked', summary, question: summary })
+            this.relay(resultRelay(updated, 'blocked', summary))
+          })
+          this.host.onUnknownSideEffect?.(ticket, running)
+        } else {
+          this.host.engine.assignmentInterrupted(ticket.id, running.id)
+        }
       }
       else if (latest?.state === 'pending' && !waitsForPerson(ticket)) this.start(ticket, latest)
     }

@@ -12,14 +12,17 @@ import { PromptConflict, SKILL_NAME, SKILL_PREFIX, TEAM_SECTIONS, builtInBase, b
 import { policyVersion } from '../policy.ts'
 import { SettingsConflict, type Settings } from './settings.ts'
 import { SetupError, type SetupProblem } from '../setup.ts'
-import { UserError, type EngineForPeople, type Ticket } from '../core/index.ts'
+import { UserError, type Engine, type EngineForPeople, type Ticket } from '../core/index.ts'
 import type { Deployment, Machine } from '../deployment.ts'
 import type { DshExecutor } from '../executor/dsh.ts'
 import type { Health } from '../sources/host.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
+import type { GovernanceRuntime } from './governance.ts'
 import type { Sessions } from './sessions.ts'
 import type { Store } from './store.ts'
 import type { TextCache } from './cache.ts'
+import { KV } from '../kv.ts'
+import { ingestBossDesktopMessage } from './tools/secretary-core.ts'
 import type { LinkTarget, ViewHost } from './views/records.ts'
 import type { Variable } from './execution-environment.ts'
 import { policyHistory } from './settings-history.ts'
@@ -38,8 +41,9 @@ export interface HttpHost {
   readonly prompts: Pick<Prompts, 'current' | 'version' | 'history' | 'preview' | 'save' | 'defaultChanged'>
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery'>
   readonly settings: Pick<Settings, 'view' | 'save' | 'pause' | 'sync' | 'refreshLabels'>
-  readonly engine: EngineForPeople
+  readonly engine: EngineForPeople & Partial<Pick<Engine, 'receive' | 'decide' | 'note'>>
   readonly executor: Pick<DshExecutor, 'activeCount'>
+  readonly governance?: GovernanceRuntime
   readonly health: Record<string, Health>
   readonly machine: Machine
   readonly masterId: string
@@ -148,8 +152,20 @@ const count = z.coerce.number().int().nonnegative()
 const PromptsQuery = z.object({ revision: count.optional(), offset: count.default(0) })
 const SpineQuery = z.object({ sinceSeq: count.optional(), limit: limit(50, 200), ticketId: z.string().max(128).optional(), type: z.string().max(128).optional() })
 const SourceBlock = z.templateLiteral(['source:', z.string().regex(/^[a-z][a-z0-9-]*$/)])
-const SettingsBlockSchema = z.union([z.enum(['policy', 'eval', 'executor']), SourceBlock])
+const SettingsBlockSchema = z.union([z.enum(['policy', 'eval', 'executor', 'workspaces']), SourceBlock])
 const SaveRequest = z.object({ value: z.unknown(), revision: z.number().int().nonnegative() })
+const DecideRulingBody = z.object({
+  decision: z.enum(['approve', 'reject', 'revise']),
+  optionId: z.string().trim().min(1).max(40).optional(),
+  attribution: z.enum(['missing_rule', 'wrong_rule', 'unmeasurable', 'rule_conflict']).optional(),
+  note: z.string().max(1000).optional(),
+  captureAsRule: z.boolean().optional(),
+  actorId: z.string().trim().min(1).max(80).default('boss'),
+}).strict()
+const BossMessageBody = z.object({
+  text: z.string().trim().min(1).max(4000),
+  threadId: z.string().trim().min(1).max(120).optional(),
+}).strict()
 
 function routes(runtime: HttpHost): Routes {
   const { store } = runtime
@@ -217,6 +233,32 @@ function routes(runtime: HttpHost): Routes {
     'GET projection/notebook': () => readNotebookProjection(runtime.machine.stateDir),
     'GET projection/spine': ({ query }) => readSpineProjection(store, runtime.machine.stateDir, SpineQuery.parse(query)),
     'GET projection/deposits': () => readDepositsProjection(store, runtime.machine.stateDir),
+    'GET rulings': ({ query }) => {
+      const gov = runtime.governance
+      if (!gov) return { active: null, pendingCount: 0, items: [] }
+      const status = query.status === 'pending' || query.status === 'decided' || query.status === 'cancelled' ? query.status : undefined
+      return { ...gov.rulings.active(), items: gov.rulings.list(status) }
+    },
+    'POST rulings/:id/decide': async ({ params, body }) => {
+      if (!runtime.governance) throw new RouteError(404, 'Governance runtime not mounted')
+      const parsed = DecideRulingBody.parse(await body())
+      const { actorId, ...rest } = parsed
+      return runtime.governance.rulings.decide({ id: params.id, actorId, ...rest })
+    },
+    'GET secretary/feed': () => {
+      const items = store.get(KV.governance.feed) ?? []
+      const active = runtime.governance ? runtime.governance.rulings.active() : { active: null, pendingCount: 0 }
+      return { items, activeRuling: active.active, pendingCount: active.pendingCount }
+    },
+    'POST secretary/messages': async ({ body }) => {
+      if (!runtime.governance || !runtime.engine.receive) throw new RouteError(400, 'Secretary bus is not ready')
+      const parsed = BossMessageBody.parse(await body())
+      const { trigger, received } = ingestBossDesktopMessage(
+        { store, engine: runtime.engine as Pick<Engine, 'receive' | 'decide' | 'note'>, governance: runtime.governance, requestPass: () => runtime.requestPass() },
+        parsed.text, parsed.threadId,
+      )
+      return { triggerId: trigger.id, received }
+    },
   }
 }
 function decoded(segment: string): string {

@@ -21,3 +21,35 @@ export async function initializeRoleModel(ctx: Context, agent: Agent, model: Rol
   else agent.session.append('model/selection', selected)
   await ctx.sessionPersistence.flush()
 }
+
+/** Switch a worker session's `reasoningEffort` per adaptive dispatch tier; falls back cleanly when the provider model lacks reasoning support. */
+export async function applyThinkingTier(
+  ctx: Context,
+  agent: Agent,
+  configured: RoleModel | null,
+  tier?: 'low' | 'medium' | 'high',
+): Promise<ModelSelection | undefined> {
+  if (!tier) return undefined
+  let base: { provider: string; model: string } | undefined = configured
+    ? { provider: configured.provider, model: configured.model }
+    : undefined
+  const curModel = agent.model?.current?.()
+  if (!base && curModel) {
+    base = { provider: curModel.provider, model: curModel.model }
+  }
+  if (!base && ctx.sessionController?.modelCatalog) {
+    const catalog = await ctx.sessionController.modelCatalog().catch(() => undefined)
+    if (catalog?.default) base = { provider: catalog.default.provider, model: catalog.default.model }
+  }
+  if (!base) return undefined
+  let selected: ModelSelection
+  try {
+    selected = await resolveRoleModel(ctx, { ...base, reasoningEffort: tier })
+  } catch {
+    selected = await resolveRoleModel(ctx, base)
+  }
+  if (agent.model) agent.model.select(selected)
+  else agent.session.append('model/selection', selected)
+  await ctx.sessionPersistence.flush()
+  return selected
+}

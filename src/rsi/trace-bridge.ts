@@ -93,7 +93,7 @@ export function domainEventToSpineDraft(
     ...(meta.correlationId !== undefined ? { correlationId: meta.correlationId } : {}),
     source: meta.source ?? { kind: 'system', ref: 'core.engine' },
     evidence,
-    taint: meta.taint ?? (event.type === 'trigger.received' ? 'derived' : 'trusted'),
+    taint: meta.taint ?? (event.type === 'trigger.received' ? 'untrusted' : 'trusted'),
     payload: { ...projected.payload, ...(meta.sessionId ? { sessionId: meta.sessionId } : {}), ...(meta.commit ? { commit: meta.commit } : {}) },
   }
 }
