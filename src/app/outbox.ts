@@ -2,6 +2,7 @@
 import type { OutboundMessage, Outbox as OutboxPort, ReplyStatus } from '../core/index.ts'
 import type { Commands } from '../infra/commands.ts'
 import { checkedImText } from '../infra/text.ts'
+import type { Verdict } from '../judgement/types.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import { FAILURES_BEFORE_ERROR, Later, type Effects } from './effects.ts'
 import type { Store } from './store.ts'
@@ -12,6 +13,7 @@ export interface OutboxHost {
   readonly sources: Pick<SourceRegistry, 'instance' | 'channelAllowed' | 'send'>
   readonly commands: Commands
   paused(): boolean
+  evaluateOutbound?: (message: OutboundMessage) => Promise<Verdict>
 }
 
 /**
@@ -44,6 +46,15 @@ export class Outbox implements OutboxPort {
     // Hold later messages for the same ticket and conversation behind an earlier pending message until it exceeds the failure threshold.
     if (store.receipts.behind(id, FAILURES_BEFORE_ERROR)) throw new Later('An earlier message of this ticket to this conversation waits')
     if (!sources.channelAllowed(receipt.channel)) { store.receipts.settle(receipt, 'channelIgnored'); return }
+    if (this.host.evaluateOutbound) {
+      const outbound: OutboundMessage = { id: receipt.id, channel: receipt.channel, text: receipt.text, kind: receipt.kind,
+        ...(receipt.ticketId !== undefined ? { ticketId: receipt.ticketId } : {}) }
+      const verdict = await this.host.evaluateOutbound(outbound)
+      if (verdict.kind === 'deny') { store.receipts.settle(receipt, 'gateDenied'); return }
+      if (verdict.kind === 'unmeasured') {
+        throw new Error(`Outbound gate unmeasured (${verdict.cause}): ${verdict.detail}`)
+      }
+    }
     // A permanently unreachable target (such as a recalled message or deleted Issue) settles as `channelGone` so its receipt prevents retries.
     const result = await sources.send(receipt, commands)
     if (result === 'waiting') throw new Later('The Source is not installed')
