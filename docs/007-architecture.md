@@ -315,13 +315,15 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/core/index.ts` | The core's exports |
 | `src/spine/types.ts`, `redact.ts`, `store.ts`, `git-sink.ts`, `flusher.ts`, `index.ts` | M0 event spine contracts, secret redaction, SQLite staging table, A1 Git shard sink, and two-phase flusher with torn-tail crash recovery |
 | `src/judgement/types.ts`, `paths.ts`, `requires.ts`, `registry.ts`, `yaml.ts`, `deposit.ts`, `index.ts` | Extensible `scope.stage` judgement registry, three-state (`allow`/`deny`/`unmeasured`) verdicts, path-token requirements, safe YAML frontmatter parser, and Deposit promotion ladder |
-| `src/judgement/gates/adaptive-dispatch.ts`, `changed-paths.ts`, `verify-rerun.ts`, `index.ts` | Seeded gates for adaptive dispatch (`ticket.dispatch`), changed-paths shell-blind guard (`verify.changed-paths`), and verify-rerun red-green evidence (`verify.rerun`) |
+| `src/judgement/gates/adaptive-dispatch.ts`, `changed-paths.ts`, `verify-rerun.ts`, `issue-intake.ts`, `repro-status.ts`, `reply-desk.ts`, `index.ts` | Seeded gates for adaptive dispatch (`ticket.dispatch`), changed-paths shell-blind guard (`verify.changed-paths`), verify-rerun red-green evidence (`verify.rerun`), and OSS deposit gates (`issue-intake`, `repro-status`, `reply-desk`) |
 | `src/workspaces/types.ts`, `registry.ts`, `worktree.ts`, `gc.ts`, `index.ts` | Ticket workspace isolation contracts, registry, git worktree provisioning, and three-state GC planner |
 | `src/context/types.ts`, `capsule.ts`, `slicer.ts`, `index.ts` | Context-slicing budgeter, pitfall matcher, and priority trimmer for prompts, deposits, and spine slices |
 | `src/rsi/types.ts`, `trace-bridge.ts`, `evaluator.ts`, `replay.ts`, `sweep.ts`, `index.ts` | Offline RSI replay harness, DSH trace bridge, gate/corpus evaluator, Pareto parameter sweep, and family-isolated deposit evaluation |
 | `src/memory/types.ts`, `codec.ts`, `writer.ts`, `recall.ts`, `index.ts` | M1–M6 memory types, Markdown+YAML codec, anti-resurrection tombstone & secret-guarded writer, and tag-overlap recall engine |
 | `src/authoring/types.ts`, `feishu-cards.ts`, `funnel.ts`, `package-writer.ts`, `index.ts` | Feishu interactive card builders, safe deposit authoring funnel (tombstone/counter-rule/param guards), and `DEPOSIT.md` package writer |
 | `src/app/governance.ts` | Runtime governance wiring for spine, judgement gates, workspace provisioning, context capsules, and memory recall/writer |
+| `src/app/governance-ruling.ts` | Governance ruling handler for Feishu interactive card callbacks: operator authorization, idempotency, M1–M6 memory persistence, and M0 spine recording |
+| `src/projection/types.ts`, `avatar-state.ts`, `reader.ts`, `index.ts` | Read-only projection engine deriving pixel-frontend state and avatar bark from M0 spine and Store without mutating sources of truth |
 | `src/app/runtime.ts` | The Runtime, the composition root, with its start and stop |
 | `src/app/setup.ts` | Setup, and `setupChanged`, whether a save changes a field setup reads |
 | `src/app/passes.ts` | Passes, the pass scheduler |
@@ -350,6 +352,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/resources.ts` | `RESOURCES` and `readResource`: what `orchestrator_read` reads, for each role |
 | `src/app/tools/tool.ts` | The `Tool` type, `readTool`, the `orchestrator_read` of both roles, and `AcknowledgementSchema` |
 | `src/app/tools/main.ts` | The main Session's tools |
+| `src/app/tools/secretary-governance.ts` | Zero-execution secretary governance tools for memory recall, status queries, and Feishu deposit/ruling card dispatch |
 | `src/app/tools/executor.ts` | An Executor Session's tools |
 | `src/app/http.ts` | The `/orchestrator/api` routes: the same-origin check, request limits and one status per kind of failure |
 | `src/app/api.ts` | `Api`, every route with its parameters, query, body and response, and the filters of the lists; it imports only types, so the panel bundles it |
@@ -422,6 +425,9 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/memory.spec.ts` | M1–M6 memory codec, anti-resurrection tombstone & secret-shape writer guards, and recall filtering |
 | `tests/authoring.spec.ts` | Feishu authoring cards, safe funnel (tombstone/counter-rule/param guards), and `DEPOSIT.md` package writer |
 | `tests/runtime-wiring.spec.ts` | Governance wiring, capsule pre-launch hook, and outbox `evaluateOutbound` gate enforcement |
+| `tests/secretary-closure.spec.ts` | Zero-execution secretary governance tools, tool restriction enforcement, and Feishu ruling callback idempotency/authorization |
+| `tests/projection-api.spec.ts` | Read-only projection reader, avatar-state silence invariant without valid `SourceRef`, and `/orchestrator/api/projection` HTTP endpoint |
+| `tests/oss-deposits.spec.ts` | Seeded OSS deposit gates (`issue-intake`, `repro-status`, `reply-desk`) and `deposits/` package evaluation |
 | `tests/stage.spec.ts` | The Ticket stages, row by row |
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations and assessment outcomes |
 | `tests/registry.spec.ts` | `SourceRegistry`: instances, validation, Policy parts, Channels and Thread context |
