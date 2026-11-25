@@ -77,7 +77,7 @@ export interface AttentionRefItem {
 }
 
 export type SpineEventRef = Pick<SpineEnvelope, 'seq' | 'id' | 'at' | 'stream' | 'type' | 'payload'>
-export type M2MonikerRef = Pick<MemoryEntry, 'id' | 'statement' | 'sourceRef' | 'm2Kind' | 'validTo' | 'invalidatedBy'>
+export type M2MonikerRef = Pick<MemoryEntry, 'id' | 'statement' | 'sourceRef' | 'm2Kind' | 'validTo' | 'invalidatedBy'> & { readonly validFrom?: string }
 
 export interface AvatarStateInput {
   readonly workingCount: number

@@ -14,7 +14,7 @@ import type {
   NotebookItem, NotebookProjectionView, SpineProjectionView, SpineQuery, StateProjectionView, TicketStateRef,
 } from './types.ts'
 
-const SHARD_FILE_RE = /\.jsonl$/
+const SHARD_FILE_RE = /^\d{4}-\d{2}-\d{2}\.jsonl$/
 const isRecord = (val: unknown): val is Record<string, unknown> => Boolean(val && typeof val === 'object' && !Array.isArray(val))
 
 function isDueAttention(item: AttentionItem, nowMs: number): { due: boolean; cooldownExpired: boolean } {
@@ -98,14 +98,20 @@ function readSqliteBuffer(store: Pick<Store, 'db'> | undefined): SpineEnvelope[]
   try {
     if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'event_spine'").get()) return []
     const rows = db.prepare('SELECT value FROM event_spine ORDER BY seq ASC').all() as { value?: unknown }[]
-    return rows.flatMap(r => (typeof r.value === 'string' ? (parseEnvelope(r.value) ? [parseEnvelope(r.value)!] : []) : []))
+    const out: SpineEnvelope[] = []
+    for (const r of rows) {
+      if (typeof r.value !== 'string') continue
+      const ev = parseEnvelope(r.value)
+      if (ev) out.push(ev)
+    }
+    return out
   } catch { return [] }
 }
 
 async function readMergedSpine(store: Pick<Store, 'db'> | undefined, stateDir: string): Promise<SpineEnvelope[]> {
   const bySeq = new Map<number, SpineEnvelope>()
-  for (const ev of await readDiskShards(stateDir)) bySeq.set(ev.seq, ev)
-  for (const ev of readSqliteBuffer(store)) if (!bySeq.has(ev.seq)) bySeq.set(ev.seq, ev)
+  for (const ev of readSqliteBuffer(store)) bySeq.set(ev.seq, ev)
+  for (const ev of await readDiskShards(stateDir)) if (!bySeq.has(ev.seq)) bySeq.set(ev.seq, ev)
   return [...bySeq.values()].sort((a, b) => a.seq - b.seq)
 }
 

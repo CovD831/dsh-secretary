@@ -85,15 +85,16 @@ describe('avatar-state deterministic compiler (B1-B3, B5)', () => {
     expect(compileAvatarState({ ...base, now: new Date('2026-11-26T06:00:00.000Z') }).posture).toBe('patrol_idle')
   })
 
-  it('keeps bark strictly null when no valid SourceRef (seq > 0) is hit', () => {
+  it('keeps bark strictly null when no valid SourceRef (seq > 0) is hit or paused_standby has no deviation', () => {
     expect(compileAvatarState(base).bark).toBeNull()
     expect(compileAvatarState({ ...base, failedTickets: [{ id: 't1' }], recentSpineEvents: [{ seq: 0, id: 'bad', at: '', stream: 'ticket:t1', type: 'ticket.created', payload: {} }] }).bark).toBeNull()
     expect(compileAvatarState({ ...base, now: new Date('2026-11-26T00:30:00.000Z') }).bark).toBeNull()
-    const withMoniker = compileAvatarState({
-      ...base,
-      m2Monikers: [{ id: 'm2-1', statement: '老办法走 TDD', sourceRef: { seq: 5, id: 'ev-5' }, m2Kind: 'internal_moniker' }],
-    })
-    expect(withMoniker.bark).toMatchObject({ code: 'BARK_M2_MONIKER', sourceRef: { seq: 5, id: 'ev-5' } })
+    const validMoniker = { id: 'm2-1', statement: '老办法走 TDD', sourceRef: { seq: 5, id: 'ev-5' }, m2Kind: 'internal_moniker' as const }
+    const ev = { seq: 6, id: 'ev-6', at: '2026-11-26T01:00:00Z', stream: 'ticket:t1' as const, type: 'ticket.created' as const, payload: {} }
+    expect(compileAvatarState({ ...base, paused: true, m2Monikers: [validMoniker], recentSpineEvents: [ev] }).bark).toBeNull()
+    expect(compileAvatarState({ ...base, workingCount: 0, m2Monikers: [validMoniker] }).bark).toBeNull()
+    expect(compileAvatarState({ ...base, workingCount: 1, m2Monikers: [{ ...validMoniker, statement: '   ' }, { ...validMoniker, id: 'm2-future', validFrom: '2026-11-27T00:00:00.000Z' }] }).bark).toBeNull()
+    expect(compileAvatarState({ ...base, workingCount: 1, m2Monikers: [validMoniker] }).bark).toMatchObject({ code: 'BARK_M2_MONIKER', sourceRef: { seq: 5, id: 'ev-5' } })
   })
 
   it('compiles schedule solely from real counts and refs', () => {

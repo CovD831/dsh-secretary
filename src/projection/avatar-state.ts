@@ -129,6 +129,7 @@ const DEVIATION_BARK: Readonly<Record<AvatarDeviation['kind'], BarkCode>> = {
 
 function lookupBark(input: AvatarStateInput, posture: AvatarPosture, deviation: AvatarDeviation | null): AvatarBark | null {
   if (deviation) return isValidSourceRef(deviation.sourceRef) ? makeBark(DEVIATION_BARK[deviation.kind], deviation.sourceRef, { deviation }) : null
+  if (posture === 'paused_standby') return null
   const latestEv = latestValidEvent(input.recentSpineEvents ?? [])
   const latestRef = latestEv ? { seq: latestEv.seq, id: latestEv.id } : undefined
   if (posture === 'morning_briefing') {
@@ -137,9 +138,16 @@ function lookupBark(input: AvatarStateInput, posture: AvatarPosture, deviation: 
   }
   if (posture === 'night_watch') return latestRef ? makeBark('BARK_NIGHT_WATCH', latestRef, {}) : null
   const nowMs = input.now.getTime()
-  const moniker = (input.m2Monikers ?? []).find(m =>
-    m.m2Kind === 'internal_moniker' && !m.invalidatedBy && (!m.validTo || Date.parse(m.validTo) > nowMs) && isValidSourceRef(m.sourceRef))
-  if (moniker) return makeBark('BARK_M2_MONIKER', moniker.sourceRef, { moniker: moniker.statement })
+  const moniker = posture === 'working_desk'
+    ? (input.m2Monikers ?? []).find(m =>
+      m.m2Kind === 'internal_moniker'
+      && m.statement.trim().length > 0
+      && !m.invalidatedBy
+      && (!m.validFrom || Date.parse(m.validFrom) <= nowMs)
+      && (!m.validTo || Date.parse(m.validTo) > nowMs)
+      && isValidSourceRef(m.sourceRef))
+    : undefined
+  if (moniker) return makeBark('BARK_M2_MONIKER', moniker.sourceRef, { moniker: moniker.statement.trim() })
   if (posture === 'working_desk' && latestRef) return makeBark('BARK_WORKING_TICKET', latestRef, { workingCount: input.workingCount })
   return latestEv && latestRef ? makeBark('BARK_RECENT_SPINE_EVENT', latestRef, { eventType: latestEv.type }) : null
 }
