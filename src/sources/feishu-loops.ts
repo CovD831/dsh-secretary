@@ -7,7 +7,7 @@ import { threadKey, type Thread, type Trigger } from '../core/index.ts'
 import { feishuChatLink } from './feishu-channel.ts'
 import type { FeishuBot } from '../deployment.ts'
 import { validItems, type Tally } from '../infra/commands.ts'
-import { readFeishu, type FeishuRef } from './feishu-read.ts'
+import { hydrateLiveEvent, readFeishu, type FeishuRef } from './feishu-read.ts'
 import { feishuRef, feishuTime, feishuTrigger, HistoricalMessageSchema, historyEvent, HistoryPageSchema, SOURCE, topicEvent }
   from './feishu-trigger.ts'
 import { health, type SourceContext } from './host.ts'
@@ -100,7 +100,9 @@ async function consume(ctx: SourceContext, signal: AbortSignal): Promise<void> {
         if (enabled(ctx)) await ctx.handleCardAction?.(parsed)
         return
       }
-      const trigger = feishuTrigger(parsed, bot(ctx).botId, bot(ctx).appId)
+      const hydrated = await hydrateLiveEvent(ctx.commands.withSignal(signal), parsed)
+      if (!hydrated) return
+      const trigger = feishuTrigger(hydrated, bot(ctx).botId, bot(ctx).appId)
       // Events already read when the Source is disabled are dropped; the consumer stops shortly after.
       if (!trigger || !enabled(ctx)) return
       const chats = ctx.state.get(KV.feishu.chats) ?? {}

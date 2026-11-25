@@ -145,6 +145,7 @@ export class Sessions {
     if ('error' in result) throw result.error
     // Restored sessions after host restart may miss agent/created; re-decorate before delivery if unbound.
     await this.heal(result.agent)
+    if (sessionId === this.host.masterId) await initializeRoleModel(this.ctx, result.agent, this.host.store.settings().eval.model)
     await this.agentDelivery.send(result.agent, key(requestId), text, mode, this.host.lifetime, authorize, accepted)
   }
   /** Re-decorates a Session that lost its binding (restored across a restart, or a decoration that failed). Fails closed on error. */

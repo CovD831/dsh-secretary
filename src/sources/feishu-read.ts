@@ -26,6 +26,22 @@ export type FeishuMessage = z.infer<typeof messageSchema>
 const threadSchema = z.object({ messages: z.array(z.unknown()), has_more: z.boolean(), page_token: z.string().optional(),
   thread_id: z.string() })
 
+/** Hydrates flat `lark-cli >= 1.0.59` `event consume` payloads that omit `sender_type`, `mentions`, and thread links. */
+export async function hydrateLiveEvent(commands: Commands, raw: unknown): Promise<unknown> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw
+  const event = raw as Record<string, unknown>
+  if (event['sender_type'] !== undefined || typeof event['message_id'] !== 'string') return raw
+  const id = messageId.parse(event['message_id'])
+  const result = z.object({ messages: z.array(messageSchema) }).parse(await commands.lark(['im', '+messages-mget', '--message-ids', id, '--no-reactions']))
+  const message = result.messages.find(item => item.message_id === id)
+  if (!message || message.deleted) return undefined
+  if (typeof event['chat_id'] === 'string' && message.chat_id !== event['chat_id']) throw new Error('Feishu live event chat mismatch')
+  return { ...event, sender_id: message.sender.open_bot_id ?? (message.sender.id || event['sender_id']),
+    sender_type: message.sender.sender_type === 'user' ? 'user' : 'bot', content: message.content ?? event['content'],
+    mentions: message.mentions ?? [], ...(message.root_id ? { root_id: message.root_id } : {}),
+    ...(message.parent_id ? { parent_id: message.parent_id } : {}), ...(message.thread_id ? { thread_id: message.thread_id } : {}),
+    ...(message.message_app_link ? { message_app_link: message.message_app_link } : {}) }
+}
 /** Reads the CLI-provided AppLink for the source message alone, without retaining expanded thread content. */
 export async function readFeishuLink(commands: Commands, ref: FeishuRef): Promise<string> {
   const id = messageId.parse(ref.messageId)
