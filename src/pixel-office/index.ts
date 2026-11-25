@@ -5,6 +5,7 @@ export {
   FROZEN_PALETTE,
   MATERIAL_CATEGORIES,
   MATERIAL_HEXES,
+  NON_STATUS_HEXES,
   PALETTE_GROUPS,
   PixelGrid,
   quantizeOklab,
@@ -63,15 +64,13 @@ export {
 } from './layout.ts'
 
 export {
-  buildCharacterSprite,
-  buildFloorTileSprite,
-  buildFurnitureSprite,
+  AI_MONITOR_ANCHORS,
   buildGateInterceptOverlay,
   buildMonitorScreen,
   buildSecretaryPortrait,
-  floorScreenOrigin,
-  renderWallsToGrid,
-  type FurnitureAsset,
+  decodePngRgba,
+  GATE_TARGET_POS,
+  loadAiRoomGrid,
 } from './sprites.ts'
 
 export {

@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   auditPaletteBuffer,
-  buildCharacterSprite,
   buildMonitorScreen,
   buildSecretaryPortrait,
   checkAlphaSpec,
@@ -13,9 +12,11 @@ import {
   encodePngRgba,
   FROZEN_PALETTE,
   generateRoomLayout,
+  loadAiRoomGrid,
   MATERIAL_HEXES,
   NATIVE_H,
   NATIVE_W,
+  NON_STATUS_HEXES,
   PORTRAIT_H,
   PORTRAIT_W,
   quantizeRgbaBuffer,
@@ -43,25 +44,23 @@ function makeTmpDir(): string {
 }
 
 function rgbSaturationPct(r: number, g: number, b: number): number {
-  const max = Math.max(r, g, b) / 255
-  const min = Math.min(r, g, b) / 255
+  const max = Math.max(r, g, b) / 255, min = Math.min(r, g, b) / 255
   if (max === min) return 0
-  const l = (max + min) / 2
-  const d = max - min
+  const l = (max + min) / 2, d = max - min
   return (d / (l > 0.5 ? 2 - max - min : max + min)) * 100
 }
 
 function readPngDims(buf: Uint8Array): { sigOk: boolean; width: number; height: number } {
   const sig = [137, 80, 78, 71, 13, 10, 26, 10]
-  const sigOk = sig.every((v, i) => buf[i] === v)
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
-  return { sigOk, width: view.getUint32(16, false), height: view.getUint32(20, false) }
+  return { sigOk: sig.every((v, i) => buf[i] === v), width: view.getUint32(16, false), height: view.getUint32(20, false) }
 }
 
 describe('F1 Pixel Office Proof & Deterministic Room Engine', () => {
   it('enforces the exact 46-color frozen palette, saturation separation, and binary alpha spec', () => {
     expect(FROZEN_PALETTE).toHaveLength(46)
     expect(MATERIAL_HEXES).toHaveLength(31)
+    expect(NON_STATUS_HEXES).toHaveLength(38)
     expect(STATUS_HEXES).toHaveLength(8)
 
     for (const hex of MATERIAL_HEXES) {
@@ -82,6 +81,29 @@ describe('F1 Pixel Office Proof & Deterministic Room Engine', () => {
     const snapped = quantizeRgbaBuffer(noisy)
     expect(checkAlphaSpec(snapped, 3, 1).ok).toBe(true)
     expect(auditPaletteBuffer(snapped, 3, 1).outOfPaletteCount).toBe(0)
+  })
+
+  it('keeps static AI room & 4 portrait assets strictly inside non-status 38 colors with 0/255 alpha', () => {
+    const room = loadAiRoomGrid()
+    expect(room.width).toBe(NATIVE_W)
+    expect(room.height).toBe(NATIVE_H)
+    const roomAudit = auditPaletteBuffer(room.toRgba(), room.width, room.height)
+    expect(roomAudit.outOfPaletteCount).toBe(0)
+    expect(roomAudit.semiTransparentCount).toBe(0)
+    expect(roomAudit.categoryCounts.status).toBe(0)
+    expect(roomAudit.uniqueCount).toBeLessThanOrEqual(38)
+
+    for (const mood of ['neutral', 'working', 'happy', 'concerned'] as const) {
+      const p = buildSecretaryPortrait(mood)
+      const rgba = p.toRgba()
+      const alpha = checkAlphaSpec(rgba, p.width, p.height)
+      expect(alpha.ok).toBe(true)
+      expect(alpha.cornersTransparent).toBe(true)
+      const pAudit = auditPaletteBuffer(rgba, p.width, p.height)
+      expect(pAudit.outOfPaletteCount).toBe(0)
+      expect(pAudit.categoryCounts.status).toBe(0)
+      expect(pAudit.uniqueCount).toBeLessThanOrEqual(38)
+    }
   })
 
   it('renders native 720x450 proof & gate frames within 46 colors, 0/255 alpha, and zero status bleed', () => {
@@ -106,12 +128,9 @@ describe('F1 Pixel Office Proof & Deterministic Room Engine', () => {
     for (let y = 0; y < NATIVE_H; y++) {
       for (let x = 0; x < NATIVE_W; x++) {
         const i00 = ((y * 2) * DISPLAY_W + x * 2) * 4
-        const i10 = i00 + 4
-        const i01 = i00 + DISPLAY_W * 4
-        const i11 = i01 + 4
+        const i10 = i00 + 4, i01 = i00 + DISPLAY_W * 4, i11 = i01 + 4
         for (let c = 0; c < 4; c++) {
-          if (upscaled[i10 + c] !== upscaled[i00 + c]
-            || upscaled[i01 + c] !== upscaled[i00 + c]
+          if (upscaled[i10 + c] !== upscaled[i00 + c] || upscaled[i01 + c] !== upscaled[i00 + c]
             || upscaled[i11 + c] !== upscaled[i00 + c]) mismatch++
         }
       }
@@ -154,8 +173,7 @@ describe('F1 Pixel Office Proof & Deterministic Room Engine', () => {
       expect(audit.outOfPaletteCount).toBe(0)
       expect(audit.histogram[STATUS_COLOR_MAP[st].bright]).toBeGreaterThan(0)
       expect(audit.histogram[STATUS_COLOR_MAP[st].dark]).toBeGreaterThan(0)
-      const brightHex = STATUS_COLOR_MAP[st].bright
-      const targetRgb = FROZEN_PALETTE.find((e) => e.hex === brightHex)!.rgb
+      const targetRgb = FROZEN_PALETTE.find((e) => e.hex === STATUS_COLOR_MAP[st].bright)!.rgb
       const bits: string[] = []
       for (let i = 0; i < rgba.length; i += 4) {
         bits.push(rgba[i] === targetRgb[0] && rgba[i + 1] === targetRgb[1] && rgba[i + 2] === targetRgb[2] ? '1' : '0')
@@ -173,17 +191,12 @@ describe('F1 Pixel Office Proof & Deterministic Room Engine', () => {
     for (const hex of STATUS_HEXES) expect(filmAudit.histogram[hex]).toBeGreaterThan(0)
   })
 
-  it('renders 4 distinct 192x240 secretary portraits and 3 distinct character roles', () => {
+  it('renders 4 distinct 192x240 AI-quantized secretary portraits across eye/brow/mouth regions', () => {
     const moods: readonly SecretaryMood[] = ['neutral', 'working', 'happy', 'concerned']
     const bufs = moods.map((m) => {
       const p = buildSecretaryPortrait(m)
       expect(p.width).toBe(PORTRAIT_W)
       expect(p.height).toBe(PORTRAIT_H)
-      const rgba = p.toRgba()
-      const alpha = checkAlphaSpec(rgba, p.width, p.height)
-      expect(alpha.ok).toBe(true)
-      expect(alpha.cornersTransparent).toBe(true)
-      expect(auditPaletteBuffer(rgba, p.width, p.height, p.statusMask).outOfPaletteCount).toBe(0)
       return p.pixels
     })
 
@@ -194,28 +207,19 @@ describe('F1 Pixel Office Proof & Deterministic Room Engine', () => {
         expect(diff).toBeGreaterThan(80)
       }
     }
-
-    for (const role of ['secretary', 'lead', 'worker'] as const) {
-      const ch = buildCharacterSprite(role, 'sit', 'SE')
-      expect(ch.width).toBe(32)
-      expect(ch.height).toBe(48)
-      expect(auditPaletteBuffer(ch.toRgba(), ch.width, ch.height).outOfPaletteCount).toBe(0)
-    }
   })
 
   it('switches screen to #E8544E, portrait to concerned, and writes valid PNG + HTML proof bundle on gate intercept', () => {
     const normal = renderNativeFrame()
     const gate = renderNativeFrame({ gateIntercept: { targetActorId: 'worker-1', frame: 2 } })
     expect(gate.mood).toBe('concerned')
-    expect(gate.screenStates['ws-1']).toBe('needsDecision')
+    expect(gate.screenStates['ws-2']).toBe('needsDecision')
     expect(Buffer.compare(Buffer.from(normal.rgba), Buffer.from(gate.rgba))).not.toBe(0)
 
     const outDir = makeTmpDir()
     const bundle = writeF1ProofBundle(outDir)
-    const proofDims = readPngDims(readFileSync(bundle.proofPng))
-    const gateDims = readPngDims(readFileSync(bundle.gatePng))
-    expect(proofDims).toEqual({ sigOk: true, width: DISPLAY_W, height: DISPLAY_H })
-    expect(gateDims).toEqual({ sigOk: true, width: DISPLAY_W, height: DISPLAY_H })
+    expect(readPngDims(readFileSync(bundle.proofPng))).toEqual({ sigOk: true, width: DISPLAY_W, height: DISPLAY_H })
+    expect(readPngDims(readFileSync(bundle.gatePng))).toEqual({ sigOk: true, width: DISPLAY_W, height: DISPLAY_H })
 
     const html = readFileSync(bundle.htmlPath, 'utf8')
     expect(html).toContain('image-rendering:pixelated')

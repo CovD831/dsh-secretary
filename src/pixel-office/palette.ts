@@ -79,6 +79,7 @@ export const FROZEN_PALETTE: readonly PaletteEntry[] = (Object.entries(PALETTE_G
   }))
 
 export const MATERIAL_HEXES: readonly string[] = MATERIAL_CATEGORIES.flatMap((cat) => PALETTE_GROUPS[cat])
+export const NON_STATUS_HEXES: readonly string[] = FROZEN_PALETTE.filter((e) => e.category !== 'status').map((e) => e.hex)
 export const STATUS_HEXES: readonly string[] = PALETTE_GROUPS.status
 const STATUS_HEX_SET = new Set(STATUS_HEXES)
 const PALETTE_BY_HEX = new Map<string, number>()
@@ -276,5 +277,17 @@ export class PixelGrid {
       rgba[o] = entry.rgb[0]; rgba[o + 1] = entry.rgb[1]; rgba[o + 2] = entry.rgb[2]; rgba[o + 3] = 255
     }
     return rgba
+  }
+
+  static fromRgba(rgba: Uint8Array, width: number, height: number): PixelGrid {
+    const grid = new PixelGrid(width, height)
+    for (let p = 0; p < width * height; p++) {
+      const i = p * 4
+      if ((rgba[i + 3] ?? 0) < 128) continue
+      const entry = quantizeOklab(rgba[i] ?? 0, rgba[i + 1] ?? 0, rgba[i + 2] ?? 0)
+      grid.pixels[p] = colorIndex(entry.hex)
+      grid.statusMask[p] = entry.category === 'status' ? 1 : 0
+    }
+    return grid
   }
 }

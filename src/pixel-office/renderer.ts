@@ -6,12 +6,12 @@ import {
   type PaletteAuditResult, type SecretaryMood, type StatusKind,
 } from './palette.ts'
 import {
-  DIALOG_H, DIALOG_Y, DISPLAY_H, DISPLAY_W, generateRoomLayout, isoToScreen,
-  NATIVE_H, NATIVE_W, PORTRAIT_X, PORTRAIT_Y, tileFootScreen, type RoomPlan,
+  DIALOG_H, DIALOG_Y, DISPLAY_H, DISPLAY_W, generateRoomLayout,
+  NATIVE_H, NATIVE_W, PORTRAIT_X, PORTRAIT_Y, type RoomPlan,
 } from './layout.ts'
 import {
-  buildCharacterSprite, buildFloorTileSprite, buildFurnitureSprite,
-  buildGateInterceptOverlay, buildMonitorScreen, buildSecretaryPortrait, renderWallsToGrid,
+  AI_MONITOR_ANCHORS, buildGateInterceptOverlay, buildMonitorScreen,
+  buildSecretaryPortrait, GATE_TARGET_POS, loadAiRoomGrid,
 } from './sprites.ts'
 
 export interface DialogOptionSpec { label: string; consequence: string }
@@ -144,64 +144,22 @@ export function renderNativeFrame(opts: RenderOptions = {}): NativeFrameResult {
   const gate = opts.gateIntercept
   const mood: SecretaryMood = gate ? 'concerned' : (opts.mood ?? 'neutral')
   const screenStates: Record<string, StatusKind | 'off'> = {
-    executive: 'working', 'ws-1': gate ? 'needsDecision' : 'done', 'ws-2': 'stuck', 'ws-3': 'off', ...opts.screenStates,
+    executive: 'working', 'ws-1': 'off', 'ws-2': gate ? 'needsDecision' : 'stuck', 'ws-3': 'done', ...opts.screenStates,
   }
-  if (gate) screenStates['ws-1'] = 'needsDecision'
+  if (gate) screenStates['ws-2'] = 'needsDecision'
 
   const g = new PixelGrid(NATIVE_W, NATIVE_H)
   g.fillRect(0, 0, NATIVE_W, NATIVE_H, C('#201A18'))
+  g.blit(loadAiRoomGrid(), 0, 0)
 
-  const floorSprites = [0, 1, 2, 3].map((v) => buildFloorTileSprite(v as 0 | 1 | 2 | 3))
-  for (let v = 0; v < plan.rows; v++) {
-    for (let u = 0; u < plan.cols; u++) {
-      const pt = isoToScreen(u, v)
-      g.blit(floorSprites[(u * 3 + v * 5) % 3]!, pt.x - 16, pt.y)
-    }
+  for (const sc of AI_MONITOR_ANCHORS) {
+    g.blit(buildMonitorScreen(screenStates[sc.suiteId] ?? 'off'), sc.x, sc.y)
   }
-  const r = plan.rugRect
-  const rt = isoToScreen(r.u, r.v), rr = isoToScreen(r.u + r.w, r.v)
-  const rb = isoToScreen(r.u + r.w, r.v + r.h), rl = isoToScreen(r.u, r.v + r.h)
-  g.fillPoly([[rt.x, rt.y], [rr.x, rr.y], [rb.x, rb.y], [rl.x, rl.y]], C('#6B3A32'))
-  g.fillPoly([[rt.x, rt.y + 3], [rr.x - 6, rr.y], [rb.x, rb.y - 3], [rl.x + 6, rl.y]], C('#C9A46A'))
-  g.fillPoly([[rt.x, rt.y + 5], [rr.x - 10, rr.y], [rb.x, rb.y - 5], [rl.x + 10, rl.y]], C('#7A3A3A'))
-  renderWallsToGrid(g, plan.cols, plan.rows, plan.wallMounts)
-
-  const drawList: Array<{ id: string; footY: number; draw: () => void }> = []
-  const screenAnchors: Array<{ suiteId: string; x: number; y: number }> = []
-
-  for (const item of [...plan.suites, ...plan.shared]) {
-    const asset = buildFurnitureSprite(item.furnitureKind, item.facing)
-    const footCell = tileFootScreen(item.anchor.u + item.size[0] - 1, item.anchor.v + item.size[1] - 1)
-    const dx = Math.round(footCell.x - asset.anchorX), dy = Math.round(footCell.y - asset.anchorY)
-    drawList.push({ id: item.id, footY: footCell.y, draw: () => g.blit(asset.grid, dx, dy, item.mirrorX) })
-    for (const sc of asset.screens) {
-      const sx = item.mirrorX ? dx + (asset.grid.width - sc.dx - 20) : dx + sc.dx
-      screenAnchors.push({ suiteId: item.id, x: sx, y: dy + sc.dy })
-    }
-  }
-
-  const actorCoords = new Map<string, { x: number; y: number }>()
-  for (const actor of plan.actors) {
-    const sprite = buildCharacterSprite(actor.role, actor.pose, actor.facing)
-    const foot = tileFootScreen(actor.u, actor.v)
-    actorCoords.set(actor.id, { x: foot.x, y: foot.y })
-    drawList.push({
-      id: `actor:${actor.id}`, footY: foot.y - 2,
-      draw: () => g.blit(sprite, Math.round(foot.x - 16), Math.round(foot.y - 44)),
-    })
-  }
-  drawList.sort((a, b) => (a.footY !== b.footY ? a.footY - b.footY : a.id.localeCompare(b.id)))
-  for (const d of drawList) d.draw()
-
-  for (const sc of screenAnchors) g.blit(buildMonitorScreen(screenStates[sc.suiteId] ?? 'off'), sc.x, sc.y)
 
   if (gate) {
-    const target = actorCoords.get(gate.targetActorId ?? 'worker-1') ?? actorCoords.values().next().value
-    if (target) {
-      const ov = buildGateInterceptOverlay(gate.frame ?? 0)
-      g.blit(ov.scanline, target.x - 18, target.y - 6)
-      g.blit(ov.box, target.x - 10, target.y - 54)
-    }
+    const ov = buildGateInterceptOverlay(gate.frame ?? 0)
+    g.blit(ov.scanline, GATE_TARGET_POS.scanX, GATE_TARGET_POS.scanY)
+    g.blit(ov.box, GATE_TARGET_POS.boxX, GATE_TARGET_POS.boxY)
   }
 
   drawDialogPixelFrame(g, gate ? 'needsDecision' : 'working', (opts.dialog ?? DEFAULT_DIALOG).pendingCount)
