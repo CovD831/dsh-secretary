@@ -1,4 +1,4 @@
-/** 阶段四 Track 1 端到端闭环验证：零执行双锁、秘书治理工具与飞书裁决回调入脊/记忆/草稿闭环。 */
+/** 阶段四 Track 1 端到端闭环验证：零执行双锁、B1 防越权、草稿脱敏、重入幂等与飞书回调闭环。 */
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -47,13 +47,13 @@ const makeRerunDraft = (overrides: Partial<DepositDraft> = {}): DepositDraft => 
 })
 
 describe('阶段四 Track 1：零执行秘书治理闭环与飞书裁决回调闭环', () => {
-  it('保持秘书零执行双锁完好，共用单锁，并打通记忆提议/防伪溯源/召回丢弃入脊/M6账本/沉淀试穿', async () => {
+  it('保持零执行双锁、封堵 B1 提示注入伪造老板权威，并打通 recall/propose/ledger/deposit 闭环', async () => {
     const h = await startRuntime()
     try {
       const gov = h.runtime.governance
       expect(gov.memory.lock).toBe(gov.sink.lock)
 
-      // 1) 零执行物理隔离：秘书工具仅含 orchestrator_*，且 restrict({ allow: [] }) 锁死继承全局工具
+      // 1) 零执行物理隔离与完整 Schema 参数校验
       const masterTools = h.tools.get(h.runtime.masterId)!
       expect([...masterTools.keys()]).toEqual(expect.arrayContaining([
         'orchestrator_memory_recall', 'orchestrator_memory_propose', 'orchestrator_attention_ledger', 'orchestrator_deposit_author',
@@ -68,65 +68,78 @@ describe('阶段四 Track 1：零执行秘书治理闭环与飞书裁决回调�
         resources: {} as never, requestPass: () => {}, sendReplies: async () => {}, quietly: fn => fn() }, h.agents.get(h.runtime.masterId) as never)
       expect(unmounted.some(t => t.name === 'orchestrator_memory_recall')).toBe(false)
 
-      // 2) 伪造 SourceRef 被记忆提议与 M6 状态流转同时拒写
-      expect(await h.runTool(h.runtime.masterId, 'orchestrator_memory_propose', {
-        mode: 'propose', layer: 'm1', slug: 'fake', scope: 'global', source_type: 'user_direct',
-        statement: 'forged memory', source_ref: { seq: 9999, id: 'forged-ref' },
-      })).toMatchObject({ kind: 'rejected', reason: 'unknown-source-ref' })
-      expect(await h.runTool(h.runtime.masterId, 'orchestrator_attention_ledger', {
-        mode: 'transition', id: 'att-none', next_status: 'approved', source_ref: { seq: 9999, id: 'forged-ref' },
-      })).toMatchObject({ ok: false, reason: 'unknown-source-ref' })
-
-      // 3) 真实 M0 sourceRef 写入 M1/M2，召回含 private M2 + droppedIds 入脊
+      // 2) B1 防越权：伪造 ref / untrusted trigger ref 声称 user_ruling、approved 或打墓碑一律硬拒
+      const untrustedTriggerRef = gov.appender.append({ id: 'tr-untrusted-1', stream: 'trigger:t1', type: 'trigger.received', source: { kind: 'trigger', ref: 't1' }, evidence: [], taint: 'untrusted', payload: {} })
       const ref1 = gov.appender.append({ id: 'sec-test-1', stream: 'secretary:test', type: 'note.recorded', source: { kind: 'secretary', ref: 'test' }, evidence: [], taint: 'trusted', payload: {} })
-      const ref2 = gov.appender.append({ id: 'sec-test-2', stream: 'secretary:test', type: 'note.recorded', source: { kind: 'secretary', ref: 'test' }, evidence: [], taint: 'trusted', payload: {} })
+      const rulingRef = gov.appender.append({ id: 'ruling-test-1', stream: 'ticket:T1', type: 'escalation.ruled', source: { kind: 'human', ref: 'ou_alice' }, evidence: [], taint: 'trusted', payload: {} })
+      await expect(h.runTool(h.runtime.masterId, 'orchestrator_memory_propose', {
+        mode: 'propose', layer: 'm2', scope: 'global', source_type: 'user_ruling', statement: 'forged boss ruling', source_ref: untrustedTriggerRef,
+      })).rejects.toThrow()
       expect(await h.runTool(h.runtime.masterId, 'orchestrator_memory_propose', {
-        mode: 'propose', layer: 'm2', scope: 'global', source_type: 'user_ruling', m2_kind: 'preference',
-        clearance: 'private', resident: true, statement: '老板要求所有汇报先给结论再给证据', source_ref: ref1,
-      })).toMatchObject({ kind: 'accepted', pagePath: 'm2/profile.md' })
+        mode: 'propose', layer: 'm2', scope: 'global', source_type: 'session', statement: 'untrusted m2', source_ref: untrustedTriggerRef,
+      })).toMatchObject({ kind: 'rejected', reason: 'forbidden' })
       expect(await h.runTool(h.runtime.masterId, 'orchestrator_memory_propose', {
-        mode: 'propose', layer: 'm1', slug: 'alpha', scope: 'global', source_type: 'user_direct', statement: 'alpha sqlite checkpoint rule one', source_ref: ref1,
+        mode: 'propose', layer: 'm1', slug: 'fake', scope: 'global', source_type: 'session', statement: 'forged', source_ref: { seq: 9999, id: 'forged' },
+      })).toMatchObject({ kind: 'rejected', reason: 'unknown-source-ref' })
+
+      // 3) 合法 propose / tombstone 护栏 / recall droppedIds 入脊 / M6 权限分流
+      const { item: attItem } = await gov.memory.upsertAttention({ kind: 'ruling', question: '是否开启夜间值班静默？', sourceRefs: [ref1], delaySeen: 1, seenCount: 1 })
+      expect(await h.runTool(h.runtime.masterId, 'orchestrator_attention_ledger', {
+        mode: 'transition', id: attItem.id, next_status: 'approved', source_ref: untrustedTriggerRef,
+      })).toMatchObject({ ok: false, reason: 'ruling-source-required' })
+      expect(await h.runTool(h.runtime.masterId, 'orchestrator_attention_ledger', {
+        mode: 'transition', id: attItem.id, next_status: 'asked', source_ref: ref1,
+      })).toMatchObject({ ok: true, item: { id: attItem.id, status: 'asked' } })
+      expect(await h.runTool(h.runtime.masterId, 'orchestrator_attention_ledger', {
+        mode: 'transition', id: attItem.id, next_status: 'approved', source_ref: rulingRef,
+      })).toMatchObject({ ok: true, item: { id: attItem.id, status: 'approved' } })
+      expect(await h.runTool(h.runtime.masterId, 'orchestrator_attention_ledger', {
+        mode: 'transition', id: attItem.id, next_status: 'asked', source_ref: ref1,
+      })).toMatchObject({ ok: false, reason: 'already-resolved' })
+
+      const bossM2 = await gov.memory.propose({ layer: 'm2', scope: 'global', sourceType: 'user_ruling', m2Kind: 'preference', clearance: 'private', resident: true, statement: '老板要求先给结论再给证据', sourceRef: rulingRef, author: 'user' })
+      if (bossM2.kind !== 'accepted') throw new Error('expected accepted')
+      expect(await h.runTool(h.runtime.masterId, 'orchestrator_memory_propose', {
+        mode: 'tombstone', layer: 'm2', entry_id: bossM2.entry.id, reason: 'try drop boss rule', source_ref: ref1,
+      })).toMatchObject({ kind: 'rejected', reason: 'forbidden' })
+      expect(await h.runTool(h.runtime.masterId, 'orchestrator_memory_propose', {
+        mode: 'propose', layer: 'm1', slug: 'alpha', scope: 'global', source_type: 'session', statement: 'alpha sqlite checkpoint rule one', source_ref: ref1,
       })).toMatchObject({ kind: 'accepted' })
       expect(await h.runTool(h.runtime.masterId, 'orchestrator_memory_propose', {
-        mode: 'propose', layer: 'm1', slug: 'beta', scope: 'global', source_type: 'user_direct', statement: 'beta sqlite checkpoint rule two', source_ref: ref2,
+        mode: 'propose', layer: 'm1', slug: 'beta', scope: 'global', source_type: 'session', statement: 'beta sqlite checkpoint rule two', source_ref: ref1,
       })).toMatchObject({ kind: 'accepted' })
 
-      const { item: attItem } = await gov.memory.upsertAttention({ kind: 'ruling', question: '是否开启夜间值班静默？', sourceRefs: [ref1], delaySeen: 1, seenCount: 1 })
       const recall = await h.runTool(h.runtime.masterId, 'orchestrator_memory_recall', {
         query: 'sqlite checkpoint rule', budgets: { retrievedMaxChars: 42 },
-      }) as { text: string; droppedIds: string[]; attention: { id: string }[] }
-      expect(recall.text).toContain('老板要求所有汇报先给结论再给证据')
-      expect(recall.attention.map(i => i.id)).toContain(attItem.id)
+      }) as { text: string; droppedIds: string[] }
+      expect(recall.text).toContain('老板要求先给结论再给证据')
       expect(recall.droppedIds.length).toBeGreaterThanOrEqual(1)
 
-      // 4) M6 账本读取与凭真实 sourceRef 流转
-      const listed = await h.runTool(h.runtime.masterId, 'orchestrator_attention_ledger', { mode: 'list', status: 'pending' }) as { items: { id: string }[] }
-      expect(listed.items.some(i => i.id === attItem.id)).toBe(true)
-      expect(await h.runTool(h.runtime.masterId, 'orchestrator_attention_ledger', {
-        mode: 'transition', id: attItem.id, next_status: 'asked', source_ref: ref2,
-      })).toMatchObject({ ok: true, item: { id: attItem.id, status: 'asked' } })
-
-      // 5) 沉淀作者工具：机器门纠偏、离线回放与影子试穿安装
-      const badValidate = await h.runTool(h.runtime.masterId, 'orchestrator_deposit_author', {
-        mode: 'validate', draft: makeRerunDraft({ id: 'verify.counter', kind: 'counter-rule', enforce: true, actionClass: 'block' }),
+      // 4) 沉淀作者工具：缺省子字段安全归一化、空点位不洗白 allow、影子注册进 registry
+      const partialBad = await h.runTool(h.runtime.masterId, 'orchestrator_deposit_author', {
+        mode: 'validate', draft: { id: 'verify.counter', kind: 'counter-rule', enforce: true, actionClass: 'block' },
       }) as { ok: boolean; gate: string; repairedDraft: DepositDraft }
-      expect(badValidate).toMatchObject({ ok: false, gate: 'machine', repairedDraft: { enforce: false, stage: 'shadow' } })
+      expect(partialBad).toMatchObject({ ok: false, gate: 'machine', repairedDraft: { enforce: false, stage: 'shadow' } })
 
-      expect(await h.runTool(h.runtime.masterId, 'orchestrator_deposit_author', {
-        mode: 'replay', draft: makeRerunDraft(),
-      })).toMatchObject({ totalCases: 2, catches: 1, trueAllows: 1, falseBlocks: 0, misses: 0 })
+      const unregReplay = await h.runTool(h.runtime.masterId, 'orchestrator_deposit_author', {
+        mode: 'replay', draft: makeRerunDraft({ id: 'verify.unregistered-custom', point: 'verify.preflight' }),
+      }) as { totalCases: number; unmeasuredCount: number; trueAllows: number }
+      expect(unregReplay).toMatchObject({ totalCases: 2, unmeasuredCount: 2, trueAllows: 0 })
+
+      expect(await h.runTool(h.runtime.masterId, 'orchestrator_deposit_author', { mode: 'replay', draft: makeRerunDraft() }))
+        .toMatchObject({ totalCases: 2, catches: 1, trueAllows: 1, falseBlocks: 0, misses: 0 })
 
       const installed = await h.runTool(h.runtime.masterId, 'orchestrator_deposit_author', {
         mode: 'install_shadow', draft: makeRerunDraft({ id: 'verify.shadow-rerun' }),
-      }) as { installed: boolean; stage: string; enforce: boolean; packageDir: string }
-      expect(installed).toMatchObject({ installed: true, stage: 'shadow', enforce: false })
+      }) as { installed: boolean; stage: string; enforce: boolean; registeredInShadow: boolean; packageDir: string }
+      expect(installed).toMatchObject({ installed: true, stage: 'shadow', enforce: false, registeredInShadow: true })
+      expect(gov.registry.list().some(g => g.id === 'verify.shadow-rerun' && g.stage === 'shadow')).toBe(true)
       const loadedPkg = await loadDepositPackage(installed.packageDir)
       expect(loadedPkg.admission.admitted && loadedPkg.admission.manifest.stage).toBe('shadow')
 
       await gov.flush()
       expect(await h.runTool(h.runtime.masterId, 'orchestrator_memory_propose', {
-        mode: 'propose', layer: 'm1', slug: 'flushed-ok', scope: 'global', source_type: 'user_direct',
-        statement: 'flushed shard ref resolves without lock deadlock', source_ref: ref1,
+        mode: 'propose', layer: 'm1', slug: 'flushed-ok', scope: 'global', source_type: 'session', statement: 'flushed shard ref ok', source_ref: ref1,
       })).toMatchObject({ kind: 'accepted' })
       const events = readAllM0(gov.memoryDir)
       expect(events.some(e => e.type === 'memory.recall.dropped')).toBe(true)
@@ -135,12 +148,12 @@ describe('阶段四 Track 1：零执行秘书治理闭环与飞书裁决回调�
     } finally { await h.stop() }
   }, 15_000)
 
-  it('飞书裁决回调：未授权拒写、先入 M0 拿真实 seq 后自动落盘 M2/M3/草稿与 M6 状态，且跨刷盘/重启严格幂等', async () => {
+  it('飞书裁决回调：鉴权、同 escalationId 防重判、无工作区转 M6、草稿脱敏、崩溃可重入与重启幂等', async () => {
     const h = await startRuntime()
     const stateDir = realpathSync(h.directory)
-    const mkCb = (eventId: string, openId: string, escalationId: string, decision: string, attribution: string, note: string, captureAsRule = false) => ({
+    const mkCb = (eventId: string, openId: string, escalationId: string, decision: string, attribution: string, note: string, captureAsRule = false, ticketId = 'T-10') => ({
       header: { event_id: eventId, event_type: 'card.action.trigger' },
-      event: { operator: { open_id: openId }, action: { value: { escalationId, ticketId: 'T-10', decision, issuedAt: new Date().toISOString() }, form_value: { attribution, captureAsRule, note } } },
+      event: { operator: { open_id: openId }, action: { value: { escalationId, ticketId, decision, issuedAt: new Date().toISOString() }, form_value: { attribution, captureAsRule, note } } },
     })
     try {
       const gov = h.runtime.governance
@@ -154,57 +167,62 @@ describe('阶段四 Track 1：零执行秘书治理闭环与飞书裁决回调�
         execution: { name: 'fix-10', directory: stateDir, assignment: 'fix', workspace: 'main' },
       })
 
-      // 1) 群内未授权成员点卡立即被拒，零 M0/M2/草稿副作用
       expect(await h.runtime.handleFeishuCardCallback(mkCb('evt-unauth', 'ou_stranger', m6Item.id, 'approve', 'mandate_unclear', '恶意规则'))).toEqual({ ok: false, reason: 'unauthorized-operator' })
       await gov.flush()
       expect(readAllM0(gov.memoryDir).some(e => e.type === 'escalation.ruled')).toBe(false)
-      expect(await readMemoryPage(gov.memoryDir, 'm2/profile.md')).toBeUndefined()
 
-      // 2) 授权老板点 mandate_unclear -> 先 M0 拿真实 seq>0 -> 自动写 m2/profile.md + 更新 M6 item 为 approved
-      const rM2 = await h.runtime.handleFeishuCardCallback(mkCb('evt-m2-1', 'ou_alice', m6Item.id, 'approve', 'mandate_unclear', '禁止自动 push 到远端'))
+      const rM2 = await h.runtime.handleFeishuCardCallback(mkCb('evt-m2-1', 'ou_alice', m6Item.id, 'approve', 'mandate_unclear', '禁止自动 push'))
       expect(rM2.ok && !rM2.duplicate && rM2.sourceRef.seq > 0 && rM2.attentionUpdated).toBe(true)
       if (!rM2.ok) throw new Error('expected ok')
       expect(rM2.memoryWrite).toMatchObject({ kind: 'accepted', pagePath: 'm2/profile.md' })
-      const m2Page = await readMemoryPage(gov.memoryDir, 'm2/profile.md')
-      expect(m2Page?.layer === 'm2' && m2Page.entries.some(e => e.sourceRef.seq === rM2.sourceRef.seq && e.statement.includes('禁止自动 push'))).toBe(true)
+
+      // 同 escalationId 换 callbackId 再点 reject 不得覆写，返回 alreadyRuled 并记 escalation.revised
+      const secondClick = await h.runtime.handleFeishuCardCallback(mkCb('evt-m2-2', 'ou_alice', m6Item.id, 'reject', 'mandate_unclear', '反悔驳回'))
+      expect(secondClick).toMatchObject({ ok: true, duplicate: true, alreadyRuled: true, sourceRef: rM2.sourceRef })
       const ledgerAfter = await readMemoryPage(gov.memoryDir, 'm6/ledger.md')
       expect(ledgerAfter?.layer === 'm6' && ledgerAfter.items.find(i => i.id === m6Item.id)?.status).toBe('approved')
 
-      // 3) 缓冲期重推同 callbackId 严格幂等 + 锁态卡面
-      const dupBuffered = await h.runtime.handleFeishuCardCallback(mkCb('evt-m2-1', 'ou_alice', m6Item.id, 'approve', 'mandate_unclear', '禁止自动 push 到远端'))
-      expect(dupBuffered).toMatchObject({ ok: true, duplicate: true, sourceRef: rM2.sourceRef })
-      expect(JSON.stringify(dupBuffered.ok && dupBuffered.response.card)).toContain('已裁决')
-
-      // 4) exec_mistake -> m3/main/... 及 gate_gap -> deposit-drafts/<id>.json + draft_created 入脊
-      const rM3 = await h.runtime.handleFeishuCardCallback(mkCb('evt-m3-1', 'ou_alice', 'esc-m3', 'approve', 'exec_mistake', '改完先跑 typecheck 再交差'))
+      // exec_mistake 有工作区进 M3；无明确工作区禁猜，改写 M6 verification
+      const rM3 = await h.runtime.handleFeishuCardCallback(mkCb('evt-m3-1', 'ou_alice', 'esc-m3', 'approve', 'exec_mistake', '先跑 typecheck'))
       expect(rM3.ok && rM3.memoryWrite).toMatchObject({ kind: 'accepted', pagePath: expect.stringMatching(/^m3\/main\//) })
-      const rDraft = await h.runtime.handleFeishuCardCallback(mkCb('evt-gap-1', 'ou_alice', 'esc-gap-9', 'revise', 'gate_gap', '补充缺失断言门', true))
-      expect(rDraft.ok && rDraft.draftPath).toBe(join(stateDir, 'deposit-drafts', 'friction.esc-gap-9.json'))
-      expect(existsSync(rDraft.ok ? rDraft.draftPath! : '')).toBe(true)
+      const rNoWs = await h.runtime.handleFeishuCardCallback(mkCb('evt-m3-nows', 'ou_alice', 'esc-nows', 'approve', 'exec_mistake', '未知工作区教训', false, 'T-NOWS'))
+      expect(rNoWs.ok && rNoWs.attentionItem?.kind).toBe('verification')
+
+      // gate_gap 草稿含 '..' id 清洗与秘密脱敏
+      const rDraft = await h.runtime.handleFeishuCardCallback(mkCb('evt-gap-1', 'ou_alice', 'esc..gap', 'revise', 'gate_gap', 'leak sk-proj-abcdef1234567890xyz', true))
+      expect(rDraft.ok && rDraft.draftPath).toBe(join(stateDir, 'deposit-drafts', 'friction.esc-gap.json'))
+      expect(readFileSync(rDraft.ok ? rDraft.draftPath! : '', 'utf8')).not.toContain('sk-proj-abcdef1234567890xyz')
+
       await gov.flush()
-      const eventsAfterFlush = readAllM0(gov.memoryDir)
-      expect(eventsAfterFlush.filter(e => e.type === 'escalation.ruled')).toHaveLength(3)
-      expect(eventsAfterFlush.some(e => e.type === 'authoring.draft_created')).toBe(true)
+      const m0 = readAllM0(gov.memoryDir)
+      expect(m0.some(e => e.type === 'escalation.revised')).toBe(true)
+      expect(m0.some(e => e.type === 'authoring.draft_created')).toBe(true)
     } finally { await h.stop() }
 
-    // 5) 进程重启后重推已落盘分片的 callbackId 依然幂等不重放
-    const restartDir = mkdtempSync(join(tmpdir(), 'sec-cb-restart-'))
-    tempDirs.push(restartDir)
-    const payload = mkCb('evt-restart-1', 'ou_alice', 'esc-r', 'approve', 'mandate_unclear', '记住重启幂等')
-    const store1 = new Store(join(restartDir, 'orchestrator.sqlite'))
+    // 崩溃重入验证：有 escalation.ruled 但无 escalation.applied 时，重试同 callbackId 继续补齐下游落盘与 applied
+    const crashDir = mkdtempSync(join(tmpdir(), 'sec-cb-crash-'))
+    tempDirs.push(crashDir)
+    const store1 = new Store(join(crashDir, 'orchestrator.sqlite'))
     store1.saveSettings(SettingsSchema.parse({ policy: { sources: { feishu: { allowed: [{ id: 'ou_alice', name: 'Alice' }] } } } }))
-    const gov1 = new GovernanceRuntime({ store: store1, stateDir: restartDir })
+    const gov1 = new GovernanceRuntime({ store: store1, stateDir: crashDir })
     await gov1.recover()
-    const first = await gov1.handleFeishuCardCallback(payload, { isAllowedOperator: createFeishuOperatorAuthorizer(store1) })
+    gov1.appender.append({
+      id: 'feishu:card:evt-crash-1', stream: 'ticket:T-c', type: 'escalation.ruled',
+      source: { kind: 'human', ref: 'ou_alice' }, evidence: [], taint: 'derived',
+      payload: { callbackId: 'evt-crash-1', escalationId: 'esc-crash', ticketId: 'T-c', operatorOpenId: 'ou_alice', decision: 'approve', attribution: 'mandate_unclear', note: '崩溃恢复规则' },
+    })
     await gov1.shutdown(); store1.close()
 
-    const store2 = new Store(join(restartDir, 'orchestrator.sqlite'))
-    const gov2 = new GovernanceRuntime({ store: store2, stateDir: restartDir })
+    const store2 = new Store(join(crashDir, 'orchestrator.sqlite'))
+    const gov2 = new GovernanceRuntime({ store: store2, stateDir: crashDir })
     await gov2.recover()
-    const second = await gov2.handleFeishuCardCallback(payload, { isAllowedOperator: createFeishuOperatorAuthorizer(store2) })
-    expect(second).toMatchObject({ ok: true, duplicate: true, sourceRef: first.ok ? first.sourceRef : undefined })
+    const payload = mkCb('evt-crash-1', 'ou_alice', 'esc-crash', 'approve', 'mandate_unclear', '崩溃恢复规则', false, 'T-c')
+    const resumed = await gov2.handleFeishuCardCallback(payload, { isAllowedOperator: createFeishuOperatorAuthorizer(store2) })
+    expect(resumed.ok && !resumed.duplicate && resumed.memoryWrite?.kind === 'accepted').toBe(true)
+    const afterApplied = await gov2.handleFeishuCardCallback(payload, { isAllowedOperator: createFeishuOperatorAuthorizer(store2) })
+    expect(afterApplied).toMatchObject({ ok: true, duplicate: true, alreadyRuled: true })
     await gov2.shutdown(); store2.close()
-    expect(readAllM0(gov2.memoryDir).filter(e => e.type === 'escalation.ruled')).toHaveLength(1)
+    expect(readAllM0(gov2.memoryDir).filter(e => e.type === 'escalation.applied')).toHaveLength(1)
   }, 15_000)
 
   it('feishu event consumer 识别 card.action.trigger 转发给宿主回调入口且不破坏普通消息触发', async () => {

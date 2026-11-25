@@ -65,6 +65,7 @@ async function watch(ctx: SourceContext, signal: AbortSignal): Promise<void> {
   }
 }
 const isRecord = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === 'object' && !Array.isArray(v))
+// 预接 card.action.trigger 分发入口（暂保持 lark-cli 仅订阅 im.message.receive_v1）。
 function isCardActionEvent(raw: unknown): boolean {
   if (!isRecord(raw)) return false
   if (isRecord(raw['header']) && raw['header']['event_type'] === 'card.action.trigger') return true

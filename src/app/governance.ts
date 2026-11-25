@@ -11,7 +11,7 @@ import { MemoryWriter } from '../memory/index.ts'
 import { domainEventToSpineDraft } from '../rsi/trace-bridge.ts'
 import {
   GitRepoLock, createGitShardSink, createSpineAppender, createSpineFlusher, ensureSpineSchema,
-  type FlushReport, type GitShardSink, type SourceRef, type SpineAppender, type SpineDraft, type SpineFlusher,
+  type FlushReport, type GitShardSink, type SourceRef, type SpineAppender, type SpineDraft, type SpineEnvelope, type SpineFlusher,
 } from '../spine/index.ts'
 import {
   createWorkspaceRegistry, executeWorkspaceGc, findWorktreeObservation, isBranchMergedIntoBase,
@@ -101,7 +101,7 @@ export class GovernanceRuntime {
     this.sink = createGitShardSink({ dir: this.memoryDir, lock: this.memoryRepoLock })
     this.flusher = createSpineFlusher(this.store.db, this.sink, { onError: this.onError, now: this.now })
     this.appender = createSpineAppender(this.store, { kick: () => { if (!this.closed && !this.shuttingDown) this.flusher.kick() } })
-    this.memory = new MemoryWriter({ dir: this.memoryDir, lock: this.memoryRepoLock, resolveRef: ref => this.resolveSpineRef(ref, true), now: this.now })
+    this.memory = new MemoryWriter({ dir: this.memoryDir, lock: this.memoryRepoLock, resolveRef: ref => this.resolveSpineRefUnlocked(ref), now: this.now })
     this.workspaces = createWorkspaceRegistry(this.store)
 
     this.registry = createJudgementRegistry({ scopes: ['outbox'] })
@@ -144,36 +144,42 @@ export class GovernanceRuntime {
   }
 
   /** 核验 M0 `SourceRef` 是否真实存在于 SQLite 缓冲或已落盘 Git 分片（防回滚撞号与伪造引用）。 */
-  async resolveSpineRef(ref: SourceRef, holdsLock = false): Promise<boolean> {
-    if (!ref || !Number.isSafeInteger(ref.seq) || ref.seq <= 0 || typeof ref.id !== 'string' || !ref.id.trim()) return false
-    const check = async (): Promise<boolean> => {
-      if (!this.closed) {
-        const row = this.store.db.prepare('SELECT id FROM event_spine WHERE seq = ?').get(ref.seq) as { id?: string } | undefined
-        if (row) return row.id === ref.id
-      }
-      const m0Dir = join(this.memoryDir, 'm0')
-      let shards: string[]
-      try { shards = (await readdir(m0Dir)).filter(n => SHARD_NAME_RE.test(n)).sort() } catch { return false }
-      for (let i = shards.length - 1; i >= 0; i--) {
-        const raw = await readFile(join(m0Dir, shards[i]!), 'utf8').catch(() => '')
-        const cut = raw.endsWith('\n') ? raw : raw.slice(0, raw.lastIndexOf('\n') + 1)
-        const lines = cut.split('\n')
-        let maxInShard: number | undefined
-        for (let j = lines.length - 1; j >= 0; j--) {
-          const line = lines[j]?.trim()
-          if (!line) continue
-          try {
-            const parsed = JSON.parse(line) as { seq?: unknown; id?: unknown }
-            if (typeof parsed.seq !== 'number') continue
-            if (maxInShard === undefined) maxInShard = parsed.seq
-            if (parsed.seq === ref.seq) return parsed.id === ref.id
-          } catch { continue }
-        }
-        if (maxInShard !== undefined && maxInShard < ref.seq) return false
-      }
-      return false
+  resolveSpineRef(ref: SourceRef): Promise<boolean> { return this.readSpineEnvelope(ref).then(Boolean) }
+
+  /** 读取并校验 M0 `SourceRef` 对应的完整事件信封（含 `type` 与 `taint`）。 */
+  readSpineEnvelope(ref: SourceRef): Promise<SpineEnvelope<Record<string, unknown>> | undefined> {
+    if (!ref || !Number.isSafeInteger(ref.seq) || ref.seq <= 0 || typeof ref.id !== 'string' || !ref.id.trim()) return Promise.resolve(undefined)
+    return this.memoryRepoLock.run(() => this.readSpineEnvelopeUnlocked(ref))
+  }
+
+  private async resolveSpineRefUnlocked(ref: SourceRef): Promise<boolean> { return (await this.readSpineEnvelopeUnlocked(ref)) !== undefined }
+
+  private async readSpineEnvelopeUnlocked(ref: SourceRef): Promise<SpineEnvelope<Record<string, unknown>> | undefined> {
+    if (!ref || !Number.isSafeInteger(ref.seq) || ref.seq <= 0 || typeof ref.id !== 'string' || !ref.id.trim()) return undefined
+    if (!this.closed) {
+      const row = this.store.db.prepare('SELECT id, value FROM event_spine WHERE seq = ?').get(ref.seq) as { id?: string; value?: string } | undefined
+      if (row) return row.id === ref.id && row.value ? JSON.parse(row.value) as SpineEnvelope<Record<string, unknown>> : undefined
     }
-    return holdsLock ? check() : this.memoryRepoLock.run(check)
+    const m0Dir = join(this.memoryDir, 'm0')
+    let shards: string[]
+    try { shards = (await readdir(m0Dir)).filter(n => SHARD_NAME_RE.test(n)).sort() } catch { return undefined }
+    for (let i = shards.length - 1; i >= 0; i--) {
+      const raw = await readFile(join(m0Dir, shards[i]!), 'utf8').catch(() => '')
+      const lines = (raw.endsWith('\n') ? raw : raw.slice(0, raw.lastIndexOf('\n') + 1)).split('\n')
+      let maxInShard: number | undefined
+      for (let j = lines.length - 1; j >= 0; j--) {
+        const line = lines[j]?.trim()
+        if (!line) continue
+        try {
+          const parsed = JSON.parse(line) as SpineEnvelope<Record<string, unknown>>
+          if (typeof parsed.seq !== 'number') continue
+          maxInShard ??= parsed.seq
+          if (parsed.seq === ref.seq) return parsed.id === ref.id ? parsed : undefined
+        } catch { continue }
+      }
+      if (maxInShard !== undefined && maxInShard < ref.seq) return undefined
+    }
+    return undefined
   }
 
   /** 在调用方的 `store.atomic()` 事务内原子写入领域事件并预约提交后异步刷盘。 */

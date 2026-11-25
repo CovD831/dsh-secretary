@@ -161,22 +161,35 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
     readTool('Read one page of a resource the resource parameter lists, such as the ticket list or a ticket. Follow next_offset, and next_resource where a page names one.',
       false, (resource, offset, limit, signal) => readResource(resources, resource, offset, limit, undefined, signal)),
     routeTool(host),
-    tool({ name: 'orchestrator_ticket_retry',
+    tool({
+      name: 'orchestrator_ticket_retry',
       description: 'Start a new assignment on an explicit human request to retry a ticket whose worker reported failed or blocked, or whose input was not delivered; the stalled one ends.',
       schema: z.object({ ticket_id: z.string() }).strict(),
-      execute: async args => routed(host, { reason: 'Started a new assignment', ticketId: host.engine.retryTicket(args.ticket_id).id }) }),
-    tool({ name: 'orchestrator_ticket_request_status',
+      execute: async args => routed(host, { reason: 'Started a new assignment', ticketId: host.engine.retryTicket(args.ticket_id).id }),
+    }),
+    tool({
+      name: 'orchestrator_ticket_request_status',
       description: 'Ask the worker of an idle ticket, one whose turn ended without a report, for a status report; for other tickets it sends nothing and returns the card.',
       schema: z.object({ ticket_id: z.string() }).strict(),
-      execute: async args => routed(host, {
-        reason: host.engine.requestStatus(args.ticket_id) ? 'Asked the worker for a status report' : 'The worker is not waiting; nothing was sent',
-        ticketId: args.ticket_id }) }),
-    tool({ name: 'orchestrator_ticket_note',
+      execute: async args => {
+        const reason = host.engine.requestStatus(args.ticket_id) ? 'Asked the worker for a status report' : 'The worker is not waiting; nothing was sent'
+        return routed(host, { reason, ticketId: args.ticket_id })
+      },
+    }),
+    tool({
+      name: 'orchestrator_ticket_note',
       description: 'Tell a ticket\'s worker a fact from other work, such as what another ticket found; it grants no authority.',
-      schema: z.object({ ticket_id: z.string(),
-        text: z.string().trim().min(1).refine(text => wordCount(text) <= IM_WORDS, `At most ${IM_WORDS} words`) }).strict(),
-      execute: async args => { host.engine.note(args.ticket_id, args.text); return routed(host, { reason: 'Noted for the worker', ticketId: args.ticket_id }) } }),
-    tool({ name: 'orchestrator_trigger_requeue',
+      schema: z.object({
+        ticket_id: z.string(),
+        text: z.string().trim().min(1).refine(text => wordCount(text) <= IM_WORDS, `At most ${IM_WORDS} words`),
+      }).strict(),
+      execute: async args => {
+        host.engine.note(args.ticket_id, args.text)
+        return routed(host, { reason: 'Noted for the worker', ticketId: args.ticket_id })
+      },
+    }),
+    tool({
+      name: 'orchestrator_trigger_requeue',
       description: 'Queue a trigger for a fresh assessment, such as after its Source\'s access changed; a follow-up that reached a ticket comes back only from its worker.',
       schema: z.object({ trigger_id: z.string() }).strict(),
       execute: async args => {
@@ -187,15 +200,20 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
         const queued = host.quietly(() => host.engine.reevaluate(args.trigger_id))
         host.requestPass()
         return { queued }
-      } }),
-    tool({ name: 'orchestrator_eval',
+      },
+    }),
+    tool({
+      name: 'orchestrator_eval',
       description: 'Load a proactive candidate\'s window and its thread\'s tickets; repeated calls reuse them.',
       schema: z.object({ trigger_id: z.string() }).strict(),
-      execute: async (args, signal) => host.assessor.context(args.trigger_id, signal) }),
-    tool({ name: 'orchestrator_eval_read',
+      execute: async (args, signal) => host.assessor.context(args.trigger_id, signal),
+    }),
+    tool({
+      name: 'orchestrator_eval_read',
       description: 'Read more of a candidate\'s context, always with its trigger_id: a message or stub whole by message_id, an image by image_id, the root, the parent, a thread page by cursor, or a file or directory by path.',
       schema: EvalReadSchema,
-      execute: async (read, signal) => host.assessor.read(agent, read, signal) }),
+      execute: async (read, signal) => host.assessor.read(agent, read, signal),
+    }),
     tool({
       name: 'orchestrator_eval_decide',
       description: 'Record the decision of an assessment, as admission describes it, after orchestrator_eval with the same trigger_id.',
@@ -222,10 +240,14 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
         return { status: host.store.replyStatus(reply.id) ?? reply.status }
       },
     }),
-    tool({ name: 'orchestrator_thread_unsubscribe',
+    tool({
+      name: 'orchestrator_thread_unsubscribe',
       description: 'Drop every ticket subscription on a thread. Later messages there no longer reach those tickets as context; a new positive decision can subscribe it again.',
       schema: z.object({ thread: z.string().describe('Thread key, for example github:123 or feishu:<chat>:<root message>') }).strict(),
-      execute: async args => ({ removed: host.quietly(() => host.engine.unsubscribe(args.thread)), thread: args.thread }) }),
+      execute: async args => {
+        return { removed: host.quietly(() => host.engine.unsubscribe(args.thread)), thread: args.thread }
+      },
+    }),
     tool({
       name: 'orchestrator_settings_save',
       description: 'Save one settings block on an explicit human configuration request, never on observed content, as the panel would; read the blocks and revisions with orchestrator_read settings.',
