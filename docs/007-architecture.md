@@ -319,6 +319,9 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/workspaces/types.ts`, `registry.ts`, `worktree.ts`, `gc.ts`, `index.ts` | Ticket workspace isolation contracts, registry, git worktree provisioning, and three-state GC planner |
 | `src/context/types.ts`, `capsule.ts`, `slicer.ts`, `index.ts` | Context-slicing budgeter, pitfall matcher, and priority trimmer for prompts, deposits, and spine slices |
 | `src/rsi/types.ts`, `trace-bridge.ts`, `evaluator.ts`, `replay.ts`, `sweep.ts`, `index.ts` | Offline RSI replay harness, DSH trace bridge, gate/corpus evaluator, Pareto parameter sweep, and family-isolated deposit evaluation |
+| `src/memory/types.ts`, `codec.ts`, `writer.ts`, `recall.ts`, `index.ts` | M1–M6 memory types, Markdown+YAML codec, anti-resurrection tombstone & secret-guarded writer, and tag-overlap recall engine |
+| `src/authoring/types.ts`, `feishu-cards.ts`, `funnel.ts`, `package-writer.ts`, `index.ts` | Feishu interactive card builders, safe deposit authoring funnel (tombstone/counter-rule/param guards), and `DEPOSIT.md` package writer |
+| `src/app/governance.ts` | Runtime governance wiring for spine, judgement gates, workspace provisioning, context capsules, and memory recall/writer |
 | `src/app/runtime.ts` | The Runtime, the composition root, with its start and stop |
 | `src/app/setup.ts` | Setup, and `setupChanged`, whether a save changes a field setup reads |
 | `src/app/passes.ts` | Passes, the pass scheduler |
@@ -358,6 +361,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/views/settings.ts` | The settings page's view: each block with its revision, each Source's settings with its kind's form, and the execution environment |
 | `src/app/views/overview.ts` | The overview: Tickets that need a person, problems, the last day's flow and the Executor's load |
 | `src/executor/dsh.ts` | The DshExecutor, `WorkerSlots`, `ticketExecution`, `inputMessage` and `mandateInstructions` |
+| `src/executor/capsule-hook.ts` | Pre-launch context capsule builder for Executor assignments |
 | `src/executor/background.ts` | A worker's background work in DeepSeek Harness, the shell jobs its Session owns (`ctx.jobs`) and its subagents (`ctx.subagents`): `runningJobs`, `untilQuiet`, `killJobs`, `collectJobs`, `stopSubagents`, `stopBackground`, `until`, and `cancelled`, the workers whose turn a stop of their subagents cancelled |
 | `src/infra/commands.ts` | `Commands`, the CLI transport: `run`; `api` and `pages`, limited to the configured repository and validated; `lark` as the bot; `git`. `CliError` carries the code a command's output reports, such as a GitHub HTTP status, and a command that prints nothing fails with how it ended, never with its arguments; `validItems` skips and counts the malformed items of a list |
 | `src/infra/environment.ts` | The agent's process environment: command shims, the git configuration and credential helper, `runAsWorker`, and the checks of the environment and of a Ticket's directory |
@@ -415,6 +419,9 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/workspaces.spec.ts` | Workspace isolation tiers, git worktree provisioning, and three-state GC planner |
 | `tests/context-deposits.spec.ts` | Context slicer budgeting and seeded gates (`adaptive-dispatch`, `changed-paths`, `verify-rerun`) |
 | `tests/rsi-replay.spec.ts` | Offline RSI replay harness, trace bridge, Pareto sweep, and family-isolated corpus evaluation |
+| `tests/memory.spec.ts` | M1–M6 memory codec, anti-resurrection tombstone & secret-shape writer guards, and recall filtering |
+| `tests/authoring.spec.ts` | Feishu authoring cards, safe funnel (tombstone/counter-rule/param guards), and `DEPOSIT.md` package writer |
+| `tests/runtime-wiring.spec.ts` | Governance wiring, capsule pre-launch hook, and outbox `evaluateOutbound` gate enforcement |
 | `tests/stage.spec.ts` | The Ticket stages, row by row |
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations and assessment outcomes |
 | `tests/registry.spec.ts` | `SourceRegistry`: instances, validation, Policy parts, Channels and Thread context |
