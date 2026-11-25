@@ -38,6 +38,7 @@ import { HealthBoard } from '../infra/health.ts'
 import { Outbox } from './outbox.ts'
 import { Passes } from './passes.ts'
 import { GovernanceRuntime } from './governance.ts'
+import type { FeishuCardIngestResult } from './governance-ruling.ts'
 import { Setup } from './setup.ts'
 import { feishuSettings } from '../sources/feishu.ts'
 import { health, type Health, type SourceContext, type SourceHost } from '../sources/host.ts'
@@ -167,7 +168,7 @@ export class Runtime extends Service implements SourceHost {
       this.sourceDeps = { store, engine, outbox, commands, sources, get ready() { return runtime.ready },
         get deployment() { return setup.deployment }, configured: () => setup.configured(),
         get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem }, receive: trigger => passes.receive(trigger) }
-      this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources,
+      this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources, governance,
         get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
         requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
         quietly: run => { this.quiet++; try { return run() } finally { this.quiet-- } } }
@@ -181,7 +182,16 @@ export class Runtime extends Service implements SourceHost {
   get health(): Readonly<Record<string, Health>> { return this.board.all }
   /** Aborted when dsh-superagent stops or loses its state directory lock, cancelling running reads and subprocesses. */
   get lifetime(): AbortSignal { return this.stopped.signal }
-  context(kind: { kind: string; health: readonly string[] }): SourceContext { return sourceContextOf(this.sourceDeps, kind) }
+  context(kind: { kind: string; health: readonly string[] }): SourceContext {
+    const base = sourceContextOf(this.sourceDeps, kind)
+    return kind.kind === 'feishu' ? { ...base, handleCardAction: raw => this.handleFeishuCardCallback(raw) } : base
+  }
+  /** Authorizes and ingests a Feishu card ruling callback into M0, M2/M3/M6 memory, or deposit drafts. */
+  handleFeishuCardCallback(raw: unknown, options: { workspace?: string; point?: string; intent?: string } = {}): Promise<FeishuCardIngestResult> {
+    return this.governance.handleFeishuCardCallback(raw, {
+      isAllowedOperator: openId => Boolean(allowedSender(this.store.settings(), { source: 'feishu', id: openId })), ...options,
+    })
+  }
   /** Resolved deployment; throws while waiting for setup (`!configured()`). */
   get deployment(): Deployment { return this.setup.deployment }
   configured(): boolean { return this.setup.configured() }

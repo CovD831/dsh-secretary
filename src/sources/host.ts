@@ -63,5 +63,6 @@ export interface SourceContext {
   notify(message: OutboundMessage): void
   /** Reports the state of one of this kind's declared health entries; throws for undeclared entry names. */
   report(entry: string, health: Health): void
+  handleCardAction?(payload: unknown): Promise<unknown>
 }
 export const sourceContext = (host: SourceHost, kind: { kind: string; health: readonly string[] }): SourceContext => host.context(kind)

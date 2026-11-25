@@ -7,6 +7,7 @@ import type { Assignment, DomainEvent, OutboundMessage, Ticket } from '../core/i
 import { prepareLaunchCapsule, type PreparedLaunchCapsule } from '../executor/capsule-hook.ts'
 import { adaptiveDispatchGate, verifyChangedPathsGate, verifyRerunGate } from '../judgement/gates/index.ts'
 import { createJudgementRegistry, type ExtendedJudgementRegistry, type Verdict } from '../judgement/index.ts'
+import { MemoryWriter } from '../memory/index.ts'
 import { domainEventToSpineDraft } from '../rsi/trace-bridge.ts'
 import {
   GitRepoLock, createGitShardSink, createSpineAppender, createSpineFlusher, ensureSpineSchema,
@@ -17,6 +18,7 @@ import {
   observeWorktrees, planWorkspaceGc, registerWorkspaceGcGate,
   type GcSubject, type WorkspaceRegistry, type WorktreeObservation,
 } from '../workspaces/index.ts'
+import { ingestFeishuCardAction, type FeishuCardIngestResult, type IngestFeishuCardOptions } from './governance-ruling.ts'
 import type { Store } from './store.ts'
 
 export interface OutboxSendCtx {
@@ -68,11 +70,13 @@ function readSyncTailSeq(memoryDir: string): number {
 
 /** 串联 M0 事件脊、判局注册表、外发事前闸、发射切片与工作区自动 GC 的运行时治理中枢。 */
 export class GovernanceRuntime {
+  readonly stateDir: string
   readonly memoryDir: string
   readonly memoryRepoLock: GitRepoLock
   readonly sink: GitShardSink
   readonly flusher: SpineFlusher
   readonly appender: SpineAppender
+  readonly memory: MemoryWriter
   readonly registry: ExtendedJudgementRegistry
   readonly workspaces: WorkspaceRegistry
   private readonly store: Store
@@ -87,6 +91,7 @@ export class GovernanceRuntime {
 
   constructor(options: GovernanceOptions) {
     this.store = options.store
+    this.stateDir = options.stateDir
     this.onError = options.onError ?? (() => {})
     this.now = options.now ?? (() => new Date())
     this.memoryDir = join(options.stateDir, 'memory')
@@ -96,6 +101,7 @@ export class GovernanceRuntime {
     this.sink = createGitShardSink({ dir: this.memoryDir, lock: this.memoryRepoLock })
     this.flusher = createSpineFlusher(this.store.db, this.sink, { onError: this.onError, now: this.now })
     this.appender = createSpineAppender(this.store, { kick: () => { if (!this.closed && !this.shuttingDown) this.flusher.kick() } })
+    this.memory = new MemoryWriter({ dir: this.memoryDir, lock: this.memoryRepoLock, resolveRef: ref => this.resolveSpineRef(ref, true), now: this.now })
     this.workspaces = createWorkspaceRegistry(this.store)
 
     this.registry = createJudgementRegistry({ scopes: ['outbox'] })
@@ -103,6 +109,17 @@ export class GovernanceRuntime {
     this.registry.register(adaptiveDispatchGate, 'enforce')
     this.registry.register(verifyChangedPathsGate, 'shadow')
     this.registry.register(verifyRerunGate, 'shadow')
+  }
+
+  /** 返回当前治理时钟时间。 */
+  nowDate(): Date { return this.now() }
+
+  /** 处理飞书卡片裁决回调：先鉴权与 M0 原子入脊拿真 SourceRef，事务提交后再路由 M2/M3/草稿与 M6。 */
+  handleFeishuCardCallback(raw: unknown, options: IngestFeishuCardOptions): Promise<FeishuCardIngestResult> {
+    return ingestFeishuCardAction({
+      store: this.store, memoryDir: this.memoryDir, memoryRepoLock: this.memoryRepoLock,
+      appender: this.appender, memory: this.memory, now: this.now,
+    }, raw, options)
   }
 
   /** 启动恢复撕裂分片并对齐 `sqlite_sequence`。 */
@@ -127,14 +144,14 @@ export class GovernanceRuntime {
   }
 
   /** 核验 M0 `SourceRef` 是否真实存在于 SQLite 缓冲或已落盘 Git 分片（防回滚撞号与伪造引用）。 */
-  async resolveSpineRef(ref: SourceRef): Promise<boolean> {
+  async resolveSpineRef(ref: SourceRef, holdsLock = false): Promise<boolean> {
     if (!ref || !Number.isSafeInteger(ref.seq) || ref.seq <= 0 || typeof ref.id !== 'string' || !ref.id.trim()) return false
-    if (!this.closed) {
-      const row = this.store.db.prepare('SELECT id FROM event_spine WHERE seq = ?').get(ref.seq) as { id?: string } | undefined
-      if (row) return row.id === ref.id
-    }
-    const m0Dir = join(this.memoryDir, 'm0')
-    return this.memoryRepoLock.run(async () => {
+    const check = async (): Promise<boolean> => {
+      if (!this.closed) {
+        const row = this.store.db.prepare('SELECT id FROM event_spine WHERE seq = ?').get(ref.seq) as { id?: string } | undefined
+        if (row) return row.id === ref.id
+      }
+      const m0Dir = join(this.memoryDir, 'm0')
       let shards: string[]
       try { shards = (await readdir(m0Dir)).filter(n => SHARD_NAME_RE.test(n)).sort() } catch { return false }
       for (let i = shards.length - 1; i >= 0; i--) {
@@ -155,7 +172,8 @@ export class GovernanceRuntime {
         if (maxInShard !== undefined && maxInShard < ref.seq) return false
       }
       return false
-    })
+    }
+    return holdsLock ? check() : this.memoryRepoLock.run(check)
   }
 
   /** 在调用方的 `store.atomic()` 事务内原子写入领域事件并预约提交后异步刷盘。 */

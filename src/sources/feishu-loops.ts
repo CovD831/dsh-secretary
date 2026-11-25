@@ -64,6 +64,14 @@ async function watch(ctx: SourceContext, signal: AbortSignal): Promise<void> {
     await delay(retry, undefined, { signal }).catch(() => {})
   }
 }
+const isRecord = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === 'object' && !Array.isArray(v))
+function isCardActionEvent(raw: unknown): boolean {
+  if (!isRecord(raw)) return false
+  if (isRecord(raw['header']) && raw['header']['event_type'] === 'card.action.trigger') return true
+  const ev = isRecord(raw['event']) ? raw['event'] : raw
+  return !('message_id' in ev) && isRecord(ev['action']) && isRecord(ev['operator'])
+}
+
 /** Wait before restarting the event consumer: 1s after a run that stayed up for a minute, otherwise exponential backoff up to 60s. */
 export const consumerRetry = (previous: number | undefined, ranMs: number): number =>
   previous === undefined || ranMs >= 60_000 ? 1000 : Math.min(previous * 2, 60_000)
@@ -86,7 +94,12 @@ async function consume(ctx: SourceContext, signal: AbortSignal): Promise<void> {
   stdout.on('line', (line: string) => {
     chain = chain.then(async () => {
       if (line.length > 1_048_576) throw new Error('Feishu event exceeds 1 MiB')
-      const trigger = feishuTrigger(JSON.parse(line), bot(ctx).botId, bot(ctx).appId)
+      const parsed = JSON.parse(line) as unknown
+      if (isCardActionEvent(parsed)) {
+        if (enabled(ctx)) await ctx.handleCardAction?.(parsed)
+        return
+      }
+      const trigger = feishuTrigger(parsed, bot(ctx).botId, bot(ctx).appId)
       // Events already read when the Source is disabled are dropped; the consumer stops shortly after.
       if (!trigger || !enabled(ctx)) return
       const chats = ctx.state.get(KV.feishu.chats) ?? {}
