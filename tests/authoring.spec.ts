@@ -163,6 +163,7 @@ describe('authoring funnel, D5 & mandate gates, memory proposal bridge, and syml
       const rules = new Set(badOrderAndParam.violations.map(v => v.ruleId))
       expect(rules.has('missing-trigger-signal')).toBe(true)
       expect(rules.has('invalid-param-spec')).toBe(true)
+      expect(badOrderAndParam.repairedDraft.scope).toBe('private')
     }
 
     const needsSamples = validateDepositDraft(makeBaseDraft({ cases: [{ name: 'only-green', expected: 'allow', ctx: {} }] }))
@@ -186,11 +187,12 @@ describe('authoring funnel, D5 & mandate gates, memory proposal bridge, and syml
         sourceType: 'user_ruling', author: 'user', confidence: 'stated', taint: 'clean', clearance: 'workspace',
       })
     }
-    const m2Route = routeEscalationRuling(base({ attribution: 'mandate_unclear', note: '禁止自动 push' }))
+    const m2Route = routeEscalationRuling(base({ attribution: 'mandate_unclear', note: '禁止自动 push' }), { workspace: 'main' })
     if (m2Route.route === 'user-ruling-memory-proposal') {
-      expect(toMemoryProposal(m2Route, { m2Kind: 'veto' })).toMatchObject({
+      expect(toMemoryProposal(m2Route, { workspaceId: 'main', m2Kind: 'veto' })).toMatchObject({
         layer: 'm2', scope: 'global', sourceType: 'user_ruling', m2Kind: 'veto', clearance: 'private',
       })
+      expect(toMemoryProposal(m2Route, { personId: 'ou_boss_001' }).scope).toBe('person:ou_boss_001')
     }
 
     const spine = telemetryToSpineInput({
