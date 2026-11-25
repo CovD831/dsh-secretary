@@ -24,6 +24,7 @@ export interface SourceContextDeps {
   readonly feishuProblem?: SetupProblem | undefined
   /** Hands a Trigger to the Engine and schedules the pass that assesses it. */
   receive(trigger: Trigger): ReceiveResult | Promise<ReceiveResult>
+  readonly handleCardAction?: ((payload: unknown) => Promise<unknown>) | undefined
 }
 
 /**
@@ -68,5 +69,6 @@ export function sourceContextOf(deps: SourceContextDeps, kind: { kind: string; h
       if (!kind.health.includes(entry)) throw new Error(`The ${kind.kind} Source has no health entry ${entry}`)
       health.get(entry)?.set(value)
     },
+    ...(kind.kind === 'feishu' && deps.handleCardAction ? { handleCardAction: deps.handleCardAction } : {}),
   }
 }

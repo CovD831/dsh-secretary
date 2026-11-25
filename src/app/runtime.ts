@@ -167,7 +167,8 @@ export class Runtime extends Service implements SourceHost {
         health: this.runtimeHealth, lifetime: this.lifetime, configured: () => setup.configured(), closing: () => this.closing() })
       this.sourceDeps = { store, engine, outbox, commands, sources, get ready() { return runtime.ready },
         get deployment() { return setup.deployment }, configured: () => setup.configured(),
-        get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem }, receive: trigger => passes.receive(trigger) }
+        get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },
+        receive: trigger => passes.receive(trigger), handleCardAction: raw => runtime.handleFeishuCardCallback(raw) }
       this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources, governance,
         get github() { return runtime.context({ kind: 'github', health: ['github'] }) },
         requestPass: () => { passes.request() }, sendReplies: () => outbox.sent(),
@@ -182,10 +183,7 @@ export class Runtime extends Service implements SourceHost {
   get health(): Readonly<Record<string, Health>> { return this.board.all }
   /** Aborted when dsh-superagent stops or loses its state directory lock, cancelling running reads and subprocesses. */
   get lifetime(): AbortSignal { return this.stopped.signal }
-  context(kind: { kind: string; health: readonly string[] }): SourceContext {
-    const base = sourceContextOf(this.sourceDeps, kind)
-    return kind.kind === 'feishu' ? { ...base, handleCardAction: raw => this.handleFeishuCardCallback(raw) } : base
-  }
+  context(kind: { kind: string; health: readonly string[] }): SourceContext { return sourceContextOf(this.sourceDeps, kind) }
   /** Authorizes and ingests a Feishu card ruling callback into M0, M2/M3/M6 memory, or deposit drafts. */
   handleFeishuCardCallback(raw: unknown, options: { workspace?: string; point?: string; intent?: string } = {}): Promise<FeishuCardIngestResult> {
     return this.governance.handleFeishuCardCallback(raw, {

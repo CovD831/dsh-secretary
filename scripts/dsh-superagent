@@ -162,7 +162,7 @@ def start(args):
     if len(pids) > 1:
         raise RuntimeError('Multiple dsh-superagent processes found; refusing to start another.')
     if not pids:
-        dsh = shutil.which('dsh')
+        dsh = os.environ.get('DSH_BIN') or shutil.which('dsh')
         if not dsh or not shutil.which('tmux'):
             raise RuntimeError('Both dsh and tmux must be on PATH.')
         exists = subprocess.run(['tmux', 'has-session', '-t', '=' + session],

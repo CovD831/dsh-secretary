@@ -171,3 +171,5 @@ Web 复跑：`dsh --profile <p> --patch … --host 127.0.0.1 --port <n> --no-ope
 - 异步装饰会话（如 `await skillScope`）期间存在并发 `prompt()`/`inject()` 重入窗口：必须在首个 `await` 之前同步完成自研工具注册与 `tools.restrict({ allow: [] })`，并用 `inFlight` Promise 表合并并发 `heal(agent)`，失败时 fail-closed 抛错拒投。
 - `sessionPersistence.open(id, 'read')` 读取的是磁盘已落盘的 JSONL，活跃会话的新轮次事件可能尚驻留内存缓冲：每次 `open(id, 'read')` 前必须在 `try/catch` 内调用 `await sessionPersistence.flush()`，严禁用一次性布尔值缓存跳过后续刷新。
 - `0.2.2-rc.5` 的 `@deepseek-ai/plugin-shell` 除 `bash`/`sh`/`pwsh` 外还暴露持久会话工具 `bash_persistent` 与 `pwsh_persistent`：任何审计改动路径或命令范围的事前/事后判据，必须将持久与非持久 shell 工具一律归入 `unmeasured('shell-blind')`，即使同时存在 `git diff` 也不得豁免（shell 可写未跟踪文件或仓外路径）。
+- `SourceContext` 等带惰性 getter（如 `get deployment()` 在 `setupPending` 期间被读取会直接抛错）的宿主上下文对象，**严禁**在插件挂载期用对象展开 `{ ...base, extra }` 包装——JS 对象展开会立即求值所有 getter，导致冷启动尚未配置仓库时 `dsh-superagent-feishu` 挂载崩溃；须在构造函数内部按惰性属性定义返回。
+- macOS 安装了 DeepSeek Harness 桌面版时，全局 `~/.local/bin/dsh` 可能是历史旧版（如 `0.1.7-alpha.1`），而匹配 `0.2.2-rc.5` 的宿主 CLI 位于 `/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh`。

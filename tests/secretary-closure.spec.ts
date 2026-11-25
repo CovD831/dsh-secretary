@@ -245,8 +245,12 @@ describe('阶段四 Track 1：零执行秘书治理闭环与飞书裁决回调�
       commands: new Commands(() => testDeployment(), {}, new AbortController().signal),
       sources, deployment: testDeployment({ feishu: { ...testDeployment().feishu!, cli } }),
       ready: Promise.resolve(), configured: () => true, receive: t => { received.push(t.id); return 'stored' },
+      handleCardAction: async (p: unknown) => { cardActions.push(p) },
     }
-    const ctx = { ...sourceContextOf(deps, feishuKind), handleCardAction: async (p: unknown) => { cardActions.push(p) } }
+    // Regression: constructing Feishu SourceContext while setup is pending (getter throws) must NOT eagerly read deployment.
+    const pendingCtx = sourceContextOf({ ...deps, get deployment(): never { throw new Error('setupPending') }, configured: () => false }, feishuKind)
+    expect(typeof pendingCtx.handleCardAction).toBe('function')
+    const ctx = sourceContextOf(deps, feishuKind)
     const ac = new AbortController()
     const run = runFeishu(ctx, ac.signal)
     await vi.waitFor(() => { expect(cardActions).toHaveLength(1); expect(received).toHaveLength(1) }, { timeout: 10_000 })
