@@ -102,7 +102,9 @@ export async function loadWorkspacePitfallNotes(memoryDir: string, workspaceKey:
         if (page.layer === 'm3') pages.push({ relPath: flatRel, page })
       }
     }
-  } catch { /* 无扁平 m3/<workspaceKey>.md 时忽略 */ }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
   const notes: PitfallNote[] = [], seen = new Set<string>()
   for (const { relPath, page } of pages) {
     if (page.layer !== 'm3') continue
@@ -144,6 +146,9 @@ export async function proposeTicketMemoryPatches(input: {
     }
     if (redactValue([c.statement, quote, c.topicKey, c.author]).redacted.length > 0) {
       rejected.push({ candidate: c, reason: 'secret-detected', detail: '提案内容命中秘密形状，已拦截' }); continue
+    }
+    if (c.layer === 'm2' && (c.taint === 'external_untrusted' || c.sourceType === 'external_doc')) {
+      rejected.push({ candidate: c, reason: 'untrusted-m2-forbidden', detail: '禁止不可信外部文本 (external_untrusted/external_doc) 写入 M2' }); continue
     }
     let targetRelPath: string
     try { targetRelPath = resolveMemoryRelPath({ layer: c.layer, slug: c.slug, workspaceKey: c.layer === 'm3' ? (c.workspaceKey ?? (c.scope.startsWith('workspace:') ? c.scope.slice(10) : undefined)) : undefined }) }

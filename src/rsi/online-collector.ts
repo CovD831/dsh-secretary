@@ -246,10 +246,9 @@ export async function collectOnlineRsiSnapshot(options: OnlineCollectOptions): P
         attempts.push({ ...(Number.isFinite(atMs) ? { at: atMs } : {}), outcome: out === 'cancelled' || out === 'stopped' ? 'cancelled' : out === 'failed' ? 'failed' : 'completed' })
       } else if (ev.type === 'ruling.queued') escCount += 1
     }
-    if (startCount > 1 || retrySignals > 0) addLabel(tEvents[tEvents.length - 1]!, 'L3:rework_retry')
-    if (attempts.length > 0) taskRecords.push({ taskId: tid, attempts, ...(hasEscalationSurface ? { escalations: escCount } : {}) })
-
     const tLabels = labelsByTicket.get(tid) ?? new Set<NaturalBackfillLabel>()
+    if (startCount > 1 || retrySignals > 0) { addLabel(tEvents[tEvents.length - 1]!, 'L3:rework_retry'); tLabels.add('L3:rework_retry') }
+    if (attempts.length > 0) taskRecords.push({ taskId: tid, attempts, ...(hasEscalationSurface ? { escalations: escCount } : {}) })
     const hasDefect = tLabels.has('L1:verify_failed') || tLabels.has('L4:circuit_broken') || tLabels.has('L5:tool_error') || attempts.some(a => a.outcome === 'failed') || rulingTruthByTicket.get(tid) === 'defect'
     const hasClean = !hasDefect && (attempts.some(a => a.outcome === 'completed') || rulingTruthByTicket.get(tid) === 'clean')
     const expectedOutcome = hasDefect ? 'defect' : hasClean ? 'clean' : 'unknown'

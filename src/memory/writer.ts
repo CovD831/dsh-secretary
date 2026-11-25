@@ -54,6 +54,9 @@ function validateProposal(p: MemoryProposal): { error: WriteResult } | { targetR
   if (!validScope || (p.layer === 'm4' && p.scope !== 'global') || (p.layer === 'm2' && p.scope.startsWith('workspace:'))) {
     return { error: reject('scope-mismatch', `层级 ${p.layer} 不允许作用域 "${p.scope}"`) }
   }
+  if (p.layer === 'm2' && (p.taint === 'external_untrusted' || p.sourceType === 'external_doc')) {
+    return { error: reject('untrusted-m2-forbidden', '禁止不可信外部来源 (external_untrusted/external_doc) 写入 M2 偏好层') }
+  }
   if (p.layer === 'm3' && (!p.scope.startsWith('workspace:') || (p.workspaceKey && p.workspaceKey !== p.scope.slice(10)))) {
     return { error: reject('scope-mismatch', `M3 作用域与 workspaceKey 不匹配: "${p.scope}"`) }
   }

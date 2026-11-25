@@ -90,7 +90,7 @@ function canCallerReadM0Event(caller: RecallCaller, ev: SpineEnvelope): boolean 
     ? CLEARANCE_ORDER[payload['clearance'] as Clearance] : undefined
   if (evClearance !== undefined && evClearance > callerRank) return false
   if (caller.role === 'worker') {
-    if (ev.stream.startsWith('secretary:') || ev.stream === 'memory:m2' || ev.stream === 'memory:m6') return false
+    if (ev.stream.startsWith('secretary:') || ev.stream.startsWith('ruling:') || ev.stream === 'memory:m2' || ev.stream === 'memory:m6') return false
     if (payload['layer'] === 'm2' || payload['layer'] === 'm6' || payload['clearance'] === 'private') return false
     const ws = typeof payload['workspaceId'] === 'string' ? payload['workspaceId']
       : typeof payload['workspace'] === 'string' ? payload['workspace']

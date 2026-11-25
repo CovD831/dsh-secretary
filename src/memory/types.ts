@@ -140,6 +140,7 @@ export type WriteRejectReason =
   | 'verbatim-quote-mismatch'
   | 'revision-conflict'
   | 'resident-budget-exceeded'
+  | 'untrusted-m2-forbidden'
 
 export type WriteResult =
   | {
@@ -278,7 +279,7 @@ export interface UserDirectMemoryInput {
 export interface UserDirectMemoryResult { readonly sourceRef: SourceRef; readonly writeResult: WriteResult; readonly tombstonedIds: readonly string[] }
 export interface TicketPatchCandidate {
   readonly layer: FactLayer; readonly slug?: string; readonly workspaceKey?: string; readonly statement: string
-  readonly scope: MemoryScope; readonly sourceType?: SourceType; readonly sourceRef: SourceRef; readonly author?: string
+  readonly scope: MemoryScope; readonly sourceType?: SourceType; readonly taint?: Taint; readonly sourceRef: SourceRef; readonly author?: string
   readonly topicKey?: string; readonly patternKey?: string; readonly verbatimQuote?: string; readonly evidenceText?: string
   readonly workspacesSeen?: readonly string[]; readonly seenCount?: number; readonly triggerKeys?: TriggerKeys
   readonly importance?: number; readonly clearance?: Clearance; readonly resident?: boolean

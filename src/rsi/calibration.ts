@@ -28,9 +28,12 @@ export function bootstrapDeltaCI(
   options: { readonly seeds?: readonly (number | string)[]; readonly iterationsPerSeed?: number; readonly confidenceLevel?: number } = {},
 ): BootstrapCIResult {
   const seeds = options.seeds ?? [101, 202, 303]
-  if (seeds.length < 3) throw new Error(`bootstrapDeltaCI 至少需要 3 个随机种子（当前 ${seeds.length}）`)
   const confidenceLevel = options.confidenceLevel ?? 0.95
   if (confidenceLevel <= 0 || confidenceLevel >= 1) throw new Error('confidenceLevel 须严格介于 (0, 1)')
+  const distinctSeedCount = new Set(seeds.map(String)).size
+  if (distinctSeedCount < 3) {
+    return { verdict: 'unmeasured', mean: undefined, lower: undefined, upper: undefined, confidenceLevel, seeds, sampleSize: deltas.length, crossesZero: true, reason: `独立随机种子不足 3 个（去重后仅 ${distinctSeedCount} 个）` }
+  }
   if (deltas.length < 2 || deltas.some(d => !Number.isFinite(d))) {
     return { verdict: 'unmeasured', mean: undefined, lower: undefined, upper: undefined, confidenceLevel, seeds, sampleSize: deltas.length, crossesZero: true, reason: '样本量 < 2 或含非有限差值' }
   }
@@ -84,11 +87,17 @@ export async function evaluateSealedHoldout<I>(options: EvaluateSealedHoldoutOpt
   )
   const measurable = candHoldout.totalCases - candHoldout.unmeasuredCount
   const reading = toEvaluationReading(candHoldout.catches + candHoldout.trueAllows, measurable)
-  const promoted = trainDelta > 0 && generalizationRatio !== undefined && generalizationRatio >= minRatio && candHoldout.falseBlocks <= baseHoldout.falseBlocks && measurable > 0
+  const unmeasuredIncreased = candHoldout.unmeasuredCount > baseHoldout.unmeasuredCount
+  const promoted = trainDelta > 0 && generalizationRatio !== undefined && generalizationRatio >= minRatio
+    && candHoldout.falseBlocks <= baseHoldout.falseBlocks && !unmeasuredIncreased
+    && measurable > 0 && holdoutCI.verdict === 'improved'
   const reason = trainDelta <= 0 ? '训练集无净收益提升 (trainDelta <= 0)'
-    : generalizationRatio! < minRatio ? `泛化比不足 (${generalizationRatio!.toFixed(3)} < ${minRatio})`
-      : candHoldout.falseBlocks > baseHoldout.falseBlocks ? `Holdout 误拦回归 (${candHoldout.falseBlocks} > ${baseHoldout.falseBlocks})`
-        : 'Holdout 开封验证通过'
+    : measurable <= 0 ? 'Holdout 全部样本为 unmeasured，禁止晋升'
+      : unmeasuredIncreased ? `Holdout 不可测样本增加 (${candHoldout.unmeasuredCount} > ${baseHoldout.unmeasuredCount})`
+        : generalizationRatio === undefined || generalizationRatio < minRatio ? `泛化比不足 (${(generalizationRatio ?? 0).toFixed(3)} < ${minRatio})`
+          : candHoldout.falseBlocks > baseHoldout.falseBlocks ? `Holdout 误拦回归 (${candHoldout.falseBlocks} > ${baseHoldout.falseBlocks})`
+            : holdoutCI.verdict !== 'improved' ? `Holdout 多种子 CI 未显著改善 (${holdoutCI.reason})`
+              : 'Holdout 开封验证通过'
   const openedAt = (options.now ?? (() => new Date()))().toISOString()
   const auditEvent: SpineDraft<Record<string, unknown>> = {
     id: `rsi:holdout.opened:${options.candidateId}:${openedAt}`, at: openedAt, stream: `rsi:${options.candidateId}`, type: 'holdout.opened',

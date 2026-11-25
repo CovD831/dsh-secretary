@@ -69,6 +69,15 @@ describe('里程碑 3A：记忆写时护栏、FTS5 可删重建与 M0 原文降�
     expect(secretFail).toMatchObject({ kind: 'rejected', reason: 'secret-detected' })
     expect(JSON.stringify(audits)).not.toContain('sk-proj-abc1234567890SECRETKEY')
 
+    expect(await writer.propose({
+      layer: 'm2', scope: 'global', sourceType: 'external_doc', author: 'secretary',
+      sourceRef: { seq: 4, id: 'ev-4' }, statement: 'External doc must not pollute M2',
+    })).toMatchObject({ kind: 'rejected', reason: 'untrusted-m2-forbidden' })
+    expect(await writer.propose({
+      layer: 'm2', scope: 'global', sourceType: 'session', taint: 'external_untrusted', author: 'secretary',
+      sourceRef: { seq: 4, id: 'ev-4' }, statement: 'Untrusted taint must not pollute M2',
+    })).toMatchObject({ kind: 'rejected', reason: 'untrusted-m2-forbidden' })
+
     if (w1.kind !== 'accepted') throw new Error('expected accepted')
     const att = await writer.upsertAttention({ kind: 'ruling', question: 'Confirm?', sourceRefs: [{ seq: 5, id: 'ev-5' }] })
     await writer.transitionAttention({ id: att.item.id, action: 'approve' }, 'user')
@@ -90,6 +99,7 @@ describe('里程碑 3A：记忆写时护栏、FTS5 可删重建与 M0 原文降�
     const r1 = appender.append({ id: 'ev-fts-1', stream: 'memory:m1', type: 'note.recorded', source: { kind: 'secretary', ref: 'sec' }, evidence: [], taint: 'trusted', payload: { statement: 'FTS note' } })
     const r2 = appender.append({ id: 'ev-fts-2', stream: 'ticket:T-B', type: 'ticket.note', source: { kind: 'worker', ref: 'w' }, evidence: [], taint: 'trusted', payload: { workspace: 'ws-b', statement: 'Secret ws-b deployment token hint' } })
     const r3 = appender.append({ id: 'ev-fts-3', stream: 'ticket:T-A', type: 'ticket.note', source: { kind: 'worker', ref: 'w' }, evidence: [], taint: 'trusted', payload: { workspace: 'ws-a', statement: 'Legacy ws-a retry fallback evidence' } })
+    appender.append({ id: 'ev-ruling-secret', stream: 'ruling:rul-9', type: 'ruling.queued', source: { kind: 'secretary', ref: 's' }, evidence: [], taint: 'trusted', payload: { statement: 'Boss confidential ruling note' } })
     await flusher.flush()
 
     const m1 = await writer.propose({ layer: 'm1', slug: 'tdd', scope: 'global', sourceType: 'user_direct', author: 'user', sourceRef: r1, statement: '强制执行红绿测试与 SQLite WAL 检查' })
@@ -129,6 +139,8 @@ describe('里程碑 3A：记忆写时护栏、FTS5 可删重建与 M0 原文降�
     expect(fallbackWorkerA.m0FallbackHits.some(h => h.id === 'ev-fts-3')).toBe(true)
     const fallbackBlockedB = await searchM0Fallback(memDir, 'ws-b deployment', { role: 'worker', workspaceId: 'ws-a', maxClearance: 'workspace' })
     expect(fallbackBlockedB).toHaveLength(0)
+    const fallbackBlockedRuling = await searchM0Fallback(memDir, 'confidential ruling', { role: 'worker', workspaceId: 'ws-a', maxClearance: 'workspace' })
+    expect(fallbackBlockedRuling).toHaveLength(0)
 
     // assembleMemoryPrompt 挂载 ftsIndex：已墓碑条目即使 FTS 未重刷也绝不复活
     if (m1.kind !== 'accepted') throw new Error('expected m1 accepted')
@@ -181,12 +193,13 @@ describe('里程碑 3B：老板直改、M3 避坑桥接、逐字 Patch、M6 衰�
       memoryDir: memDir,
       candidates: [
         { layer: 'm3', workspaceKey: 'repo-a', slug: 'p1', scope: 'workspace:repo-a', sourceRef: ref3, statement: 'Missing quote', verbatimQuote: 'not in evidence', evidenceText: 'actual log text' },
+        { layer: 'm2', scope: 'global', sourceType: 'external_doc', sourceRef: ref3, statement: 'Untrusted patch', verbatimQuote: 'Untrusted patch', evidenceText: 'Untrusted patch' },
         { layer: 'm3', workspaceKey: 'repo-a', slug: 'p2', scope: 'workspace:repo-a', sourceRef: ref3, topicKey: 'verify-before-commit', patternKey: 'verify-before-commit', statement: 'Run typecheck before commit', verbatimQuote: 'Run typecheck before commit', evidenceText: 'Log: Run typecheck before commit passed' },
         { layer: 'm3', workspaceKey: 'repo-b', slug: 'p2', scope: 'workspace:repo-b', sourceRef: ref3, topicKey: 'verify-before-commit', patternKey: 'verify-before-commit', statement: 'Run typecheck before commit', verbatimQuote: 'Run typecheck before commit', evidenceText: 'Log: Run typecheck before commit passed' },
       ],
     })
-    expect(patches.rejected).toHaveLength(1)
-    expect(patches.rejected[0]!.reason).toBe('verbatim-quote-mismatch')
+    expect(patches.rejected).toHaveLength(2)
+    expect(patches.rejected.map(r => r.reason)).toEqual(['verbatim-quote-mismatch', 'untrusted-m2-forbidden'])
     expect(patches.m4Proposals).toHaveLength(1)
     expect(patches.m4Proposals[0]).toMatchObject({ layer: 'm4', expectedRevision: 0, workspacesSeen: ['repo-a', 'repo-b'] })
 
@@ -273,15 +286,16 @@ describe('里程碑 3C：M0 在线收集回填、Seen>=3 跨日聚类、Bootstra
   })
 
   it('Bootstrap 95% CI 跨 0 返回 unmeasured、Holdout <0.5 拒晋升 + holdout.opened、LOO 消融与温度校准 ECE 改善', async () => {
-    expect(() => bootstrapDeltaCI([1, 2], { seeds: [1, 2] })).toThrow(/3/)
+    expect(bootstrapDeltaCI([1, 1, 1, 1], { seeds: [1, 2] })).toMatchObject({ verdict: 'unmeasured', crossesZero: true })
+    expect(bootstrapDeltaCI([1, 1, 1, 1], { seeds: [101, 101, 101] })).toMatchObject({ verdict: 'unmeasured', crossesZero: true })
     const crossing = bootstrapDeltaCI([1, -1, 1, -1, 0, 1, -1, 0])
     expect(crossing).toMatchObject({ verdict: 'unmeasured', crossesZero: true })
     const clearGain = bootstrapDeltaCI([1, 1, 1, 1, 1, 1, 1, 1])
     expect(clearGain).toMatchObject({ verdict: 'improved', crossesZero: false })
 
     const cases: ReplayCase<{ inTrain: boolean; isDefect: boolean }>[] = [
-      ...Array.from({ length: 10 }, (_, i) => ({ id: `tr-${i}`, family: `fam-t-${i % 3}`, expectedOutcome: (i % 2 === 0 ? 'defect' : 'clean') as 'defect' | 'clean', input: { inTrain: true, isDefect: i % 2 === 0 } })),
-      ...Array.from({ length: 10 }, (_, i) => ({ id: `ho-${i}`, family: `fam-h-${i % 3}`, expectedOutcome: (i % 2 === 0 ? 'defect' : 'clean') as 'defect' | 'clean', input: { inTrain: false, isDefect: i % 2 === 0 } })),
+      ...Array.from({ length: 16 }, (_, i) => ({ id: `tr-${i}`, family: `fam-t-${Math.floor(i / 4)}`, expectedOutcome: (i % 2 === 0 ? 'defect' : 'clean') as 'defect' | 'clean', input: { inTrain: true, isDefect: i % 2 === 0 } })),
+      ...Array.from({ length: 16 }, (_, i) => ({ id: `ho-${i}`, family: `fam-h-${Math.floor(i / 4)}`, expectedOutcome: (i % 2 === 0 ? 'defect' : 'clean') as 'defect' | 'clean', input: { inTrain: false, isDefect: i % 2 === 0 } })),
     ]
     const split = splitByFamily(cases, { train: 0.5, validation: 0, holdout: 0.5 }, 1)
     const trainIds = new Set(split.train.map(c => c.id))
@@ -293,6 +307,23 @@ describe('里程碑 3C：M0 在线收集回填、Seen>=3 跨日聚类、Bootstra
     expect(rejectedHo.generalizationRatio!).toBeLessThan(0.5)
     expect(rejectedHo.auditEvent.type).toBe('holdout.opened')
 
+    const lazyUnmeasuredGate = (inp: { inTrain: boolean; isDefect: boolean }, item: ReplayCase<{ inTrain: boolean; isDefect: boolean }>) =>
+      trainIds.has(item.id)
+        ? (inp.isDefect ? { kind: 'deny' as const, blockers: ['caught'] as const } : { kind: 'allow' as const })
+        : { kind: 'unmeasured' as const, cause: 'missing-input' as const, detail: 'skip holdout' }
+    const lazyHo = await evaluateSealedHoldout({ baselineGate: baseGate, candidateGate: lazyUnmeasuredGate, split, candidateId: 'lazy-1' })
+    expect(lazyHo.promoted).toBe(false)
+    expect(lazyHo.reason).toContain('unmeasured')
+
+    const weakCiGate = (inp: { inTrain: boolean; isDefect: boolean }, item: ReplayCase<{ inTrain: boolean; isDefect: boolean }>) => {
+      if (trainIds.has(item.id)) return inp.isDefect ? { kind: 'deny' as const, blockers: ['caught'] as const } : { kind: 'allow' as const }
+      return item.id === split.holdout.find(c => c.expectedOutcome === 'defect')?.id
+        ? { kind: 'deny' as const, blockers: ['lucky-one'] as const } : { kind: 'allow' as const }
+    }
+    const weakCiHo = await evaluateSealedHoldout({ baselineGate: baseGate, candidateGate: weakCiGate, split, candidateId: 'weak-ci-1', minGeneralizationRatio: 0.01 })
+    expect(weakCiHo.holdoutCI.verdict).toBe('unmeasured')
+    expect(weakCiHo.promoted).toBe(false)
+
     const goodGate = (inp: { inTrain: boolean; isDefect: boolean }) =>
       inp.isDefect ? { kind: 'deny' as const, blockers: ['caught'] as const } : { kind: 'allow' as const }
     const passedHo = await evaluateSealedHoldout({ baselineGate: baseGate, candidateGate: goodGate, split, candidateId: 'good-1' })
@@ -302,7 +333,8 @@ describe('里程碑 3C：M0 在线收集回填、Seen>=3 跨日聚类、Bootstra
 
     const sweepRes = await evaluateSweepAndHoldout(
       (p: { catchDefects: boolean }) => (inp: { inTrain: boolean; isDefect: boolean }) => p.catchDefects && inp.isDefect ? { kind: 'deny' as const, blockers: ['caught'] as const } : { kind: 'allow' as const },
-      [{ catchDefects: false }, { catchDefects: true }], cases, { baseline: { catchDefects: false }, openHoldout: true, candidateId: 'sweep-1' },
+      [{ catchDefects: false }, { catchDefects: true }], cases,
+      { baseline: { catchDefects: false }, ratios: { train: 0.4, validation: 0.2, holdout: 0.4 }, seed: 2, openHoldout: true, candidateId: 'sweep-1' },
     )
     expect(sweepRes.sweep.recommended?.params).toEqual({ catchDefects: true })
     expect(sweepRes.holdout?.promoted).toBe(true)
