@@ -5,24 +5,30 @@ import { WORLD_ASSET_CATALOG } from './diorama-catalog.ts'
 import type { OfficeActor } from './iso-engine.ts'
 import type { RoomEntity, RoomWallMount } from './layout-solver.ts'
 import { worldIsoToScreen } from './world-renderer.ts'
-import type { OfficeCamera, OfficeWorldPlan, WorldSceneState, WorldWingPlan } from './world-types.ts'
+import type { OfficeCamera, OfficeWorldPlan, WallSegment3D, WorldSceneState, WorldWingPlan } from './world-types.ts'
 
 export const DIORAMA_LAYER_NAMES = ['stageVignette', 'baseAndFloors', 'aoShadows', 'cutawayWalls', 'ySortedEntities', 'warmLighting'] as const
 export const createDioramaLayerNames = (): readonly string[] => [...DIORAMA_LAYER_NAMES]
 export interface PixiDioramaSourceState { readonly scene: WorldSceneState; readonly camera: OfficeCamera; readonly images: Record<string, CanvasImageSource> }
 export interface PixiDioramaHandle { resize: (w: number, h: number) => void; destroy: () => void }
 
-function inWing(u: number, v: number, w: WorldWingPlan): boolean {
-  if (u < w.rect.u || u >= w.rect.u + w.rect.w || v < w.rect.v || v >= w.rect.v + w.rect.h) return false
-  return !w.chamferSE || (u - w.rect.u) + (v - w.rect.v) < w.rect.w + w.rect.h - 1 - w.chamferSE
-}
+const hexNum = (hex: string): number => Number.parseInt(hex.slice(1), 16)
 
-function tileAt(u: number, v: number, world: OfficeWorldPlan): string | null {
-  const c = world.corridorRect
-  if (u >= c.u && u < c.u + c.w && v >= c.v && v < c.v + c.h) return 'corridor_tile'
-  for (const w of world.wings) if (inWing(u, v, w)) return w.floorStyle === 'warm_parquet' ? 'corridor_tile' : w.kind === 'studio' ? 'floor_wood' : 'stone_tile'
-  const inApron = u >= -1 && u <= world.buildingCols && v >= -1 && v <= world.buildingRows + 1
-  return inApron || (u >= 9 && u <= 12 && v >= world.buildingRows && v <= world.buildingRows + 2) ? 'stone_tile' : null
+function buildTileLookup(world: OfficeWorldPlan): Map<string, string> {
+  const map = new Map<string, string>()
+  for (const c of world.corridorCells ?? []) map.set(`${c.u},${c.v}`, 'corridor_tile')
+  for (const c of world.lobby.cells ?? []) map.set(`${c.u},${c.v}`, 'corridor_tile')
+  for (const w of world.wings) {
+    const style = w.floorStyle === 'warm_parquet' ? 'corridor_tile' : w.kind === 'studio' ? 'floor_wood' : 'stone_tile'
+    if (w.cells) {
+      for (const c of w.cells) map.set(`${c.u},${c.v}`, style)
+    } else {
+      for (let dv = 0; dv < w.rect.h; dv++) for (let du = 0; du < w.rect.w; du++) {
+        if (!w.chamferSE || du + dv < w.rect.w + w.rect.h - 1 - w.chamferSE) map.set(`${w.rect.u + du},${w.rect.v + dv}`, style)
+      }
+    }
+  }
+  return map
 }
 
 function makeChairs(suite: RoomEntity): RoomEntity[] {
@@ -38,7 +44,19 @@ function makeChairs(suite: RoomEntity): RoomEntity[] {
   return [{ id: `chair-${suite.id}`, assetId: 'office_chair', suiteKind: 'shared', anchor: { u, v }, size: [1, 1], facing: faceSE ? 'SE' : 'SW', mirrorX: !faceSE, footprint: [] }]
 }
 
-const hexNum = (hex: string): number => Number.parseInt(hex.slice(1), 16)
+function drawWallSeg3D(gfx: Graphics, seg: WallSegment3D, world: OfficeWorldPlan, camera: OfficeCamera): void {
+  const z = camera.zoom, p1 = worldIsoToScreen(seg.from.u, seg.from.v, world, camera), p2 = worldIsoToScreen(seg.to.u, seg.to.v, world, camera)
+  const h1 = seg.startH * z, h2 = seg.endH * z, capH = Math.min(5 * z, h1 * 0.25)
+  const wainH = (seg.tier === 'back' ? 18 : seg.tier === 'partition' ? 16 : 10) * z
+  const plaster = seg.tier === 'cutaway' || seg.tier === 'portal'
+    ? (seg.shade === 'shaded' ? 0x7a6150 : 0x9c8069)
+    : (seg.shade === 'shaded' ? 0xbfa48c : 0xd9c4a8)
+  const wain = seg.tier === 'back' ? 0x4a3428 : 0x6b4a32
+  gfx.poly([p1.x, p1.y - h1, p2.x, p2.y - h2, p2.x, p2.y - h2 + capH, p1.x, p1.y - h1 + capH]).fill(0x4a3428)
+  gfx.poly([p1.x, p1.y - h1 + capH, p2.x, p2.y - h2 + capH, p2.x, p2.y - wainH, p1.x, p1.y - wainH]).fill(plaster)
+  gfx.poly([p1.x, p1.y - wainH, p2.x, p2.y - wainH, p2.x, p2.y, p1.x, p1.y]).fill(wain)
+  gfx.poly([p1.x, p1.y - h1, p2.x, p2.y - h2, p2.x, p2.y, p1.x, p1.y]).stroke({ color: 0x1a1412, width: z })
+}
 
 export function mountPixiDioramaStage(
   canvas: HTMLCanvasElement, getState: () => PixiDioramaSourceState, initialW = 1440, initialH = 900,
@@ -97,20 +115,24 @@ export function mountPixiDioramaStage(
     stageVignette.ellipse(Math.round(cw * 0.52), Math.round(ch * 0.48), Math.round(cw * 0.46), Math.round(ch * 0.44)).fill({ color: 0x302722, alpha: 0.72 })
 
     baseAndFloors.removeChildren(); runnerGfx.clear()
+    const tileMap = buildTileLookup(world)
     for (let v = -1; v <= world.buildingRows + 2; v++) for (let u = -1; u <= world.buildingCols; u++) {
-      const id = tileAt(u, v, world), tex = id ? getTex(id, images) : null; if (!tex) continue
+      const id = tileMap.get(`${u},${v}`) ?? (u >= -1 && u <= world.buildingCols && v >= -1 && v <= world.buildingRows + 1 ? 'stone_tile' : null)
+      const tex = id ? getTex(id, images) : null; if (!tex) continue
       const p = worldIsoToScreen(u + 0.5, v + 0.5, world, camera)
       addSp(baseAndFloors, tex, Math.round(p.x - 16 * z), Math.round(p.y - 8 * z), 32 * z, 16 * z)
     }
-    const r0 = worldIsoToScreen(10.35, 7.2, world, camera), r1 = worldIsoToScreen(11.65, 7.2, world, camera)
-    const r2 = worldIsoToScreen(11.65, world.buildingRows - 0.8, world, camera), r3 = worldIsoToScreen(10.35, world.buildingRows - 0.8, world, camera)
-    runnerGfx.poly([r0.x, r0.y, r1.x, r1.y, r2.x, r2.y, r3.x, r3.y]).fill(0x3f5a78).stroke({ color: 0x1a1412, width: z })
-    const i0 = worldIsoToScreen(10.5, 7.45, world, camera), i1 = worldIsoToScreen(11.5, 7.45, world, camera)
-    const i2 = worldIsoToScreen(11.5, world.buildingRows - 1.05, world, camera), i3 = worldIsoToScreen(10.5, world.buildingRows - 1.05, world, camera)
-    runnerGfx.poly([i0.x, i0.y, i1.x, i1.y, i2.x, i2.y, i3.x, i3.y]).stroke({ color: 0xc9a46a, width: z })
-    for (let mv = 8; mv < world.buildingRows - 1; mv += 2.5) {
-      const mp = worldIsoToScreen(11, mv + 0.5, world, camera)
-      runnerGfx.poly([mp.x, mp.y - 3 * z, mp.x + 6 * z, mp.y, mp.x, mp.y + 3 * z, mp.x - 6 * z, mp.y]).fill(0xc9a46a)
+    for (const br of world.corridorBranches ?? []) {
+      if (!br.hasRunner) continue
+      const horiz = br.from.v === br.to.v
+      const u0 = horiz ? br.from.u : br.from.u + 0.35, v0 = horiz ? br.from.v + 0.35 : Math.max(br.from.v, 7.2)
+      const u1 = horiz ? br.to.u : br.to.u + 1.65, v1 = horiz ? br.to.v + 1.65 : br.to.v - 0.8
+      const r0 = worldIsoToScreen(u0, v0, world, camera), r1 = worldIsoToScreen(u1, v0, world, camera)
+      const r2 = worldIsoToScreen(u1, v1, world, camera), r3 = worldIsoToScreen(u0, v1, world, camera)
+      runnerGfx.poly([r0.x, r0.y, r1.x, r1.y, r2.x, r2.y, r3.x, r3.y]).fill(0x3f5a78).stroke({ color: 0x1a1412, width: z })
+      const i0 = worldIsoToScreen(u0 + 0.15, v0 + 0.15, world, camera), i1 = worldIsoToScreen(u1 - 0.15, v0 + 0.15, world, camera)
+      const i2 = worldIsoToScreen(u1 - 0.15, v1 - 0.15, world, camera), i3 = worldIsoToScreen(u0 + 0.15, v1 - 0.15, world, camera)
+      runnerGfx.poly([i0.x, i0.y, i1.x, i1.y, i2.x, i2.y, i3.x, i3.y]).stroke({ color: 0xc9a46a, width: z })
     }
     baseAndFloors.addChild(runnerGfx)
 
@@ -126,8 +148,11 @@ export function mountPixiDioramaStage(
     }
 
     aoShadows.clear()
-    for (let u = 0; u < world.buildingCols; u++) { const p = worldIsoToScreen(u + 0.5, 0.35, world, camera); aoShadows.ellipse(p.x, p.y, 16 * z, 6 * z).fill({ color: 0x1a1412, alpha: 0.28 }) }
-    for (let v = 0; v < 15; v++) { const p = worldIsoToScreen(0.35, v + 0.5, world, camera); aoShadows.ellipse(p.x, p.y, 16 * z, 6 * z).fill({ color: 0x1a1412, alpha: 0.28 }) }
+    for (const seg of world.wallSegments ?? []) {
+      if (seg.tier !== 'back') continue
+      const mp = worldIsoToScreen((seg.from.u + seg.to.u) / 2, (seg.from.v + seg.to.v) / 2, world, camera)
+      aoShadows.ellipse(mp.x, mp.y + 3 * z, Math.max(12, Math.hypot(seg.to.u - seg.from.u, seg.to.v - seg.from.v) * 10) * z, 5 * z).fill({ color: 0x1a1412, alpha: 0.28 })
+    }
     const suites = [...world.lobby.suites, ...world.wings.flatMap((w) => w.suites)]
     const allEntities = [...suites, ...world.lobby.shared, ...world.wings.flatMap((w) => w.shared), ...world.exteriorProps]
     for (const e of allEntities) {
@@ -141,10 +166,14 @@ export function mountPixiDioramaStage(
     }
 
     cutawayWalls.removeChildren(); wallGfx.clear(); cutawayWalls.addChild(wallGfx)
-    const wallTex = getTex('wall_segment', images)
-    if (wallTex) {
-      for (let u = 0; u < world.buildingCols; u += 2) { const p = worldIsoToScreen(u + 1, 0, world, camera); addSp(cutawayWalls, wallTex, Math.round(p.x - 16 * z), Math.round(p.y - 72 * z), 32 * z, 80 * z, true) }
-      for (let v = 0; v < 15; v += 2) { const p = worldIsoToScreen(0, v + 1, world, camera); addSp(cutawayWalls, wallTex, Math.round(p.x - 16 * z), Math.round(p.y - 72 * z), 32 * z, 80 * z, false) }
+    const sortedWalls = [...(world.wallSegments ?? [])].sort((a, b) => (a.from.u + a.from.v + a.to.u + a.to.v) - (b.from.u + b.from.v + b.to.u + b.to.v))
+    for (const seg of sortedWalls) {
+      drawWallSeg3D(wallGfx, seg, world, camera)
+      const fwin = seg.hasWindow ? getTex('facade_window', images) : null
+      if (fwin) {
+        const wp = worldIsoToScreen((seg.from.u + seg.to.u) / 2, (seg.from.v + seg.to.v) / 2, world, camera)
+        addSp(cutawayWalls, fwin, Math.round(wp.x - 28 * z), Math.round(wp.y - 30 * z), 56 * z, 26 * z, true)
+      }
     }
     const drawMount = (m: RoomWallMount, bu: number, bv: number) => {
       const meta = WORLD_ASSET_CATALOG[m.assetId], tex = getTex(m.assetId, images); if (!meta || !tex) return
@@ -161,29 +190,14 @@ export function mountPixiDioramaStage(
         addSp(cutawayWalls, dpTex, Math.round(dp.x - 12 * z), Math.round(dp.y - 34 * z), 24 * z, 16 * z)
       }
     }
-    for (const pw of world.partitionWalls) {
-      const p1 = pw.axis === 'u' ? worldIsoToScreen(pw.fixed, pw.start, world, camera) : worldIsoToScreen(pw.start, pw.fixed, world, camera)
-      const p2 = pw.axis === 'u' ? worldIsoToScreen(pw.fixed, pw.end, world, camera) : worldIsoToScreen(pw.end, pw.fixed, world, camera)
-      const steps = Math.max(1, Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y) / (2 * z)))
-      for (let i = 0; i <= steps; i++) { const wx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - 2 * z), wy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - 22 * z); wallGfx.rect(wx - z, wy - z, 5 * z, 23 * z).fill(0x1a1412) }
-      for (let i = 0; i <= steps; i++) {
-        const wx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - 2 * z), wy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - 22 * z)
-        wallGfx.rect(wx, wy, 4 * z, 4 * z).fill(0x4a3428); wallGfx.rect(wx, wy + 4 * z, 4 * z, 12 * z).fill(pw.axis === 'u' ? 0xbfa48c : 0xd9c4a8); wallGfx.rect(wx, wy + 16 * z, 4 * z, 5 * z).fill(0x6b4a32)
-      }
-    }
     const doorWood = getTex('door_wood', images)
-    if (doorWood) for (const d of world.interiorDoors ?? []) { const dp = worldIsoToScreen(d.u, d.v + 1, world, camera); addSp(cutawayWalls, doorWood, Math.round(dp.x - 20 * z), Math.round(dp.y - 58 * z), 40 * z, 64 * z, d.axis === 'v') }
-    for (const f of world.frontFacade ?? []) {
-      const p1 = worldIsoToScreen(f.from.u, f.from.v, world, camera), p2 = worldIsoToScreen(f.to.u, f.to.v, world, camera)
-      const steps = Math.max(1, Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y) / (2 * z))), fh = f.heightPx * z
-      for (let i = 0; i <= steps; i++) { const fx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - z), fy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - fh); wallGfx.rect(fx - z, fy - z, 5 * z, fh + 2 * z).fill(0x1a1412) }
-      for (let i = 0; i <= steps; i++) { const fx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - z), fy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - fh); wallGfx.rect(fx, fy, 4 * z, 4 * z).fill(0x4a3428); wallGfx.rect(fx, fy + 4 * z, 4 * z, fh - 4 * z).fill(0x7a6150) }
-      const fwin = f.hasWindow ? getTex('facade_window', images) : null
-      if (fwin) { const wp = worldIsoToScreen((f.from.u + f.to.u) / 2, (f.from.v + f.to.v) / 2, world, camera); addSp(cutawayWalls, fwin, Math.round(wp.x - 32 * z), Math.round(wp.y - 36 * z), 64 * z, 40 * z, true) }
+    if (doorWood) for (const d of world.interiorDoors ?? []) {
+      const dp = worldIsoToScreen(d.u, d.v + 1, world, camera)
+      addSp(cutawayWalls, doorWood, Math.round(dp.x - 19 * z), Math.round(dp.y - 50 * z), 38 * z, 52 * z, d.axis === 'v')
     }
     const dglass = getTex('door_glass', images), sconce = getTex('wall_sconce', images)
-    if (dglass) { const dp = worldIsoToScreen(11, world.buildingRows, world, camera); addSp(cutawayWalls, dglass, Math.round(dp.x - 40 * z), Math.round(dp.y - 52 * z), 80 * z, 56 * z, true) }
-    if (sconce) for (const ls of world.lightSources ?? []) if (ls.kind === 'sconce') { const sp = worldIsoToScreen(ls.u, ls.v, world, camera); addSp(cutawayWalls, sconce, Math.round(sp.x - 9 * z), Math.round(sp.y - 34 * z), 18 * z, 28 * z) }
+    if (dglass) { const dp = worldIsoToScreen(11, world.buildingRows, world, camera); addSp(cutawayWalls, dglass, Math.round(dp.x - 38 * z), Math.round(dp.y - 49 * z), 76 * z, 50 * z, true) }
+    if (sconce) for (const ls of world.lightSources ?? []) if (ls.kind === 'sconce') { const sp = worldIsoToScreen(ls.u, ls.v, world, camera); addSp(cutawayWalls, sconce, Math.round(sp.x - 9 * z), Math.round(sp.y - 38 * z), 18 * z, 28 * z) }
 
     ySortedEntities.removeChildren()
     for (const e of allEntities) {
@@ -257,19 +271,15 @@ export function mountPixiDioramaStage(
   void app.init({ canvas, width: pendingW, height: pendingH, backgroundColor: 0x201a18, antialias: false, roundPixels: true, resolution: 1, preference: 'webgl' })
     .then(() => {
       if (destroyed) { app.destroy(true); return }
-      initialized = true
-      app.renderer.resize(pendingW, pendingH)
+      initialized = true; app.renderer.resize(pendingW, pendingH)
       app.stage.addChild(stageVignette, baseAndFloors, aoShadows, cutawayWalls, ySortedEntities, warmLighting)
-      app.ticker.add(drawFrame)
-      drawFrame()
+      app.ticker.add(drawFrame); drawFrame()
     })
 
   return {
     resize: (w: number, h: number) => { pendingW = w; pendingH = h; if (initialized && !destroyed) app.renderer.resize(w, h) },
     destroy: () => {
-      destroyed = true
-      for (const lbl of wingLabels.values()) lbl.destroy()
-      wingLabels.clear()
+      destroyed = true; for (const lbl of wingLabels.values()) lbl.destroy(); wingLabels.clear()
       if (initialized) { app.ticker.remove(drawFrame); app.destroy(true) }
     },
   }

@@ -69,6 +69,7 @@ function makePixelTrackingCtx(width: number, height: number) {
 describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Stage', () => {
   it('keeps V2 world modules browser-safe and within line limits', () => {
     for (const [file, maxLines] of [
+      ['procedural-rooms.ts', 285],
       ['world-layout.ts', 270],
       ['world-renderer.ts', 285],
       ['pixi-diorama.ts', 270],
@@ -133,6 +134,44 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
     ])
     expect(large.wings).toHaveLength(6)
     expect(large.buildingRows).toBe(28)
+  })
+
+  it('generates deterministic seeded irregular prefab rooms, 3-tier walls, MST-loop corridors, and reachable paths for seeds 1..4', () => {
+    const specs = [{ id: 'default', title: 'default' }, { id: 'demo-repo', title: 'demo-repo' }]
+    const w1a = solveWorldFloorplan(specs, 1)
+    const w1b = solveWorldFloorplan(specs, 1)
+    expect(w1a.wallSegments).toEqual(w1b.wallSegments)
+    expect(w1a.corridorCells).toEqual(w1b.corridorCells)
+
+    const sigs = new Set<string>()
+    for (const seed of [1, 2, 3, 4]) {
+      const world = solveWorldFloorplan(specs, seed)
+      expect(world.networkMetrics?.loopCount).toBeGreaterThanOrEqual(1)
+      expect(world.corridorBranches?.length).toBeGreaterThanOrEqual(2)
+      expect(world.wings[0]!.doorway.v).not.toBe(world.wings[1]!.doorway.v)
+
+      const tiers = new Map(world.wallSegments?.map((s) => [s.tier, s.startH]))
+      expect(tiers.get('back')).toBe(64)
+      expect(tiers.get('partition')).toBe(56)
+      expect(tiers.get('cutaway')).toBe(34)
+      expect(tiers.get('portal')).toBe(54)
+
+      for (const wing of world.wings.filter((w) => w.kind === 'studio')) {
+        expect(wing.cells!.length).toBeLessThan(wing.rect.w * wing.rect.h)
+        const cellSet = new Set(wing.cells!.map((c) => `${c.u},${c.v}`))
+        for (const ent of [...wing.suites, ...wing.shared]) {
+          for (const fc of ent.footprint) expect(cellSet.has(`${fc.u},${fc.v}`)).toBe(true)
+          if (ent.seatCell) expect(cellSet.has(`${ent.seatCell.u},${ent.seatCell.v}`)).toBe(true)
+        }
+      }
+
+      sigs.add(world.wings.slice(0, 3).map((w) => `${w.shapeKind}:${w.comboKind}:${w.doorway.v}`).join('|'))
+
+      let actors = [...createInitialWorldActors(world), spawnWorldWorker(world, 'w-test', 'demo-repo', 'T-1', 'ws-demo-repo-1')]
+      for (let i = 0; i < 140; i++) actors = stepWorldActors(actors, world, 250)
+      expect(actors.find((a) => a.id === 'w-test')?.lifecycle).toBe('working')
+    }
+    expect(sigs.size).toBeGreaterThanOrEqual(3)
   })
 
   it('round-trips worldIsoToScreen and screenToWorldIso at 1x and 2x zoom with pan', () => {
