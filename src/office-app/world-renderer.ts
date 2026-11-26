@@ -3,6 +3,7 @@ import { HIGHLIGHT_GOLD, PROP_LABELS, STATUS_GLOW_COLORS } from './catalog.ts'
 import { WORLD_ASSET_CATALOG } from './diorama-catalog.ts'
 import type { OfficeActor, OfficeSprites } from './iso-engine.ts'
 import { TILE_H, TILE_W, type Facing, type GridPoint, type RoomEntity, type RoomWallMount } from './layout-solver.ts'
+import { isChamferEdgeCell } from './procedural-rooms.ts'
 import type { OfficeCamera, OfficeWorldPlan, WorldPickResult, WorldSceneState, WorldWingPlan } from './world-types.ts'
 
 interface L2Item { id: string; kind: 'entity' | 'actor'; footScreenY: number; entity?: RoomEntity; actor?: OfficeActor }
@@ -22,9 +23,15 @@ export function screenToWorldIso(px: number, py: number, world: OfficeWorldPlan,
 const allSuites = (w: OfficeWorldPlan): RoomEntity[] => [...w.lobby.suites, ...w.wings.flatMap((x) => x.suites)]
 
 function makeWorldChair(suite: RoomEntity): RoomEntity {
-  const isRec = suite.suiteKind === 'reception', isExec = suite.suiteKind === 'executive', faceSE = isRec || suite.facing === 'SE'
-  const u = isRec ? suite.anchor.u - 0.7 : isExec ? suite.anchor.u + 0.95 : faceSE ? suite.anchor.u - 0.7 : suite.anchor.u + 0.55
-  const v = isRec ? suite.anchor.v + 0.9 : isExec ? suite.anchor.v - 0.95 : faceSE ? suite.anchor.v + 0.55 : suite.anchor.v - 0.7
+  if (suite.assetId === 'desk_cluster') {
+    return { id: `chair-${suite.id}`, assetId: 'office_chair', suiteKind: 'shared', anchor: { u: suite.anchor.u + 0.55, v: suite.anchor.v - 1.85 }, size: [1, 1], facing: 'SW', mirrorX: true, footprint: [] }
+  }
+  if (suite.assetId === 'collab_table') {
+    return { id: `chair-${suite.id}`, assetId: 'office_chair', suiteKind: 'shared', anchor: { u: suite.anchor.u + 1.1, v: suite.anchor.v - 0.15 }, size: [1, 1], facing: 'SW', mirrorX: true, footprint: [] }
+  }
+  const isRec = suite.suiteKind === 'reception', isExec = suite.assetId === 'exec_desk', faceSE = isRec || suite.facing === 'SE'
+  const u = isRec ? suite.anchor.u - 0.7 : isExec ? suite.anchor.u + 0.95 : faceSE ? suite.anchor.u - 0.55 : suite.anchor.u + 0.45
+  const v = isRec ? suite.anchor.v + 0.9 : isExec ? suite.anchor.v - 0.95 : faceSE ? suite.anchor.v + 0.45 : suite.anchor.v - 0.55
   const facing: Facing = faceSE ? 'SE' : 'SW'
   return { id: `chair-${suite.id}`, assetId: 'office_chair', suiteKind: 'shared', anchor: { u, v }, size: [1, 1], facing, mirrorX: facing === 'SW', footprint: [] }
 }
@@ -55,7 +62,7 @@ function findWorldPath(world: OfficeWorldPlan, from: GridPoint, to: GridPoint): 
   const queue: GridPoint[] = [{ u: su, v: sv }], parent = new Map<string, GridPoint | null>([[startKey, null]])
   while (queue.length > 0) {
     const cur = queue.shift()!; if (`${cur.u},${cur.v}` === goalKey) break
-    for (const [du, dv] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+    for (const [du, dv] of [[0, -1], [-1, 0], [1, 0], [0, 1]] as const) {
       const nu = cur.u + du, nv = cur.v + dv, nk = `${nu},${nv}`
       if (parent.has(nk) || (!walkable.has(nk) && nk !== goalKey) || isWallBlocked(world, cur.u, cur.v, nu, nv) || (blocked.has(nk) && nk !== goalKey)) continue
       parent.set(nk, cur); queue.push({ u: nu, v: nv })
@@ -69,13 +76,7 @@ function findWorldPath(world: OfficeWorldPlan, from: GridPoint, to: GridPoint): 
 
 export function createInitialWorldActors(world: OfficeWorldPlan): OfficeActor[] {
   const rec = world.lobby.suites.find((s) => s.id === 'lobby-reception')
-  const actors: OfficeActor[] = [{ id: 'secretary', role: 'secretary', u: (rec?.anchor.u ?? 10) - 0.55, v: (rec?.anchor.v ?? 4) + 1.0, facing: 'SE', pose: 'sit', lifecycle: 'resident', assignedSuiteId: 'lobby-reception', path: [], animMs: 0 }]
-  for (const wing of world.wings) {
-    if (wing.kind !== 'studio' || !wing.workspaceId) continue
-    const exec = wing.suites.find((s) => s.suiteKind === 'executive')
-    if (exec) actors.push({ id: `lead-${wing.workspaceId}`, role: 'lead', u: exec.anchor.u + 0.9, v: exec.anchor.v - 0.85, facing: 'SW', pose: 'sit', lifecycle: 'resident', assignedSuiteId: exec.id, path: [], animMs: 0 })
-  }
-  return actors
+  return [{ id: 'secretary', role: 'secretary', u: (rec?.anchor.u ?? 10) - 0.55, v: (rec?.anchor.v ?? 4) + 1.0, facing: 'SE', pose: 'sit', lifecycle: 'resident', assignedSuiteId: 'lobby-reception', path: [], animMs: 0 }]
 }
 
 export function spawnWorldWorker(world: OfficeWorldPlan, actorId: string, workspaceId: string, ticketId: string, suiteId: string): OfficeActor {
@@ -131,8 +132,8 @@ function getMountBox(m: RoomWallMount, world: OfficeWorldPlan, cam: OfficeCamera
   return { x: Math.round(pos.x - w / 2), y: Math.round(pos.y - h - m.h * cam.zoom), w, h }
 }
 const getDoorplateBox = (wing: WorldWingPlan, world: OfficeWorldPlan, cam: OfficeCamera): Box => {
-  const p = worldIsoToScreen(wing.rect.u === 0 ? wing.doorway.u + 0.8 : wing.doorway.u + 0.2, wing.doorway.v - 0.8, world, cam)
-  return { x: Math.round(p.x - 12 * cam.zoom), y: Math.round(p.y - 34 * cam.zoom), w: 24 * cam.zoom, h: 16 * cam.zoom }
+  const wu = wing.rect.u === 0 ? 10 : wing.doorway.u, p = worldIsoToScreen(wu, wing.doorway.v - 0.5, world, cam)
+  return { x: Math.round(p.x - 14 * cam.zoom), y: Math.round(p.y - 40 * cam.zoom), w: 28 * cam.zoom, h: 18 * cam.zoom }
 }
 const getWingSignBox = (wing: WorldWingPlan, world: OfficeWorldPlan, cam: OfficeCamera): Box => {
   const p = worldIsoToScreen(wing.rect.u + wing.rect.w / 2, wing.rect.v + Math.min(4.2, wing.rect.h / 2), world, cam), w = Math.max(72, wing.title.length * 10 + 14) * cam.zoom
@@ -154,7 +155,7 @@ function computeL2List(world: OfficeWorldPlan, actors: readonly OfficeActor[], c
   for (const entity of [...suites, ...world.lobby.shared, ...world.wings.flatMap((w) => w.shared), ...world.exteriorProps]) {
     const deskY = Math.round(worldIsoToScreen(entity.anchor.u + entity.size[0], entity.anchor.v + entity.size[1], world, cam).y)
     items.push({ id: entity.id, kind: 'entity', footScreenY: deskY, entity })
-    if (entity.suiteKind !== 'shared') items.push({ id: `chair-${entity.id}`, kind: 'entity', footScreenY: deskY - 6, entity: makeWorldChair(entity) })
+    if (entity.suiteKind !== 'shared' && entity.assetId !== 'collab_table') items.push({ id: `chair-${entity.id}`, kind: 'entity', footScreenY: deskY - 6, entity: makeWorldChair(entity) })
   }
   for (const actor of actors) if (actor.lifecycle !== 'removed') {
     const suite = actor.pose === 'sit' && actor.assignedSuiteId ? suites.find((s) => s.id === actor.assignedSuiteId) : undefined
@@ -168,45 +169,43 @@ function renderL0ToL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, spr
   const { world } = state, z = cam.zoom, cw = ctx.canvas?.width || 1440, ch = ctx.canvas?.height || 900
   ctx.fillStyle = '#201A18'; ctx.fillRect(0, 0, cw, ch)
   ctx.fillStyle = '#302722'; ctx.fillRect(Math.round(cw * 0.08), Math.round(ch * 0.08), Math.round(cw * 0.84), Math.round(ch * 0.84))
-  const tileMap = build2DTileMap(world)
-  const nearBld = (u: number, v: number) => (u >= 11 && u <= 15 && v >= world.buildingRows && v <= world.buildingRows + 2)
+  const tileMap = build2DTileMap(world), studioCells = new Set<string>()
+  for (const w of world.wings) if (w.kind === 'studio') for (const c of w.cells ?? []) studioCells.add(`${c.u},${c.v}`)
+  const nearBld = (u: number, v: number) => (u >= 10 && u <= 16 && v >= world.buildingRows && v <= world.buildingRows + 2)
     || [-1, 0, 1].some((dv) => [-1, 0, 1].some((du) => tileMap.has(`${u + du},${v + dv}`)))
   for (let v = -1; v <= world.buildingRows + 2; v++) for (let u = -1; u <= world.buildingCols + 1; u++) {
-    const kind = tileMap.get(`${u},${v}`) ?? (nearBld(u, v) ? 'stone_tile' : null)
-    const img = kind ? sprites.images[kind] : undefined; if (!img) continue
-    const p = worldIsoToScreen(u + 0.5, v + 0.5, world, cam); ctx.drawImage(img, Math.round(p.x - 16 * z), Math.round(p.y - 8 * z), 32 * z, 16 * z)
+    const kind = tileMap.get(`${u},${v}`) ?? (nearBld(u, v) ? 'stone_tile' : null), img = kind ? sprites.images[kind] : undefined; if (!img) continue
+    const p = worldIsoToScreen(u + 0.5, v + 0.5, world, cam), sx = Math.round(p.x - 16 * z), sy = Math.round(p.y - 8 * z)
+    if (kind !== 'stone_tile' && studioCells.has(`${u},${v}`) && isChamferEdgeCell(u, v, studioCells)) {
+      if (sprites.images.stone_tile) ctx.drawImage(sprites.images.stone_tile, sx, sy, 32 * z, 16 * z)
+      ctx.drawImage(img, 0, 0, 32, 8, sx, sy, 32 * z, 8 * z)
+    } else ctx.drawImage(img, sx, sy, 32 * z, 16 * z)
   }
   const runnerImg = sprites.images.runner_navy ?? sprites.images.corridor_runner
-  if (runnerImg) for (let v = 9; v < world.buildingRows - 1; v += 2) { const p = worldIsoToScreen(13, v + 1, world, cam); ctx.drawImage(runnerImg, Math.round(p.x - 32 * z), Math.round(p.y - 16 * z), 64 * z, 32 * z) }
+  if (runnerImg) for (let v = 14; v < world.buildingRows - 1; v += 2) { const p = worldIsoToScreen(13.5, v + 1, world, cam); ctx.drawImage(runnerImg, Math.round(p.x - 32 * z), Math.round(p.y - 16 * z), 64 * z, 32 * z) }
   if (sprites.images.welcome_mat) { const mp = worldIsoToScreen(13.5, world.buildingRows + 1, world, cam); ctx.drawImage(sprites.images.welcome_mat, Math.round(mp.x - 32 * z), Math.round(mp.y - 16 * z), 64 * z, 32 * z) }
   for (const w of world.wings) if (w.kind === 'studio' && w.rugRect) {
     const rugImg = sprites.images[`rug_${w.rugStyle ?? 'woven'}`] ?? sprites.images.rug_woven
     if (rugImg) { const rw = Math.round(((w.rugRect.w + w.rugRect.h) / 2) * 32 * z), rh = Math.round(rw / 2), p = worldIsoToScreen(w.rugRect.u + w.rugRect.w / 2, w.rugRect.v + w.rugRect.h / 2, world, cam); ctx.drawImage(rugImg, Math.round(p.x - rw / 2), Math.round(p.y - rh / 2), rw, rh) }
   }
   ctx.fillStyle = 'rgba(26, 20, 18, 0.30)'
-  for (const it of l2) {
-    const b = it.entity ? getEntityBox(it.entity, world, cam) : it.actor ? getActorBox(it.actor, world, cam) : null
-    if (b) ctx.fillRect(Math.round(b.x + 2 * z), Math.round(b.y + b.h - 4 * z), Math.round(b.w * 0.85), Math.max(3, 5 * z))
-  }
+  for (const it of l2) { const b = it.entity ? getEntityBox(it.entity, world, cam) : it.actor ? getActorBox(it.actor, world, cam) : null; if (b) ctx.fillRect(Math.round(b.x + 2 * z), Math.round(b.y + b.h - 4 * z), Math.round(b.w * 0.85), Math.max(3, 5 * z)) }
   const sortedWalls = [...(world.wallSegments ?? [])].sort((a, b) => (a.from.u + a.from.v + a.to.u + a.to.v) - (b.from.u + b.from.v + b.to.u + b.to.v))
   for (const seg of sortedWalls) {
-    const p1 = worldIsoToScreen(seg.from.u, seg.from.v, world, cam), p2 = worldIsoToScreen(seg.to.u, seg.to.v, world, cam)
-    const steps = Math.max(1, Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y) / (2 * z)))
+    const p1 = worldIsoToScreen(seg.from.u, seg.from.v, world, cam), p2 = worldIsoToScreen(seg.to.u, seg.to.v, world, cam), steps = Math.max(1, Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y) / (2 * z))), isCut = seg.tier === 'cutaway' || seg.tier === 'portal', baseH = (isCut ? 8 : 12) * z
     for (let i = 0; i <= steps; i++) { const t = i / steps, h = (seg.startH + (seg.endH - seg.startH) * t) * z; ctx.fillStyle = '#1A1412'; ctx.fillRect(Math.round(p1.x + (p2.x - p1.x) * t - 3 * z), Math.round(p1.y + (p2.y - p1.y) * t - h - z), 5 * z, h + 2 * z) }
     for (let i = 0; i <= steps; i++) {
       const t = i / steps, h = (seg.startH + (seg.endH - seg.startH) * t) * z, wx = Math.round(p1.x + (p2.x - p1.x) * t - 2 * z), wy = Math.round(p1.y + (p2.y - p1.y) * t - h)
-      ctx.fillStyle = '#4A3428'; ctx.fillRect(wx, wy, 4 * z, 5 * z); ctx.fillStyle = seg.tier === 'cutaway' || seg.tier === 'portal' ? '#7A6150' : seg.shade === 'shaded' ? '#BFA48C' : '#D9C4A8'
-      ctx.fillRect(wx, wy + 5 * z, 4 * z, Math.max(1, h - 15 * z)); ctx.fillStyle = '#6B4A32'; ctx.fillRect(wx, wy + h - 10 * z, 4 * z, 10 * z)
+      ctx.fillStyle = '#4A3428'; ctx.fillRect(wx, wy, 4 * z, 4 * z); ctx.fillStyle = isCut ? '#7A6150' : seg.shade === 'shaded' ? '#BFA48C' : '#D9C4A8'
+      ctx.fillRect(wx, wy + 4 * z, 4 * z, Math.max(1, h - 4 * z - baseH)); ctx.fillStyle = isCut ? '#3A2E28' : '#6B4A32'; ctx.fillRect(wx, wy + h - baseH, 4 * z, baseH)
     }
   }
-  for (const seg of sortedWalls) if (seg.hasWindow && sprites.images.facade_window) { const wu = Math.max(Math.min(seg.from.u, seg.to.u) + 1.5, Math.min(Math.max(seg.from.u, seg.to.u) - 1.5, 18.5)), wp = worldIsoToScreen(wu, seg.from.v, world, cam); ctx.drawImage(sprites.images.facade_window, Math.round(wp.x - 27 * z), Math.round(wp.y - 26 * z), 54 * z, 22 * z) }
-  for (const d of world.interiorDoors ?? []) if (sprites.images.door_wood) { const dp = worldIsoToScreen(d.axis === 'u' ? d.u : d.u + 1, d.axis === 'u' ? d.v + 1 : d.v, world, cam); ctx.drawImage(sprites.images.door_wood, Math.round(dp.x - 18 * z), Math.round(dp.y - 46 * z), 36 * z, 46 * z) }
-  if (sprites.images.door_glass) { const dp = worldIsoToScreen(13.5, world.buildingRows, world, cam); ctx.drawImage(sprites.images.door_glass, Math.round(dp.x - 36 * z), Math.round(dp.y - 44 * z), 72 * z, 44 * z) }
+  for (const seg of sortedWalls) if (seg.hasWindow && sprites.images.facade_window) { const wu = (seg.from.u + seg.to.u) / 2, wp = worldIsoToScreen(wu, seg.from.v, world, cam); ctx.drawImage(sprites.images.facade_window, Math.round(wp.x - 21 * z), Math.round(wp.y - 31 * z), 42 * z, 26 * z) }
+  for (const d of world.interiorDoors ?? []) if (sprites.images.door_wood) { const dp = worldIsoToScreen(d.axis === 'u' ? d.u : d.u + 1, d.axis === 'u' ? d.v + 1 : d.v, world, cam); ctx.drawImage(sprites.images.door_wood, Math.round(dp.x - 16 * z), Math.round(dp.y - 47 * z), 31 * z, 50 * z) }
+  if (sprites.images.door_glass) { const dp = worldIsoToScreen(13.5, world.buildingRows, world, cam); ctx.drawImage(sprites.images.door_glass, Math.round(dp.x - 26 * z), Math.round(dp.y - 32 * z), 52 * z, 34 * z) }
   const drawMount = (m: RoomWallMount, bu: number, bv: number) => {
-    const img = sprites.images[m.assetId]; if (!img) return
-    const b = getMountBox(m, world, cam, bu, bv)
-    if (m.wall === 'back') { ctx.save(); ctx.translate(b.x + b.w, b.y); ctx.scale(-1, 1); ctx.drawImage(img, 0, 0, b.w, b.h); ctx.restore() }
-    else ctx.drawImage(img, b.x, b.y, b.w, b.h)
+    const img = sprites.images[m.assetId]; if (!img) return; const b = getMountBox(m, world, cam, bu, bv)
+    if (m.wall === 'back') { ctx.save(); ctx.translate(b.x + b.w, b.y); ctx.scale(-1, 1); ctx.drawImage(img, 0, 0, b.w, b.h); ctx.restore() } else ctx.drawImage(img, b.x, b.y, b.w, b.h)
   }
   for (const m of world.lobby.wallMounts) drawMount(m, world.lobby.rect.u, world.lobby.rect.v)
   for (const w of world.wings) {
@@ -217,32 +216,14 @@ function renderL0ToL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, spr
 
 function renderL5LightingAndUi(ctx: CanvasRenderingContext2D, state: WorldSceneState, cam: OfficeCamera): void {
   const { world, actors, screenStates, gateIntercept, hoverTarget, elapsedMs } = state, z = cam.zoom
-  for (const ls of world.lightSources ?? []) {
-    const p = worldIsoToScreen(ls.u, ls.v, world, cam), r = Math.round(ls.radiusTiles * 14 * z)
-    ctx.fillStyle = ls.kind === 'window' ? 'rgba(232, 220, 203, 0.16)' : 'rgba(242, 169, 59, 0.18)'
-    ctx.fillRect(Math.round(p.x - r), Math.round(p.y - r * 0.6), r * 2, Math.round(r * 1.2))
-  }
-  for (const w of world.wings) {
-    const sb = getWingSignBox(w, world, cam)
-    ctx.fillStyle = '#201A18'; ctx.fillRect(sb.x, sb.y, sb.w, sb.h); ctx.fillStyle = '#E8DCCB'; ctx.font = `${10 * z}px monospace`; ctx.fillText(w.title, sb.x + 6 * z, sb.y + 12 * z)
-    ctx.strokeStyle = w.workspaceId && w.workspaceId === state.activeWorkspaceId ? HIGHLIGHT_GOLD : '#6B4A32'; ctx.lineWidth = z; ctx.strokeRect(sb.x, sb.y, sb.w, sb.h)
-  }
+  for (const ls of world.lightSources ?? []) { const p = worldIsoToScreen(ls.u, ls.v, world, cam), r = Math.round(ls.radiusTiles * 14 * z); ctx.fillStyle = ls.kind === 'window' ? 'rgba(232, 220, 203, 0.16)' : 'rgba(242, 169, 59, 0.18)'; ctx.fillRect(Math.round(p.x - r), Math.round(p.y - r * 0.6), r * 2, Math.round(r * 1.2)) }
+  for (const w of world.wings) { const sb = getWingSignBox(w, world, cam); ctx.fillStyle = '#201A18'; ctx.fillRect(sb.x, sb.y, sb.w, sb.h); ctx.fillStyle = '#E8DCCB'; ctx.font = `${10 * z}px monospace`; ctx.fillText(w.title, sb.x + 6 * z, sb.y + 12 * z); ctx.strokeStyle = w.workspaceId && w.workspaceId === state.activeWorkspaceId ? HIGHLIGHT_GOLD : '#6B4A32'; ctx.lineWidth = z; ctx.strokeRect(sb.x, sb.y, sb.w, sb.h) }
   for (const suite of allSuites(world)) {
-    const meta = WORLD_ASSET_CATALOG[suite.assetId], st = screenStates[suite.id]
-    if (!meta?.screenGlowAnchors || !st || st === 'off') continue
-    const b = getEntityBox(suite, world, cam), { bright, dark } = STATUS_GLOW_COLORS[st]
-    const blinkOn = st === 'stuck' ? Math.floor(elapsedMs / 600) % 2 === 0 : st === 'needsDecision' ? Math.floor(elapsedMs / 300) % 2 === 0 : true
-    for (const a of meta.screenGlowAnchors) {
-      const gx = b.x + b.w / 2 + (suite.mirrorX ? -a.dx : a.dx) * z, gy = b.y + b.h + a.dy * z
-      ctx.fillStyle = dark; ctx.fillRect(Math.round(gx - 6 * z), Math.round(gy - 4 * z), 12 * z, 8 * z)
-      if (!blinkOn) continue
-      ctx.fillStyle = bright; ctx.fillRect(Math.round(gx - 4 * z), Math.round(gy - 2 * z), 8 * z, 3 * z)
-    }
+    const meta = WORLD_ASSET_CATALOG[suite.assetId], st = screenStates[suite.id]; if (!meta?.screenGlowAnchors || !st || st === 'off') continue
+    const b = getEntityBox(suite, world, cam), { bright, dark } = STATUS_GLOW_COLORS[st], blinkOn = st === 'stuck' ? Math.floor(elapsedMs / 600) % 2 === 0 : st === 'needsDecision' ? Math.floor(elapsedMs / 300) % 2 === 0 : true
+    for (const a of meta.screenGlowAnchors) { const gx = b.x + b.w / 2 + (suite.mirrorX ? -a.dx : a.dx) * z, gy = b.y + b.h + a.dy * z; ctx.fillStyle = dark; ctx.fillRect(Math.round(gx - 6 * z), Math.round(gy - 4 * z), 12 * z, 8 * z); if (blinkOn) { ctx.fillStyle = bright; ctx.fillRect(Math.round(gx - 4 * z), Math.round(gy - 2 * z), 8 * z, 3 * z) } }
   }
-  if (gateIntercept) {
-    const t = actors.find((a) => a.id === gateIntercept.targetActorId)
-    if (t) { const b = getActorBox(t, world, cam); ctx.fillStyle = STATUS_GLOW_COLORS.needsDecision.bright; ctx.fillRect(b.x + 6 * z, b.y - 14 * z, 20 * z, 12 * z); ctx.fillRect(b.x, b.y + b.h - 4 * z, b.w, 3 * z) }
-  }
+  if (gateIntercept) { const t = actors.find((a) => a.id === gateIntercept.targetActorId); if (t) { const b = getActorBox(t, world, cam); ctx.fillStyle = STATUS_GLOW_COLORS.needsDecision.bright; ctx.fillRect(b.x + 6 * z, b.y - 14 * z, 20 * z, 12 * z); ctx.fillRect(b.x, b.y + b.h - 4 * z, b.w, 3 * z) } }
   if (state.secretaryThinking) {
     const sec = actors.find((a) => a.id === 'secretary')
     if (sec) {
@@ -255,21 +236,16 @@ function renderL5LightingAndUi(ctx: CanvasRenderingContext2D, state: WorldSceneS
 }
 
 export function renderWorldFrame(ctx: CanvasRenderingContext2D, state: WorldSceneState, sprites: OfficeSprites, camera: OfficeCamera): void {
-  ctx.imageSmoothingEnabled = false
-  const l2 = computeL2List(state.world, state.actors, camera)
+  ctx.imageSmoothingEnabled = false; const l2 = computeL2List(state.world, state.actors, camera)
   renderL0ToL3(ctx, state, sprites, camera, l2)
   for (const item of l2) {
     if (item.kind === 'entity' && item.entity) {
-      const img = sprites.images[item.entity.assetId]; if (!img) continue
-      const b = getEntityBox(item.entity, state.world, camera)
-      if (item.entity.mirrorX) { ctx.save(); ctx.translate(b.x + b.w, b.y); ctx.scale(-1, 1); ctx.drawImage(img, 0, 0, b.w, b.h); ctx.restore() }
-      else ctx.drawImage(img, b.x, b.y, b.w, b.h)
+      const img = sprites.images[item.entity.assetId]; if (!img) continue; const b = getEntityBox(item.entity, state.world, camera)
+      if (item.entity.mirrorX) { ctx.save(); ctx.translate(b.x + b.w, b.y); ctx.scale(-1, 1); ctx.drawImage(img, 0, 0, b.w, b.h); ctx.restore() } else ctx.drawImage(img, b.x, b.y, b.w, b.h)
     } else if (item.kind === 'actor' && item.actor) {
       const img = sprites.images[`char_${item.actor.role}`]; if (!img) continue
-      const sitBob = item.actor.pose === 'sit' && Math.floor(state.elapsedMs / 500) % 2 === 1 ? 1 : 0
-      const col = item.actor.pose === 'idle' ? 0 : item.actor.pose === 'walkA' ? 1 : item.actor.pose === 'walkB' ? 2 : 3
-      const b = getActorBox(item.actor, state.world, camera)
-      ctx.drawImage(img, col * 32, item.actor.facing === 'SW' || item.actor.facing === 'NW' ? 48 : 0, 32, 48, b.x, b.y + sitBob, b.w, b.h)
+      const sitBob = item.actor.pose === 'sit' && Math.floor(state.elapsedMs / 500) % 2 === 1 ? 1 : 0, col = item.actor.pose === 'idle' ? 0 : item.actor.pose === 'walkA' ? 1 : item.actor.pose === 'walkB' ? 2 : 3
+      const b = getActorBox(item.actor, state.world, camera); ctx.drawImage(img, col * 32, item.actor.facing === 'SW' || item.actor.facing === 'NW' ? 48 : 0, 32, 48, b.x, b.y + sitBob, b.w, b.h)
     }
   }
   renderL5LightingAndUi(ctx, state, camera)
@@ -286,8 +262,7 @@ export function pickWorldTarget(px: number, py: number, state: WorldSceneState, 
     if (hitBox(px, py, b)) return { type: 'actor', actorId: it.actor.id, role: it.actor.role, workspaceId: wingOf(it.actor.assignedSuiteId), ticketId: it.actor.ticketId, bounds: b }
   }
   for (let i = l2.length - 1; i >= 0; i--) {
-    const it = l2[i]!; if (it.kind !== 'entity' || !it.entity) continue
-    const b = getEntityBox(it.entity, world, camera)
+    const it = l2[i]!; if (it.kind !== 'entity' || !it.entity) continue; const b = getEntityBox(it.entity, world, camera)
     if (it.entity.assetId === 'reception_desk') {
       const hy = b.y + Math.round(b.h * 0.36), hh = Math.round(b.h * 0.56), hw = Math.round(b.w * 0.45)
       const lb = { x: b.x + 6, y: hy, w: hw, h: hh }, nb = { x: b.x + b.w - hw - 6, y: hy, w: hw, h: hh }
@@ -297,8 +272,9 @@ export function pickWorldTarget(px: number, py: number, state: WorldSceneState, 
   }
   for (const m of world.lobby.wallMounts) if (m.propKind) { const b = getMountBox(m, world, camera, world.lobby.rect.u, world.lobby.rect.v); if (hitBox(px, py, b)) return { type: 'prop', prop: m.propKind, label: PROP_LABELS[m.propKind].zh, bounds: b } }
   for (const w of world.wings) {
-    if (w.kind === 'studio' && w.workspaceId) { const db = getDoorplateBox(w, world, camera); if (hitBox(px, py, db)) return { type: 'prop', prop: 'doorplate', label: PROP_LABELS.doorplate.zh, workspaceId: w.workspaceId, bounds: db } }
+    if (w.kind === 'studio' && w.workspaceId) { const db = getDoorplateBox(w, world, camOr(camera)); if (hitBox(px, py, db)) return { type: 'prop', prop: 'doorplate', label: PROP_LABELS.doorplate.zh, workspaceId: w.workspaceId, bounds: db } }
     const sb = getWingSignBox(w, world, camera); if (hitBox(px, py, sb)) return { type: 'wing', wingId: w.id, workspaceId: w.workspaceId, kind: w.kind, label: w.title, bounds: sb }
   }
   return null
 }
+const camOr = (c: OfficeCamera) => c

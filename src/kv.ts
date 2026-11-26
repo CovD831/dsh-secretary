@@ -29,6 +29,7 @@ export interface PersistedCompletionObs {
   sawShellWrite: boolean
   sawUnmeasuredTool: boolean
   unmeasuredTools: string[]
+  structuredDigests?: Record<string, string>
 }
 
 /** Persisted runtime-guard budget state per assignment (survives host restarts). */

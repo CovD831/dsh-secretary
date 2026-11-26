@@ -1,13 +1,12 @@
 /** 零执行秘书专属治理工具组：受控记忆召回、M0 溯源提议、M6 账本流转与沉淀作者面。 */
 import { randomUUID } from 'node:crypto'
-import { lstat, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { telemetryToSpineInput, validateDepositDraft, writeDepositDraftPackage, type DepositDraft } from '../../authoring/index.ts'
 import { createAdaptiveDispatchGate, createChangedPathsGate, createVerifyRerunGate } from '../../judgement/gates/index.ts'
 import {
-  RESERVED_BUILTIN_DEPOSIT_IDS, auditRequires, compileDeclarativeEntry, evaluateCompiledEntry, loadDepositPackage, parseDepositMarkdown,
-  runDepositCases, validateDeclarativeRule, type AnyGateDef, type DeclarativeRule, type DepositManifest, type MandateBinding,
-  type ParamSpec, type Point, type Verdict,
+  RESERVED_BUILTIN_DEPOSIT_IDS, auditRequires, compileDeclarativeEntry, evaluateCompiledEntry, loadDepositPackage,
+  runDepositCases, validateAndNormalizePlaybook, validateDeclarativeRule, type AnyGateDef, type DeclarativeRule, type DepositManifest, type MandateBinding,
+  type ParamSpec, type PlaybookSpec, type Point, type Verdict,
 } from '../../judgement/index.ts'
 import { assembleMemoryPrompt, memoryTaintOf, readMemoryPage, resolveMemoryRelPath } from '../../memory/index.ts'
 import { readM0Events, runHistoricalReplay, type ReplayCase, type ReplayGateFn } from '../../rsi/index.ts'
@@ -59,19 +58,28 @@ function normalizeDraft(raw: RawDraft): DepositDraft {
     point: raw.point ?? 'verify.preflight',
     trigger: { on: raw.trigger?.on ?? 'completion.claimed', mode: raw.trigger?.mode ?? 'on-event',
       ...(raw.trigger?.workspace ? { workspace: raw.trigger.workspace } : {}),
-      ...(raw.trigger?.globs ? { globs: raw.trigger.globs } : {}), ...(raw.trigger?.signal ? { signal: raw.trigger.signal } : {}) },
+      ...(raw.trigger?.globs ? { globs: raw.trigger.globs } : {}), ...(raw.trigger?.signal ? { signal: raw.trigger.signal } : {}),
+      ...(raw.trigger?.match ? { match: raw.trigger.match } : {}) },
     requires: raw.requires ?? [], params: (raw.params ?? {}) as DepositDraft['params'], exceptions: raw.exceptions ?? [],
     repairHint: raw.repairHint ?? '', intent: raw.intent ?? '', rubricBody: raw.rubricBody ?? '',
     actionClass: raw.actionClass ?? 'observe', origin: raw.origin ?? { kind: 'user-authored' }, cases,
     ...(raw.enforce !== undefined ? { enforce: raw.enforce } : {}), ...(raw.stage ? { stage: raw.stage } : {}),
     ...(raw.mandateCeiling ? { mandateCeiling: raw.mandateCeiling } : {}), ...(raw.mandateRef ? { mandateRef: raw.mandateRef } : {}),
     ...(raw.action ? { action: raw.action } : {}), ...(raw.unansweredSlots ? { unansweredSlots: raw.unansweredSlots } : {}),
+    ...(raw.playbook ? { playbook: raw.playbook as unknown as PlaybookSpec } : {}),
+    ...(raw.rule ? { rule: raw.rule as unknown as DeclarativeRule } : {}),
+    ...(raw.measures ? { measures: raw.measures } : {}),
+    ...(raw.mandate ? { mandate: raw.mandate as unknown as MandateBinding } : {}),
   }
 }
 
 function draftToManifest(draft: DepositDraft, raw?: RawDraft): DepositManifest {
   const rawScope: string = raw?.scope ?? draft.scope
   const trust = rawScope === 'public' ? 'public' : rawScope === 'shared' ? 'collaborator' : 'owner'
+  const rule = (raw?.rule ?? draft.rule) as unknown as DeclarativeRule | undefined
+  const measures = raw?.measures ?? draft.measures
+  const mandate = (raw?.mandate ?? draft.mandate) as MandateBinding | undefined
+  const playbook = (raw?.playbook ?? draft.playbook) as PlaybookSpec | undefined
   return {
     id: draft.id, version: draft.version, kind: draft.kind, trust, cases: 'cases/',
     prose: `## 意图\n${draft.intent}\n\n## 判据\n${draft.rubricBody}`,
@@ -80,8 +88,8 @@ function draftToManifest(draft: DepositDraft, raw?: RawDraft): DepositManifest {
     ...(draft.stage ? { stage: draft.stage } : {}), ...(draft.enforce !== undefined ? { enforce: draft.enforce } : {}),
     actionClass: draft.actionClass, ...(draft.action ? { action: draft.action } : {}),
     ...(draft.trigger?.signal ? { trigger: { signal: draft.trigger.signal as never, ...(raw?.trigger?.match ? { match: raw.trigger.match } : {}) } } : {}),
-    ...(raw?.measures ? { measures: raw.measures } : {}), ...(raw?.mandate ? { mandate: raw.mandate as MandateBinding } : {}),
-    ...(raw?.rule ? { rule: raw.rule as unknown as DeclarativeRule } : {}),
+    ...(measures ? { measures } : {}), ...(mandate ? { mandate } : {}),
+    ...(rule ? { rule } : {}), ...(playbook ? { playbook } : {}),
   }
 }
 
@@ -116,17 +124,20 @@ function buildReplayGate(gov: GovernanceRuntime, draft: DepositDraft, raw?: RawD
 }
 
 async function checkDeclarativeDraft(draft: DepositDraft, raw: RawDraft) {
+  const pbIssues = raw.playbook !== undefined
+    ? validateAndNormalizePlaybook(raw.playbook, '').issues.map(i => ({ ruleId: 'invalid-playbook', field: i.field, reason: i.reason, repairHint: '修正 playbook 配置（禁可执行键且须有 summary）' }))
+    : []
   if (raw.rule === undefined) {
     if ((draft.kind === 'gate' || draft.kind === 'counter-rule' || draft.kind === 'evaluator') && !BUILTIN_EXECUTABLE_IDS.has(draft.id)) {
-      return [{
+      return [...pbIssues, {
         ruleId: 'missing-declarative-rule', field: 'rule',
         reason: `自定义 ${draft.kind} "${draft.id}" 缺少声明式 rule 配置`,
         repairHint: '请提供声明式 rule，例如命令检查: { "kind": "command_check", "requiredCommands": ["tsc --noEmit"] }，对应正反例 ctx 形如 { "commands": [{ "command": "tsc --noEmit", "exitCode": 0 }] } 与 exitCode: 1',
       }]
     }
-    return []
+    return pbIssues
   }
-  const ruleIssues = validateDeclarativeRule(raw.rule).map(i => ({ ruleId: 'invalid-declarative-rule', field: i.field, reason: i.reason, repairHint: '修正零代码声明式 rule 配置' }))
+  const ruleIssues = [...pbIssues, ...validateDeclarativeRule(raw.rule).map(i => ({ ruleId: 'invalid-declarative-rule', field: i.field, reason: i.reason, repairHint: '修正零代码声明式 rule 配置' }))]
   if (redactValue(raw.rule).redacted.length > 0) ruleIssues.push({ ruleId: 'secret-in-deposit', field: 'rule', reason: 'rule 配置疑似包含密钥或敏感字段', repairHint: '移除敏感字符串后再提交' })
   if (ruleIssues.length > 0) return ruleIssues
   try {
@@ -145,17 +156,6 @@ async function checkDeclarativeDraft(draft: DepositDraft, raw: RawDraft) {
     ruleIssues.push({ ruleId: 'declarative-compile-failed', field: 'rule', reason: err instanceof Error ? err.message : String(err), repairHint: '核对 kind、trigger.signal、action.name 与 rule 配置' })
   }
   return ruleIssues
-}
-
-async function mergeManifestExtras(depositMdPath: string, raw: RawDraft): Promise<void> {
-  if (raw.rule === undefined && !raw.measures && !raw.mandate && !raw.trigger?.match) return
-  if ((await lstat(depositMdPath)).isSymbolicLink()) throw new Error(`拒绝修改符号链接文件: ${depositMdPath}`)
-  const parsed = parseDepositMarkdown(await readFile(depositMdPath, 'utf8')), m: Record<string, unknown> = { ...parsed.rawManifest }
-  if (raw.rule !== undefined) m['rule'] = raw.rule
-  if (raw.measures) m['measures'] = raw.measures
-  if (raw.mandate) m['mandate'] = raw.mandate
-  if (raw.trigger?.match && m['trigger'] && typeof m['trigger'] === 'object') m['trigger'] = { ...(m['trigger'] as Record<string, unknown>), match: raw.trigger.match }
-  await writeFile(depositMdPath, `---\n${JSON.stringify(m, null, 2)}\n---\n\n${parsed.prose}\n`, 'utf8')
 }
 
 /** 构造挂入秘书主会话的 4 个结构化治理工具（零文件/shell 执行权且禁自称老板权威）。 */
@@ -265,26 +265,26 @@ export function secretaryGovernanceTools(gov: GovernanceRuntime): Tool[] {
           if (v) emit({ id: `authoring:admission_rejected:${draftId}:${randomUUID().slice(0, 8)}`, kind: 'admission_rejected', draftId, at: nowIso, actorId: 'secretary', ruleId: v.ruleId, field: v.field, reason: v.reason })
           return stripUndefined({ installed: false, validation: check.ok ? { ok: false, gate: 'machine', draft, violations: ruleIssues } : check })
         }
-        const shadowDraft: DepositDraft = { ...check.draft, stage: 'shadow', enforce: false }
+        const shadowDraft: DepositDraft = { ...check.draft, stage: 'shadow', ...(check.draft.kind === 'counter-rule' ? { enforce: false } : {}) }
         const existing = gov.registry.list().find(g => g.id === shadowDraft.id)
         if (RESERVED_BUILTIN_DEPOSIT_IDS.has(shadowDraft.id) || (existing && existing.stage !== 'shadow')) {
           throw new Error(`禁止影子安装包覆盖内置保留或非 shadow 阶段判据: ${shadowDraft.id}`)
         }
         const written = await writeDepositDraftPackage(join(gov.stateDir, 'deposits'), shadowDraft)
-        await mergeManifestExtras(written.depositMdPath, args.draft)
         const loaded = await loadDepositPackage(written.packageDir)
         if (!loaded.admission.admitted) throw new Error(`影子包准入异常: ${loaded.admission.violations.map(v => v.reason).join('; ')}`)
         let registeredInShadow = false
         const m = loaded.admission.manifest
+        const shadowEnforce = m.kind === 'counter-rule' ? false : m.enforce
         if (m.rule || m.kind === 'standing-order') {
           if (existing) gov.registry.unregister(shadowDraft.id)
-          gov.registry.register(compileDeclarativeEntry({ ...m, stage: 'shadow', enforce: false, ...(m.kind === 'gate' || m.kind === 'counter-rule' ? { placement: { timing: 'pre', enforce: false } } : {}) }), 'shadow')
+          gov.registry.register(compileDeclarativeEntry({ ...m, stage: 'shadow', ...(shadowEnforce !== undefined ? { enforce: shadowEnforce } : {}) }), 'shadow')
           registeredInShadow = true
         } else if (m.kind === 'gate' || m.kind === 'counter-rule') {
           if (existing) gov.registry.unregister(shadowDraft.id)
           gov.registry.register({
             kind: 'gate', id: shadowDraft.id, version: shadowDraft.version, point: (m.point ?? shadowDraft.point) as Point,
-            description: shadowDraft.intent || shadowDraft.name, placement: { timing: 'pre', enforce: false },
+            description: shadowDraft.intent || shadowDraft.name, placement: { timing: 'pre', enforce: shadowEnforce ?? true },
             requires: shadowDraft.requires, gate: buildStandaloneGateFn(shadowDraft, args.draft),
           } as AnyGateDef, 'shadow')
           registeredInShadow = true

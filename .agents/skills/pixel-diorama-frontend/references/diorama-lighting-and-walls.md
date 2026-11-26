@@ -9,20 +9,20 @@
   - Right lower wing: executive / secondary workspace (`11×11` tiles) with chamfered front-right corner wall, Persian rug, lounge armchair, bookshelf, and warm desk lamp.
   - Additional workspaces (`N > 3`): expand organically along L/T corridor branches (`H = E - V + 1 >= 1` when `N >= 4`), never degenerating into a long 1D strip.
 
-## 2. 3D Thick Cutaway Wall Anatomy & Stepped Solid Height Law
-- **100% Solid Walls & Never Break at Doorways (`Anti-Pattern`)**: Never use semi-transparent ghost walls, and never split partition walls into islands at `door_wood` openings. Doors (`46px`) sit cleanly inside the `56px` spine portion of a continuous solid wall with uninterrupted plaster lintel and `#4A3428` walnut cap rail above.
-- **Stepped Solid Architectural Height Hierarchy (`1x` base units)**:
-  1. **Back Exterior Walls (`tier = 'back'`, `56px`)**: Proportional `56px` height (`~1.15x` whiteboard/window height) on `NW`/`NE` back perimeter edges with `#4A3428` walnut cap rail (`5px`), two-tone directional plaster (`#D9C4A8` sunlit `SE`-facing vs `#BFA48C` shaded `SW`-facing), and dark walnut wainscoting (`#6B4A32` / `#4A3428`).
-  2. **Interior Room-Dividing Walls (`tier = 'partition'`, `56px -> 38px`)**: `100%` solid stepped cutaway walls — `56px` across the back spine and over every doorway lintel, stepping monotonically down (`56px -> 38px -> 32px`, zero V-notches) on foreground cutaway spans, paired with an L-jogged `7`-tile open Grand Foyer and a `2`-tile indoor walkway setback so zero desks or actors are occluded.
-  3. **Front Cutaway Facade & Entrance Portal (`tier = 'cutaway'`, `32px`; `tier = 'portal'`, `50px`)**: `32px` front cutaway height stepping up to a freestanding `50px` central timber portal around `door_glass` at `mainEntrance`.
-- **Procedural Roguelike Room & Corridor Law**:
-  - Compose worlds from **seeded (`mulberry32`) architectural prefab room shapes** (`l-alcove`, `stepped-zigzag`, `bay-window`, `chamfer-octagon`, `t-studio`, `courtyard-nook`) with clean straight segments (no `<3` tile jagged notches) + **modular furniture combo templates** and **4 seeded building skeletons** (`seed=1..4`).
+## 2. 3D Thick Cutaway Wall Anatomy & Unified Solid Height Law
+- **100% Solid Walls & Never Break at Doorways (`Anti-Pattern`)**: Never use semi-transparent ghost walls, and never split partition walls into islands at `door_wood` openings. Doors (`50px`) sit cleanly inside the continuous `56px` solid wall with uninterrupted plaster lintel and `#4A3428` walnut cap rail above.
+- **Two-Tier Architectural Cutaway (`56px` / `34px`, Vertex-Height Continuous)**:
+  1. **Single-Valued Vertex Height Field `H(u, v)` + Corner Miter Caps**: Back walls (`tier = 'back'`) and partitions (`tier = 'partition'`) share `56px` (`UNIFIED_WALL_H`), exterior camera-facing front walls (`cutaway` | `portal`) step down to `34px` (`CUTAWAY_WALL_H`) via clean 1-tile architectural shoulders (`56→34`) so `100%` of wall vertices share one unique height and every 90° joint locks cleanly with a `t×t` isometric miter cap — zero floating walls or V-notches.
+  2. **Clean Architectural Rooms (`28×20`) & Paired Dual-Side Desk Chairs**: Rooms stay clean, readable architectural rectangles (optional gentle SE chamfers on `bottomRight`), `desk_cluster` renders both its visible NE monitor chair and a SW knee-well back-view chair, and every desk obeys `isDeskWallClear` (`>=1` tile from side walls, `>=2` tiles pull-back clearance on seating sides).
+  3. **Curated Seeds (`#1`–`#6`) & Universal Interior Layout Laws**:
+     - Cycle cleanly across the `6` curated building seeds (`#1`→`#6`→`#1`).
+     - Enforce **door `2×3` inward sightline clearance** (`buildDoorEntryZones`), **anti-door-facing seating** (`isSeatFacingDoor`), **armrest-side lamp pairing** (`armrestCellsFor`), `<= 35%` furniture occupancy, `1`-tile halo clearance, aligned desk matrices, wall-mount exclusion for tall props, and focal-anchored non-chamfer area rugs.
 
 ## 3. Dual Lighting & Shadow Specification
-1. **Wall-Base AO (`L2`, `blendMode = 'multiply'`, alpha `0.28–0.38`)**:
-   - Paint a `10–14px` soft stepped pixel shadow band along interior wall bases and room corners.
-2. **Entity Contact Shadows (`L2`, `blendMode = 'multiply'`, alpha `0.32`)**:
-   - Every furniture sprite and character renders a crisp quantized isometric oval/diamond shadow offset `(+2px, +2px)` toward `SE` beneath its footprint before `L4` draws the sprite.
+1. **Wall-Base AO (`L2`, `blendMode = 'multiply'`, alpha `0.24`)**:
+   - Paint true `2:1` isometric wall-floor shadow ribbons (`0.36` tiles deep) along all back and left interior partition bases.
+2. **Entity Contact Shadows (`L2`, `blendMode = 'multiply'`, alpha `0.36`)**:
+   - Project crisp `2:1` isometric footprint quads inset slightly under every entity and swivel chair (plus a soft directional drop shadow offset toward `SE`) before `L4` draws sprites so furniture sits firmly grounded on floorboards.
 3. **Warm Interior Light Pools (`L5`, `blendMode = 'add'` or warm alpha `0.18–0.28`)**:
    - **Wall Sconces**: warm `#F2A93B` / `#E8DCCB` 3-step dithered pixel halo on wall + `2×2` tile warm floor pool.
    - **Desk Lamps**: focused warm circle on desktop + adjacent floor.

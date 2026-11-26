@@ -5,7 +5,7 @@ export const REDACTED = '[REDACTED]'
 
 export interface RedactResult<T> { value: T; redacted: string[] }
 
-const SENSITIVE_WORDS = new Set(['secret', 'password', 'passwd', 'authorization', 'apikey', 'credential', 'credentials', 'cookie'])
+const SENSITIVE_WORDS = new Set(['secret', 'secrets', 'password', 'passwd', 'authorization', 'apikey', 'credential', 'credentials', 'cookie'])
 const FORCE_SUBTREE_WORDS = new Set(['secret', 'secrets', 'password', 'passwd', 'authorization', 'apikey', 'credential', 'credentials', 'cookie'])
 const ASSIGN_KEY = String.raw`(?:[a-z0-9_-]*(?:secret(?:_?(?:key|value))?|token(?:_?value)?|password|passwd|cookie|authorization|api[-_]?key))\b`
 

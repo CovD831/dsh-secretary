@@ -64,11 +64,13 @@ function canCallerReadM0Event(caller: RecallCaller, ev: SpineEnvelope): boolean 
   if (evClearance !== undefined && evClearance > callerRank) return false
   if (caller.role === 'worker') {
     if (ev.stream.startsWith('secretary:') || ev.stream.startsWith('ruling:') || ev.stream === 'memory:m2' || ev.stream === 'memory:m6') return false
+    if (ev.type === 'memory.tombstoned' || ev.type === 'memory.rejected' || ev.type === 'memory.proposed' || ev.type === 'memory.user_direct') return false
     if (payload['layer'] === 'm2' || payload['layer'] === 'm6' || payload['clearance'] === 'private') return false
     const ws = typeof payload['workspaceId'] === 'string' ? payload['workspaceId']
       : typeof payload['workspace'] === 'string' ? payload['workspace']
         : typeof payload['scope'] === 'string' && payload['scope'].startsWith('workspace:') ? payload['scope'].slice(10) : undefined
     if (ws && ws !== caller.workspaceId) return false
+    if (ev.stream.startsWith('memory:') && payload['layer'] !== 'm1' && !(payload['layer'] === 'm3' && ws === caller.workspaceId)) return false
   }
   return true
 }
@@ -91,11 +93,27 @@ export async function searchM0Fallback(
     shards = (await readdir(m0Dir)).filter(n => SHARD_FILE_RE.test(n)).sort()
   } catch { return [] }
 
-  const hits: M0FallbackHit[] = []
+  const shardEvents: (readonly SpineEnvelope[])[] = []
+  const deadEntryIds = new Set<string>()
   for (let i = shards.length - 1; i >= 0; i--) {
     let events: readonly SpineEnvelope[]
     try { events = await readCachedShardEvents(join(m0Dir, shards[i]!)) } catch { continue }
+    shardEvents.push(events)
     for (const ev of events) {
+      const p = (ev.payload && typeof ev.payload === 'object' ? ev.payload : {}) as Record<string, unknown>
+      if (ev.type === 'memory.tombstoned' && typeof p['entryId'] === 'string') deadEntryIds.add(p['entryId'])
+      if (ev.type === 'memory.accepted' && Array.isArray(p['supersededIds'])) {
+        for (const id of p['supersededIds']) if (typeof id === 'string') deadEntryIds.add(id)
+      }
+    }
+  }
+
+  const hits: M0FallbackHit[] = []
+  for (const events of shardEvents) {
+    for (const ev of events) {
+      if (ev.type === 'memory.tombstoned' || ev.type === 'memory.rejected' || ev.type === 'memory.proposed') continue
+      const p = (ev.payload && typeof ev.payload === 'object' ? ev.payload : {}) as Record<string, unknown>
+      if (typeof p['entryId'] === 'string' && deadEntryIds.has(p['entryId'])) continue
       if (!canCallerReadM0Event(caller, ev)) continue
       const safePayload = redactValue(ev.payload).value
       const text = `${ev.type} ${ev.stream} ${JSON.stringify(safePayload)}`.toLowerCase()

@@ -1,4 +1,5 @@
 /** 9-Slice 铆钉木金游戏 HUD：顶部双岛栏、左侧窄条半身像轨、左下罗盘小地图与右下 5 图标器物坞。 */
+import { useEffect, useState } from 'react'
 import type { SecretaryExpression } from '../app/tools/secretary-core.ts'
 import type { StatusKind } from './catalog.ts'
 import { UI_SKIN_URLS } from './diorama-catalog.ts'
@@ -26,6 +27,7 @@ export interface GameHudProps {
   readonly secretaryPortraitSrc: string
   readonly gateBlocked: boolean
   readonly seed?: number
+  readonly onSetSeed?: (seed: number) => void
   readonly onRerollSeed?: () => void
   readonly onOpenProp: (prop: 'doorplate' | GovernancePropKind) => void
   readonly onZoomChange: (zoom: 1 | 2) => void
@@ -64,9 +66,16 @@ function mergeRowRuns(cells: readonly { u: number; v: number }[]): RowRun[] {
 
 export function GameHud({
   online, activeWorkspaceId, world, actors, roomStats, workingCount, camera,
-  dialogCollapsed, secretaryMood, secretaryPortraitSrc, gateBlocked, seed = 1, onRerollSeed,
+  dialogCollapsed, secretaryMood, secretaryPortraitSrc, gateBlocked, seed = 1, onSetSeed, onRerollSeed,
   onOpenProp, onZoomChange, onResetCamera, onFocusLobby, onSelectWing, onOpenRoomDrawer,
 }: GameHudProps) {
+  const [seedDraft, setSeedDraft] = useState(String(seed))
+  useEffect(() => { setSeedDraft(String(seed)) }, [seed])
+  const commitSeed = () => {
+    const n = Number.parseInt(seedDraft, 10)
+    if (Number.isInteger(n) && n >= 1) { const cl = Math.min(999999, n); setSeedDraft(String(cl)); if (cl !== seed) onSetSeed?.(cl) }
+    else setSeedDraft(String(seed))
+  }
   const studioWings = world.wings.filter(w => w.kind === 'studio')
   const workspaceWings = studioWings.filter(w => Boolean(w.workspaceId))
   const secStatus: StatusKind = gateBlocked
@@ -113,17 +122,16 @@ export function GameHud({
           <NineSliceButton ariaLabel="全楼视角" active={camera.zoom === 1} onClick={() => onZoomChange(1)}>1×</NineSliceButton>
           <NineSliceButton ariaLabel="近景视角" active={camera.zoom === 2} onClick={() => onZoomChange(2)}>2×</NineSliceButton>
           <NineSliceButton ariaLabel="重置镜头" onClick={onResetCamera}>居中</NineSliceButton>
-          <NineSliceButton ariaLabel="切换布局种子" title="切换肉鸽房型与家居种子" onClick={onRerollSeed}>种子 #{seed}</NineSliceButton>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 11, color: OFFICE_THEME.borderGold }}>
+            <span>#</span>
+            <input aria-label="布局种子编号" title="输入任意正整数种子 (1-999999) 回车切换" value={seedDraft}
+              onChange={(e) => setSeedDraft(e.target.value)} onBlur={commitSeed} onKeyDown={(e) => { if (e.key === 'Enter') commitSeed() }}
+              style={{ width: 44, padding: '1px 3px', fontSize: 11, fontFamily: 'monospace', textAlign: 'center', background: OFFICE_THEME.bgDeep, color: OFFICE_THEME.inkCream, border: `1px solid ${OFFICE_THEME.borderWood}` }} />
+          </label>
+          <NineSliceButton ariaLabel="切换布局种子" title="随机生成新肉鸽房型与家居种子" onClick={onRerollSeed}>随机</NineSliceButton>
         </div>
 
-        <NineSliceButton
-          iconSrc={UI_SKIN_URLS.gear}
-          iconSize={20}
-          ariaLabel="机要设置"
-          title="机要柜与设置"
-          onClick={() => onOpenProp('cabinet')}
-          style={{ padding: '4px 6px' }}
-        />
+        <NineSliceButton iconSrc={UI_SKIN_URLS.gear} iconSize={20} ariaLabel="机要设置" title="机要柜与设置" onClick={() => onOpenProp('cabinet')} style={{ padding: '4px 6px' }} />
       </div>
 
       <div style={{
@@ -131,13 +139,7 @@ export function GameHud({
         padding: '4px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
       }}>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-          <MugshotSlot
-            src={secretaryPortraitSrc}
-            alt="秘书头像"
-            status={secStatus}
-            title="秘书总台"
-            onClick={onFocusLobby}
-          />
+          <MugshotSlot src={secretaryPortraitSrc} alt="秘书头像" status={secStatus} title="秘书总台" onClick={onFocusLobby} />
           <span style={{ fontSize: 10, color: OFFICE_THEME.borderGold, fontWeight: 700 }}>总台</span>
         </div>
 
@@ -147,40 +149,19 @@ export function GameHud({
           const stat = roomStats[roomId] ?? { count: 0, status: 'idle' }
           return (
             <div key={wing.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: '100%' }}>
-              <MugshotSlot
-                src={UI_SKIN_URLS.mugshotLead}
-                alt={`房间-${roomId}`}
-                status={stat.status}
-                active={active}
-                title={roomId}
-                badgeCount={stat.count}
-                onClick={() => onSelectWing(wing)}
-              />
+              <MugshotSlot src={UI_SKIN_URLS.mugshotWorker} alt={`房间-${roomId}`} status={stat.status} active={active} title={roomId} badgeCount={stat.count} onClick={() => onSelectWing(wing)} />
               <span title={roomId} style={{
                 fontSize: 10, maxWidth: 46, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 color: active ? OFFICE_THEME.borderGold : OFFICE_THEME.inkCream, fontWeight: active ? 700 : 400,
               }}>
                 {roomId}
               </span>
-              <NineSliceButton
-                ariaLabel={`查看房间卷宗-${roomId}`}
-                onClick={() => onOpenRoomDrawer(roomId)}
-                style={{ padding: '0 4px', fontSize: 10, borderWidth: 4 }}
-              >
-                卷宗
-              </NineSliceButton>
+              <NineSliceButton ariaLabel={`查看房间卷宗-${roomId}`} onClick={() => onOpenRoomDrawer(roomId)} style={{ padding: '0 4px', fontSize: 10, borderWidth: 4 }}>卷宗</NineSliceButton>
             </div>
           )
         })}
 
-        <NineSliceButton
-          iconSrc={UI_SKIN_URLS.sprout}
-          iconSize={18}
-          title="扩建房间"
-          ariaLabel="扩建房间"
-          onClick={() => onOpenProp('cabinet')}
-          style={{ width: 44, padding: '2px 4px' }}
-        />
+        <NineSliceButton iconSrc={UI_SKIN_URLS.sprout} iconSize={18} title="扩建房间" ariaLabel="扩建房间" onClick={() => onOpenProp('cabinet')} style={{ width: 44, padding: '2px 4px' }} />
       </div>
 
       {dialogCollapsed && (

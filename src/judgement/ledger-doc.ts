@@ -131,6 +131,11 @@ export async function discoverAndRegisterDeposits(options: DiscoverDepositsOptio
         continue
       }
       const m = loaded.admission.manifest
+      if (!isBuiltinDir && RESERVED_BUILTIN_DEPOSIT_IDS.has(m.id) && (registerSeededOssGates || !OSS_SEEDED_GATE_IDS.has(m.id))) {
+        rejectedIds.push(m.id)
+        records.push({ id: m.id, dirName, packageDir, kind: m.kind, ...(m.point ? { point: m.point } : {}), stage: 'shadow', enforce: false, trust: m.trust, casesCount: loaded.cases.length, status: 'rejected', error: `禁止外部沉淀包覆盖内置保留 ID "${m.id}"`, manifest: m })
+        continue
+      }
       if (!registerSeededOssGates && isBuiltinDir && OSS_SEEDED_GATE_IDS.has(m.id)) continue
       if (seenIds.has(m.id)) {
         rejectedIds.push(m.id)

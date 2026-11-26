@@ -21,11 +21,11 @@ import { createInitialWorldActors, pickWorldTarget, reSeatWorkerOnWorld, renderW
 import type { OfficeCamera, OfficeWorldPlan, WorkspaceWingSpec, WorldPickResult, WorldWingPlan } from './world-types.ts'
 
 type TicketItem = TicketListView['items'][number]
-const WORLD_CENTER = { u: 11.8, v: 9.0 } as const
+const WORLD_CENTER = { u: 13.5, v: 10.2 } as const
 const SEED_STORAGE_KEY = 'dsh_office_world_seed'
 const defaultZoomFor = (w: number): 1 | 2 => (w >= 1320 ? 2 : 1)
 function readInitialSeed(): number {
-  try { const n = typeof localStorage !== 'undefined' ? Number.parseInt(localStorage.getItem(SEED_STORAGE_KEY) ?? '', 10) : NaN; return Number.isInteger(n) && n >= 1 && n <= 16 ? n : 1 }
+  try { const n = typeof localStorage !== 'undefined' ? Number.parseInt(localStorage.getItem(SEED_STORAGE_KEY) ?? '', 10) : NaN; return Number.isInteger(n) && n >= 1 && n <= 999999 ? n : 1 }
   catch (err) { console.warn('seed read fallback', err); return 1 }
 }
 
@@ -159,7 +159,8 @@ export function StageApp() {
     for (const wing of world.wings) {
       if (!wing.workspaceId) continue
       const roomList = tickets.filter(t => resolveRoomId(t, settings) === wing.workspaceId)
-      out[`exec-${wing.workspaceId}`] = activeRuling && wing.workspaceId === workspaceId ? 'needsDecision' : roomList.some(t => t.stage === 'working') ? 'working' : 'off'
+      const primaryId = wing.suites[0]?.id
+      if (primaryId) out[primaryId] = activeRuling && wing.workspaceId === workspaceId ? 'needsDecision' : roomList.some(t => t.stage === 'working') ? 'working' : 'off'
     }
     for (const actor of actorSnap) {
       if (actor.role !== 'worker' || !actor.assignedSuiteId || actor.lifecycle === 'leaving') continue
@@ -206,8 +207,7 @@ export function StageApp() {
   const buildFrameState = (dt: number, elapsed: number) => {
     const s = liveRef.current
     actorsRef.current = stepWorldActors(actorsRef.current, s.world, dt)
-    const gateId = actorsRef.current.find(a => a.ticketId && a.ticketId === gateTicketRef.current)?.id
-      ?? actorsRef.current.find(a => a.id === `lead-${s.workspaceId}`)?.id ?? actorsRef.current.find(a => a.role === 'lead')?.id ?? 'secretary'
+    const gateId = actorsRef.current.find(a => a.ticketId && a.ticketId === gateTicketRef.current)?.id ?? 'secretary'
     return {
       camera: s.camera, viewport: s.viewport, images: spritesRef.current.images,
       scene: {
@@ -277,10 +277,13 @@ export function StageApp() {
   }
 
   const resetCam = () => setCamera(cameraForGridPoint(WORLD_CENTER, world, defaultZoomFor(viewport.w), viewport.w, viewport.h))
-  const rerollSeed = () => {
-    const next = (worldSeed % 16) + 1; setWorldSeed(next)
+  const applySeed = (raw: number) => {
+    const next = Math.max(1, Math.min(999999, Math.floor(raw) || 1)); setWorldSeed(next)
     try { if (typeof localStorage !== 'undefined') localStorage.setItem(SEED_STORAGE_KEY, String(next)) } catch (err) { console.warn('seed persist skipped', err) }
     setCamera(c => cameraForGridPoint(WORLD_CENTER, solveWorldFloorplan(workspaces, next), c.zoom, viewport.w, viewport.h))
+  }
+  const rerollSeed = () => {
+    let next = 2 + Math.floor(Math.random() * 9998); if (next === worldSeed) next = (next % 9998) + 2; applySeed(next)
   }
 
   return (
@@ -288,31 +291,25 @@ export function StageApp() {
       <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
         <GameHud online={online} activeWorkspaceId={workspaceId} world={world} actors={actorSnap.length > 0 ? actorSnap : actorsRef.current} roomStats={roomStats}
           workingCount={tickets.filter(t => t.stage === 'working').length} camera={camera} dialogCollapsed={effectiveCollapsed}
-          secretaryMood={secretaryMood} secretaryPortraitSrc={secretaryPortraitSrc} gateBlocked={gateBlocked} seed={worldSeed} onRerollSeed={rerollSeed}
+          secretaryMood={secretaryMood} secretaryPortraitSrc={secretaryPortraitSrc} gateBlocked={gateBlocked} seed={worldSeed} onSetSeed={applySeed} onRerollSeed={rerollSeed}
           onOpenProp={p => { if (p === 'doorplate') setDrawerMode('doorplate'); else setActiveProp(p) }}
           onZoomChange={zoom => setCamera(cameraForGridPoint(WORLD_CENTER, world, zoom, viewport.w, viewport.h))}
-          onResetCamera={resetCam}
-          onFocusLobby={() => { setCamera(c => cameraForGridPoint(world.lobby.focusPoint, world, c.zoom, viewport.w, viewport.h)); setDialogCollapsed(false) }}
-          onSelectWing={focusWing}
-          onOpenRoomDrawer={roomId => { setWorkspaceId(roomId); setSelectedTicketId(tickets.find(t => resolveRoomId(t, settings) === roomId)?.id ?? null); setDrawerMode('worker') }} />
+          onResetCamera={resetCam} onFocusLobby={() => { setCamera(c => cameraForGridPoint(world.lobby.focusPoint, world, c.zoom, viewport.w, viewport.h)); setDialogCollapsed(false) }}
+          onSelectWing={focusWing} onOpenRoomDrawer={roomId => { setWorkspaceId(roomId); setSelectedTicketId(tickets.find(t => resolveRoomId(t, settings) === roomId)?.id ?? null); setDrawerMode('worker') }} />
         <canvas ref={canvasRef} width={usePixiWebGL ? undefined : viewport.w} height={usePixiWebGL ? undefined : viewport.h} aria-label="像素办公室主舞台"
-          onMouseDown={e => { dragRef.current = { startX: e.clientX, startY: e.clientY, panX: camera.panX, panY: camera.panY, moved: false } }}
-          onMouseMove={handleMouseMove}
-          onMouseUp={() => { if (dragRef.current?.moved) suppressClickRef.current = true; dragRef.current = null }}
-          onMouseLeave={() => { dragRef.current = null; setHoverTarget(null) }}
+          onMouseDown={e => { dragRef.current = { startX: e.clientX, startY: e.clientY, panX: camera.panX, panY: camera.panY, moved: false } }} onMouseMove={handleMouseMove}
+          onMouseUp={() => { if (dragRef.current?.moved) suppressClickRef.current = true; dragRef.current = null }} onMouseLeave={() => { dragRef.current = null; setHoverTarget(null) }}
           onClick={e => { if (suppressClickRef.current) { suppressClickRef.current = false; return } handleCanvasClick(e.clientX, e.clientY) }}
           style={{ width: '100%', height: '100%', display: 'block', imageRendering: 'pixelated', cursor: hoverTarget ? 'pointer' : 'grab' }} />
         <NpcDialog feed={feed} activeRuling={activeRuling} pendingCount={pendingCount} avatar={avatar}
-          hasWorkingTickets={tickets.some(t => t.stage === 'working')} gateBlocked={gateBlocked}
-          secretaryThinking={secretaryThinking} collapsed={dialogCollapsed}
+          hasWorkingTickets={tickets.some(t => t.stage === 'working')} gateBlocked={gateBlocked} secretaryThinking={secretaryThinking} collapsed={dialogCollapsed}
           pendingBossText={pendingBoss?.text ?? (latestEntry?.role === 'boss' ? latestEntry.text : null)} inputRef={inputRef}
           onSendMessage={handleSendMessage} onDecideRuling={handleDecideRuling} onOpenHandover={entry => setHandoverEntry(entry)}
           onExpand={() => setDialogCollapsed(false)} onCollapse={() => setDialogCollapsed(true)} />
       </div>
       <PropsDrawer activeProp={activeProp} onClose={() => setActiveProp(null)} onChanged={() => { void refreshAll() }} />
       <HandoverSheet entry={handoverEntry} onClose={() => setHandoverEntry(null)} />
-      <WorkerDrawer mode={drawerMode} workspaceId={workspaceId} settings={settings} tickets={roomTickets} allTickets={tickets}
-        selectedTicketId={selectedTicketId} streamTick={streamTick}
+      <WorkerDrawer mode={drawerMode} workspaceId={workspaceId} settings={settings} tickets={roomTickets} allTickets={tickets} selectedTicketId={selectedTicketId} streamTick={streamTick}
         onSelectWorkspace={id => { setWorkspaceId(id); const w = world.wings.find(x => x.workspaceId === id); if (w) setCamera(c => cameraForGridPoint(w.focusPoint, world, c.zoom, viewport.w, viewport.h)) }}
         onSelectTicket={id => setSelectedTicketId(id)} onChanged={() => { void refreshAll() }} onClose={() => setDrawerMode(null)} />
     </div>

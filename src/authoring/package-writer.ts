@@ -47,6 +47,7 @@ export async function writeDepositDraftPackage(rootDir: string, draft: DepositDr
   const secretScan = redactValue({
     name: draft.name, intent: draft.intent, rubricBody: draft.rubricBody,
     repairHint: draft.repairHint, exceptions: draft.exceptions, cases: draft.cases,
+    playbook: draft.playbook, rule: draft.rule,
   })
   if (secretScan.redacted.length > 0) throw new Error(`拒绝落盘：检测到敏感凭据 (${secretScan.redacted.join(', ')})`)
   if (!SAFE_ID_RE.test(draft.id) || draft.id.includes('..')) throw new Error(`非法包目录名 "${draft.id}"`)
@@ -88,7 +89,11 @@ export async function writeDepositDraftPackage(rootDir: string, draft: DepositDr
     ...(draft.stage ? { stage: draft.stage } : {}),
     ...(draft.enforce !== undefined ? { enforce: draft.enforce } : {}),
     ...(draft.action ? { action: draft.action } : {}),
-    ...(draft.kind === 'standing-order' ? { trigger: { signal: draft.trigger.signal ?? draft.trigger.on } } : {}),
+    ...(draft.kind === 'standing-order' ? { trigger: { signal: draft.trigger.signal ?? draft.trigger.on, ...(draft.trigger.match ? { match: draft.trigger.match } : {}) } } : {}),
+    ...(draft.rule !== undefined ? { rule: draft.rule } : {}),
+    ...(draft.playbook ? { playbook: draft.playbook } : {}),
+    ...(draft.measures ? { measures: draft.measures } : {}),
+    ...(draft.mandate ? { mandate: draft.mandate } : {}),
   }
   const examplesMd = draft.cases.map(c => `- [${c.expected}] \`${c.name}\`${c.note ? `：${c.note}` : ''}`).join('\n')
   const exceptionsMd = draft.exceptions.length > 0 ? draft.exceptions.map(e => `- ${e}`).join('\n') : '暂无显式例外。'

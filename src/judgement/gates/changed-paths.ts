@@ -205,8 +205,13 @@ export function evaluateChangedPaths(ctx: ChangedPathsCtx, boundParams?: Partial
   if (ctx.taskKind !== undefined && ctx.taskKind !== 'implementation' && ctx.taskKind !== 'repair') {
     return { kind: 'allow', produced: { skipped: 'not-applicable', taskKind: ctx.taskKind } }
   }
-  if (ctx.declaredPaths !== undefined) return evaluateDeclaredPathsMode(ctx, p)
+  if (ctx.declaredPaths !== undefined && ctx.declaredPaths !== null) {
+    const declVerdict = evaluateDeclaredPathsMode(ctx, p)
+    if (declVerdict.kind !== 'allow' || ctx.allowedPaths === undefined) return declVerdict
+    return evaluateAllowedPathsMode(ctx, p)
+  }
   if (ctx.allowedPaths !== undefined) return evaluateAllowedPathsMode(ctx, p)
+  if (ctx.declaredPaths === null) return { kind: 'allow', produced: { skipped: 'not-applicable' } }
   return { kind: 'unmeasured', cause: 'missing-input', detail: '缺少 declaredPaths 或 allowedPaths 输入' }
 }
 

@@ -138,10 +138,11 @@ export class Store implements Repositories {
    * Post-commit callbacks run only after the outermost transaction commits, and callback errors are reported without failing the committed transaction.
    */
   atomic<T>(operation: () => T): T {
-    const level = this.depth++
+    const level = this.depth
     const name = `orchestrator_atomic_${level}`
-    this.committed[level] = []
     this.db.exec(`SAVEPOINT ${name}`)
+    this.depth++
+    this.committed[level] = []
     let value: T
     try { value = operation(); this.db.exec(`RELEASE ${name}`) }
     catch (error) { this.db.exec(`ROLLBACK TO ${name}`); this.db.exec(`RELEASE ${name}`); throw error }

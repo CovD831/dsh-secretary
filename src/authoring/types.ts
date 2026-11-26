@@ -1,4 +1,4 @@
-import type { DepositManifest, ParamSpec, Stage, UnmeasuredCause, Verdict } from '../judgement/types.ts'
+import type { DeclarativeRule, DepositManifest, MandateBinding, ParamSpec, PlaybookSpec, Stage, UnmeasuredCause, Verdict } from '../judgement/types.ts'
 import type { EvidenceRef, SourceRef, SpineDraft } from '../spine/types.ts'
 
 export type AttributionCategory = 'env_transient' | 'exec_mistake' | 'gate_gap' | 'mandate_unclear'
@@ -45,6 +45,7 @@ export interface DepositTriggerDraft {
   readonly globs?: readonly string[]
   readonly mode: 'always' | 'on-event' | 'scheduled-sweep'
   readonly signal?: string
+  readonly match?: Readonly<Record<string, unknown>>
 }
 
 export interface DepositDraft {
@@ -72,6 +73,10 @@ export interface DepositDraft {
   readonly origin: { readonly kind: 'user-authored' | 'friction-mined' | 'forked'; readonly refs?: readonly string[] }
   readonly cases: readonly DepositFixtureCase[]
   readonly unansweredSlots?: readonly string[]
+  readonly playbook?: PlaybookSpec
+  readonly rule?: DeclarativeRule
+  readonly measures?: string
+  readonly mandate?: MandateBinding
 }
 
 export type SpineInput<P = unknown> = SpineDraft<P>

@@ -81,12 +81,12 @@ function mapSessionEvents(events: readonly SessionEvent[]): TranscriptEntry[] {
     const at = isoFromTime(ev.time)
     const seq = typeof ev.seq === 'number' ? ev.seq : undefined
     if (ev.type === 'user/message') {
-      const text = extractText(ev.data?.content)
+      const text = redactValue(extractText(ev.data?.content)).value
       if (!text) continue
       out.push({ id: `sess:${seq ?? out.length}:user`, at, kind: 'user', summary: clipHead(text, 160), detail: clipTail(text, 400), ...(seq !== undefined ? { seq } : {}) })
     } else if (ev.type === 'assistant/message') {
       const content = ev.data?.message?.content
-      const text = extractText(content)
+      const text = redactValue(extractText(content)).value
       if (text) {
         out.push({ id: `sess:${seq ?? out.length}:assistant`, at, kind: 'assistant', summary: clipHead(text, 160), detail: clipTail(text, 400), ...(seq !== undefined ? { seq } : {}) })
       }
@@ -106,7 +106,7 @@ function mapSessionEvents(events: readonly SessionEvent[]): TranscriptEntry[] {
       const callId = String(msg?.toolCallId ?? msg?.source?.callId ?? '')
       const toolName = callNames.get(callId) ?? 'tool'
       const isError = Boolean(msg?.isError)
-      const text = extractText(msg?.content)
+      const text = redactValue(extractText(msg?.content)).value
       const tail = clipTail(text, 400)
       out.push({
         id: `sess:${seq ?? out.length}:tr`, at, kind: 'tool_result',
@@ -123,19 +123,20 @@ function mapSessionEvents(events: readonly SessionEvent[]): TranscriptEntry[] {
 function mapSpineEvents(items: Awaited<ReturnType<typeof readSpineProjection>>['items']): TranscriptEntry[] {
   const out: TranscriptEntry[] = []
   for (const ev of items) {
-    const payload = isRecord(ev.payload) ? ev.payload : {}
+    const payload = redactValue(isRecord(ev.payload) ? ev.payload : {}).value
+    const safeJson = JSON.stringify(payload)
     if (ev.type === 'gate.evaluated') {
       const point = typeof payload['point'] === 'string' ? payload['point'] : 'gate'
       const verdict = isRecord(payload['verdict']) && typeof payload['verdict']['kind'] === 'string' ? payload['verdict']['kind'] : 'unknown'
       const status = verdict === 'allow' ? 'ok' : verdict === 'deny' ? 'error' : 'warn'
       out.push({
         id: `spine:${ev.seq}`, at: ev.at, kind: 'gate', summary: `${point} -> ${verdict}`,
-        detail: clipTail(JSON.stringify(payload), 400), status, seq: ev.seq,
+        detail: clipTail(safeJson, 400), status, seq: ev.seq,
       })
     } else {
       out.push({
         id: `spine:${ev.seq}`, at: ev.at, kind: 'spine', summary: ev.type,
-        detail: clipTail(JSON.stringify(payload), 400), seq: ev.seq,
+        detail: clipTail(safeJson, 400), seq: ev.seq,
       })
     }
   }

@@ -126,7 +126,8 @@ export class RulingQueue {
   }
 
   private saveAll(items: readonly RulingItem[]): void {
-    const capped = items.length > 300 ? items.slice(items.length - 300) : [...items]
+    const pending = items.filter(i => i.status === 'pending')
+    const capped = items.length <= 300 ? [...items] : [...pending, ...items.filter(i => i.status !== 'pending').slice(-Math.max(0, 300 - pending.length))]
     this.deps.store.set(KV.governance.rulings, capped)
   }
 

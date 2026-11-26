@@ -17,6 +17,7 @@ import type { PromptVersion, Prompts } from './prompts.ts'
 import type { Sessions } from './sessions.ts'
 import type { Settings } from './settings.ts'
 import { KV } from '../kv.ts'
+import { redactValue } from '../spine/redact.ts'
 import type { Store } from './store.ts'
 import type { TextCache } from './cache.ts'
 
@@ -42,8 +43,7 @@ export const RESOURCES: readonly { name: string; holds: string; executor?: true 
     executor: true },
   { name: 'settings', holds: 'settings by block, each with the revision a save names: the small blocks whole, the Policy and the Source '
     + 'instances summarized' },
-  { name: 'settings/<block>', holds: 'one settings block whole, as orchestrator_settings_save takes it: policy, eval, executor, workspaces, pause or '
-    + 'source:<id>' },
+  { name: 'settings/<block>', holds: 'one settings block whole: policy, eval, executor, pause, source:<id>, or workspaces (panel-only)' },
   { name: 'prompts', holds: 'the prompt revision each Session reads, the skills, and the saved versions' },
   { name: 'prompts/<revision>', holds: 'one prompt version by number, or current, the one the Session works under', executor: true },
   { name: 'prompts/defaults', holds: 'the built-in prompt configuration, and the built-in parts by the key an override names' },
@@ -84,7 +84,7 @@ const main = ({ host, ticketId }: Read): MainResourceHost => {
   if (ticketId || !('settings' in host)) throw new Error('This resource belongs to the main Session')
   return host as MainResourceHost
 }
-const text = ({ resource, offset, limit }: Read, body: string) => textPage(resource, body, offset, limit ?? 4000)
+const text = ({ resource, offset, limit }: Read, body: string) => textPage(resource, redactValue(body).value, offset, limit ?? 4000)
 function list<T>({ offset, limit }: Read, fetch: (offset: number, count: number) => T[]) {
   const size = Math.min(limit ?? 20, 50)
   const items = fetch(offset, size + 1)

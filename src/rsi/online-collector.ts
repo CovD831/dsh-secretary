@@ -116,7 +116,7 @@ export async function collectOnlineRsiSnapshot(options: OnlineCollectOptions): P
   const labelHits: LabelledEventRecord[] = []
   const byTicket = new Map<string, SpineEnvelope[]>()
   const deniedTickets = new Set<string>()
-  const clusterMap = new Map<string, { category: string; point?: string; toolName?: string; attribution?: FourWayAttribution; refs: SourceRef[]; days: Set<string> }>()
+  const clusterMap = new Map<string, { category: string; point?: string; toolName?: string; attribution?: FourWayAttribution; refs: SourceRef[]; days: Set<string>; tickets: Set<string> }>()
   const callToolIds = new Set<string>()
   const rulingTruthByCall = new Map<string, 'clean' | 'defect'>()
   const rulingTruthByTicket = new Map<string, 'clean' | 'defect'>()
@@ -131,9 +131,11 @@ export async function collectOnlineRsiSnapshot(options: OnlineCollectOptions): P
   }
   const addFriction = (ev: SpineEnvelope, key: string, category: string, point?: string, toolName?: string, attr?: FourWayAttribution) => {
     const day = /^\d{4}-\d{2}-\d{2}/.test(ev.at) ? ev.at.slice(0, 10) : undefined
-    const cur = clusterMap.get(key) ?? { category, ...(point ? { point } : {}), ...(toolName ? { toolName } : {}), ...(attr ? { attribution: attr } : {}), refs: [], days: new Set<string>() }
+    const cur = clusterMap.get(key) ?? { category, ...(point ? { point } : {}), ...(toolName ? { toolName } : {}), ...(attr ? { attribution: attr } : {}), refs: [], days: new Set<string>(), tickets: new Set<string>() }
     cur.refs.push({ seq: ev.seq, id: ev.id })
     if (day) cur.days.add(day)
+    const evTid = ticketIdOf(ev)
+    if (evTid) cur.tickets.add(evTid)
     clusterMap.set(key, cur)
   }
 
@@ -226,18 +228,24 @@ export async function collectOnlineRsiSnapshot(options: OnlineCollectOptions): P
   let defectTickets = 0, cleanTickets = 0
   for (const [tid, tEvents] of byTicket) {
     const attempts: { at?: number; outcome: 'completed' | 'failed' | 'cancelled' }[] = []
-    let escCount = 0, retrySignals = 0, startCount = 0
+    let escCount = 0, retrySignals = 0, startCount = 0, hasAssignmentEnd = false
     for (const ev of tEvents) {
       const atMs = Date.parse(ev.at), p = isRec(ev.payload) ? ev.payload : {}
       if (ev.type === 'assignment.started') startCount += 1
       else if (ev.type === 'assignment.ended') {
+        hasAssignmentEnd = true
         const r = String(p['reason'] ?? '')
         if (/retry|retried|fail|block/i.test(r)) { retrySignals += 1; attempts.push({ ...(Number.isFinite(atMs) ? { at: atMs } : {}), outcome: 'failed' }) }
         else attempts.push({ ...(Number.isFinite(atMs) ? { at: atMs } : {}), outcome: 'completed' })
       } else if (ev.type === 'ticket.circuit_broken') attempts.push({ ...(Number.isFinite(atMs) ? { at: atMs } : {}), outcome: 'failed' })
       else if (ev.type === 'ticket.ended') {
         const out = String(p['outcome'] ?? 'completed')
-        attempts.push({ ...(Number.isFinite(atMs) ? { at: atMs } : {}), outcome: out === 'cancelled' || out === 'stopped' ? 'cancelled' : out === 'failed' ? 'failed' : 'completed' })
+        const termOutcome = out === 'cancelled' || out === 'stopped' ? 'cancelled' : out === 'failed' ? 'failed' : 'completed'
+        if (hasAssignmentEnd && startCount <= 1 && retrySignals === 0 && attempts.length === 1) {
+          attempts[0] = { ...attempts[0]!, outcome: termOutcome }
+        } else {
+          attempts.push({ ...(Number.isFinite(atMs) ? { at: atMs } : {}), outcome: termOutcome })
+        }
       } else if (ev.type === 'ruling.queued') escCount += 1
     }
     const tLabels = labelsByTicket.get(tid) ?? new Set<NaturalBackfillLabel>()
@@ -273,7 +281,7 @@ export async function collectOnlineRsiSnapshot(options: OnlineCollectOptions): P
   const candidateDrafts: DepositDraft[] = []
   for (const [key, c] of clusterMap) {
     const distinctDays = [...c.days].sort(), seenCount = c.refs.length
-    const qualifiesForRung1 = seenCount >= minSeen && distinctDays.length >= minDays
+    const qualifiesForRung1 = seenCount >= minSeen && distinctDays.length >= minDays && (c.tickets.size === 0 || c.tickets.size >= Math.min(2, minSeen))
     const draft = qualifiesForRung1 ? toClusterDraft(key, c.category, c.point, c.toolName, c.attribution, c.refs, distinctDays, seenCount) : undefined
     if (draft) candidateDrafts.push(draft)
     clusters.push({ key, category: c.category, ...(c.point ? { point: c.point } : {}), ...(c.toolName ? { toolName: c.toolName } : {}),

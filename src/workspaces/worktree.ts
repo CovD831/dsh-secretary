@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { existsSync, lstatSync, realpathSync } from 'node:fs'
-import { cp, mkdir } from 'node:fs/promises'
+import { cp, mkdir, readdir, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { SpineAppender } from '../spine/types.ts'
@@ -44,15 +44,31 @@ function sameOrWithin(candidate: string, parent: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
 }
 
+const repoLocks = new Map<string, Promise<void>>()
+const GIT_LOCK_RETRY_MS = [40, 120, 250] as const
+
+async function withRepoLock<T>(repoKey: string, fn: () => Promise<T>): Promise<T> {
+  const prev = repoLocks.get(repoKey) ?? Promise.resolve()
+  const run = prev.catch(() => undefined).then(fn)
+  const tail = run.then(() => undefined, () => undefined)
+  repoLocks.set(repoKey, tail)
+  try { return await run } finally { if (repoLocks.get(repoKey) === tail) repoLocks.delete(repoKey) }
+}
+
 async function runGit(args: readonly string[], cwd: string, options: GitRunOptions = {}): Promise<{ stdout: string; stderr: string }> {
   const timeout = options.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS
-  return execFileAsync('git', [...args], {
-    cwd,
-    timeout,
-    maxBuffer: 4 * 1024 * 1024,
-    encoding: 'utf8',
-    ...(options.signal ? { signal: options.signal } : {}),
-  })
+  for (let i = 0; ; i++) {
+    try {
+      return await execFileAsync('git', [...args], {
+        cwd, timeout, maxBuffer: 4 * 1024 * 1024, encoding: 'utf8',
+        ...(options.signal ? { signal: options.signal } : {}),
+      })
+    } catch (error) {
+      const msg = `${(error as { stderr?: string })?.stderr ?? ''} ${(error as { message?: string })?.message ?? ''}`
+      if (i >= GIT_LOCK_RETRY_MS.length || options.signal?.aborted || !/could not lock config file|\.lock': File exists/i.test(msg)) throw error
+      await new Promise(res => setTimeout(res, GIT_LOCK_RETRY_MS[i]))
+    }
+  }
 }
 
 export function deriveBranchName(branchPrefix: string, executionName: string): string {
@@ -100,18 +116,22 @@ export async function provisionWorktree(input: ProvisionWorktreeInput): Promise<
   }
   const branch = deriveBranchName(workspace.branchPrefix, input.executionName)
   const opts: GitRunOptions = { timeoutMs: input.timeoutMs, signal: input.signal }
-  const { stdout: shaOut } = await runGit(['rev-parse', '--verify', `${workspace.baseBranch}^{commit}`], workspace.repository, opts)
-  const base = shaOut.trim()
-  if (!base) throw new Error(`无法解析 baseBranch "${workspace.baseBranch}" 的提交哈希`)
-  await runGit(['worktree', 'add', '--no-track', '-b', branch, input.targetDir, workspace.baseBranch], workspace.repository, opts)
-  try {
-    await runGit(['config', `branch.${branch}.base`, base], workspace.repository, opts)
-  } catch (error) {
-    // config 登记失败必须回滚刚创建的 worktree 与分支，防止留下无谱系半成品。
-    await runGit(['worktree', 'remove', '--', input.targetDir], workspace.repository, opts).catch(() => {})
-    await runGit(['branch', '-d', '--', branch], workspace.repository, opts).catch(() => {})
-    throw error
-  }
+  // 同一仓库下 git config 写入共用 .git/config，串行化可避免并发建树时的 .git/config.lock 竞态。
+  const base = await withRepoLock(normalizePath(workspace.repository), async () => {
+    const { stdout: shaOut } = await runGit(['rev-parse', '--verify', `${workspace.baseBranch}^{commit}`], workspace.repository, opts)
+    const rev = shaOut.trim()
+    if (!rev) throw new Error(`无法解析 baseBranch "${workspace.baseBranch}" 的提交哈希`)
+    await runGit(['worktree', 'add', '--no-track', '-b', branch, input.targetDir, workspace.baseBranch], workspace.repository, opts)
+    try {
+      await runGit(['config', `branch.${branch}.base`, rev], workspace.repository, opts)
+    } catch (error) {
+      // config 登记失败必须回滚刚创建的 worktree 与分支，防止留下无谱系半成品。
+      await runGit(['worktree', 'remove', '--', input.targetDir], workspace.repository, opts).catch(() => {})
+      await runGit(['branch', '-d', '--', branch], workspace.repository, opts).catch(() => {})
+      throw error
+    }
+    return rev
+  })
   const draft: ProvisionedDraft = { ticketId: input.ticketId, workspace: workspace.id, branch, base }
   if (workspace.cowPaths?.length) {
     await copyCowDependencies(workspace.repository, input.targetDir, workspace.cowPaths, opts)
@@ -119,9 +139,31 @@ export async function provisionWorktree(input: ProvisionWorktreeInput): Promise<
   return input.appender ? recordProvisioned(input.appender, draft) : draft
 }
 
-const FORBIDDEN_COW_NAME_RE = /^\.env(?:\..+)?$/i
+const FORBIDDEN_COW_NAME_RE = /^\.env(?:\..+|rc)?$/i
 
-/** 将主仓已声明的依赖目录（如 `node_modules`）以 APFS CoW `cp -Rc` 快拷至新 worktree，严禁拷入 `.env*` 或越界软链。 */
+async function scrubCowTree(rootDst: string, repoReal: string, targetReal: string): Promise<void> {
+  const entries = await readdir(rootDst, { withFileTypes: true }).catch(() => [])
+  for (const ent of entries) {
+    const full = join(rootDst, ent.name)
+    if (FORBIDDEN_COW_NAME_RE.test(ent.name)) {
+      await rm(full, { recursive: true, force: true })
+      continue
+    }
+    if (ent.isSymbolicLink()) {
+      const escaped = (() => {
+        try {
+          const real = realpathSync(full)
+          return !sameOrWithin(real, targetReal) && !sameOrWithin(real, repoReal)
+        } catch { return true }
+      })()
+      if (escaped) await rm(full, { force: true })
+      continue
+    }
+    if (ent.isDirectory()) await scrubCowTree(full, repoReal, targetReal)
+  }
+}
+
+/** 将主仓已声明的依赖目录（如 `node_modules`）以 APFS CoW `cp -Rc` 快拷至新 worktree，严禁拷入 `.env*`/`.envrc` 或越界软链。 */
 export async function copyCowDependencies(
   repoDir: string,
   targetDir: string,
@@ -141,19 +183,22 @@ export async function copyCowDependencies(
     const dst = resolve(targetReal, clean)
     if (!sameOrWithin(dst, targetReal) || existsSync(dst)) continue
     await mkdir(dirname(dst), { recursive: true })
+    let cloned = false
     if (process.platform === 'darwin') {
       try {
         await execFileAsync('cp', ['-Rc', src, dst], { timeout: options.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS, signal: options.signal })
-        copied.push(clean)
-        continue
+        cloned = true
       } catch {
         // 非 APFS 卷自动回退 Node 递归拷贝（过滤 .env*）。
       }
     }
-    await cp(src, dst, {
-      recursive: true,
-      filter: candidate => !FORBIDDEN_COW_NAME_RE.test(basename(candidate)),
-    })
+    if (!cloned) {
+      await cp(src, dst, {
+        recursive: true,
+        filter: candidate => !FORBIDDEN_COW_NAME_RE.test(basename(candidate)),
+      })
+    }
+    await scrubCowTree(dst, repoReal, targetReal)
     copied.push(clean)
   }
   return copied

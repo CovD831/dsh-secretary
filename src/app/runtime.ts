@@ -275,7 +275,7 @@ export class Runtime extends Service implements SourceHost {
         rulings: governance.rulings, relayToMaster: (id, text) => sessions.relay(id, text),
       })
       this.completionGuard = new PreExecuteCompletionGuard({
-        context: ctx, store, registry: governance.registry, appender: governance.appender, autoInstall: false,
+        context: ctx, store, registry: governance.registry, appender: governance.appender, memoryDir: governance.memoryDir, autoInstall: false,
       })
       this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources, governance, outbox,
         get github() { return runtime.context({ kind: 'github', health: ['github'] }) },

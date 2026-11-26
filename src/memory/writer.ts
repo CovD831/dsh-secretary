@@ -37,7 +37,7 @@ function isolatedGitEnv(): NodeJS.ProcessEnv {
 function validateProposal(p: MemoryProposal): { error: WriteResult } | { targetRel: string } {
   if ('id' in p && (p as { id?: unknown }).id !== undefined) return { error: reject('caller-id-forbidden', '记忆 id 必须由宿主分配') }
   if ('changeLog' in p && (p as { changeLog?: unknown }).changeLog !== undefined) return { error: reject('invalid-input', '禁止篡改 Change Log') }
-  if (hasSecret([p.statement, p.verbatimQuote, p.invalidationReason, p.topicKey, p.scope, p.author, p.sourceRef?.id,
+  if (hasSecret([p.statement, p.verbatimQuote, p.evidenceText, p.invalidationReason, p.topicKey, p.scope, p.author, p.sourceRef?.id,
     ...(p.workspacesSeen ?? []), ...(p.triggerKeys?.primary ?? []), ...(p.triggerKeys?.secondary ?? [])])) {
     return { error: reject('secret-detected', '检测到秘密或凭据形状，已触发拒写门') }
   }
@@ -224,7 +224,7 @@ export class MemoryWriter {
       const maxResident = this.opts.residentMaxChars ?? DEFAULT_MEMORY_BUDGETS.residentMaxChars
       if (entry.resident === true) {
         const invalidIds = new Set(toInvalidate.map(c => c.entry.id))
-        const activeResidents = targetPage.entries.filter(e => isEntryActiveAt(e, nowMs) && e.resident === true && !invalidIds.has(e.id))
+        const activeResidents = allEntries.map(x => x.entry).filter(e => isEntryActiveAt(e, nowMs) && e.resident === true && !invalidIds.has(e.id))
         try { assertResidentBudget([...activeResidents, entry], maxResident) }
         catch (err) { if (err instanceof ResidentBudgetExceededError) return failAudit('resident-budget-exceeded', err.message); throw err }
       }

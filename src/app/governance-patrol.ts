@@ -41,57 +41,119 @@ export async function readSpineEnvelopeFromStore(
   return undefined
 }
 
-/** 扫描未结单且有运行中 assignment 的工单，评估 `ticket.stale` 常驻巡检并按需写入 M6 温和提醒。 */
+/** 扫描未结单工单与 M0 摩擦/验证信号，评估 `ticket.stale`、`deposit.friction`、`friction.repeated` 与 `verify.failed`。 */
 export async function runStandingOrderPatrol(
   gov: GovernanceRuntime,
   options: { maxIdleMinutes?: number } = {},
 ): Promise<PatrolRunReport> {
   const orders = gov.registry.standingOrders('ticket.stale')
   const openTickets = gov.storeRef.tickets.list().filter(t => !t.ended && t.assignments.some(a => a.state === 'running'))
-  if (orders.length === 0 || openTickets.length === 0) return { checkedTickets: openTickets.length, evaluated: 0, reminded: 0 }
   const stageById = new Map(gov.registry.list().filter(e => e.kind === 'standing-order').map(e => [e.id, e.stage]))
   const now = gov.nowDate(), nowMs = now.getTime(), maxIdleMinutes = options.maxIdleMinutes ?? 30
+  const m0Events = await readM0Events({ db: gov.storeRef.db, memoryDir: gov.memoryDir }).catch(() => [])
   const lastFiredAt = new Map<string, number>()
-  for (const ev of await readM0Events({ db: gov.storeRef.db, memoryDir: gov.memoryDir }).catch(() => [])) {
+  const seenSignals = new Set<string>()
+  for (const ev of m0Events) {
     const p = ev.payload as Record<string, unknown> | undefined
     const v = p?.['verdict'] as { kind?: unknown } | undefined
-    if (ev.type === 'standing_order.evaluated' && v?.kind === 'allow' && typeof p?.['orderId'] === 'string' && typeof p?.['ticketId'] === 'string') {
+    if (ev.type === 'standing_order.evaluated' && typeof p?.['orderId'] === 'string') {
       const ts = Date.parse(ev.at)
-      if (Number.isFinite(ts)) lastFiredAt.set(`${p['orderId']}:${p['ticketId']}`, ts)
+      if (v?.kind === 'allow' && typeof p?.['ticketId'] === 'string' && Number.isFinite(ts)) lastFiredAt.set(`${p['orderId']}:${p['ticketId']}`, ts)
+      if (typeof p?.['dedupKey'] === 'string') seenSignals.add(`${p['orderId']}:${p['dedupKey']}`)
+    } else if (ev.type === 'gate.evaluated' && p?.['point'] === 'deposit.friction' && typeof p?.['dedupKey'] === 'string') {
+      seenSignals.add(`deposit.friction:${p['dedupKey']}`)
     }
   }
   let evaluated = 0, reminded = 0
-  for (const ticket of openTickets) {
-    const running = ticket.assignments.find(a => a.state === 'running')
-    const lastIso = running?.idleAt ?? running?.deliveredAt ?? running?.report?.at ?? running?.startedAt ?? running?.createdAt ?? ticket.updatedAt
-    const staleMinutes = Math.max(0, (nowMs - Date.parse(lastIso)) / 60_000)
-    if (!Number.isFinite(staleMinutes) || staleMinutes < maxIdleMinutes) continue
-    for (const order of orders) {
-      const prevTs = lastFiredAt.get(`${order.id}:${ticket.id}`)
-      const elapsedMs = prevTs !== undefined ? Math.max(0, nowMs - prevTs) : Number.MAX_SAFE_INTEGER
-      const verdict = await evaluateCompiledEntry(order as unknown as RegistryEntry, {
-        signal: 'ticket.stale', elapsedMs, isolation: 'I1',
-        payload: {
-          status: 'working', ticketId: ticket.id, staleMinutes, idleExceeded: true,
-          ticketOpen: !ticket.ended, completedSteps: ['verify-heartbeat-timeout', 'confirm-open-ticket'],
-        },
-      })
-      evaluated += 1
-      const ref = gov.appender.append({
-        id: `patrol:${order.id}:${ticket.id}:${nowMs}:${evaluated}`, at: now.toISOString(), stream: `ticket:${ticket.id}`,
-        type: 'standing_order.evaluated', source: { kind: 'system', ref: 'governance.patrol' },
-        evidence: [{ kind: 'event', ref: `ticket:${ticket.id}` }], taint: 'trusted',
-        payload: { orderId: order.id, signal: 'ticket.stale', ticketId: ticket.id, staleMinutes, elapsedMs, verdict, action: order.action },
-      })
-      if (verdict.kind === 'allow') {
-        lastFiredAt.set(`${order.id}:${ticket.id}`, nowMs)
-        if (order.action.name === 'ticket.remind' && stageById.get(order.id) !== 'shadow') {
-          reminded += 1
-          await gov.memory.upsertAttention({
-            kind: 'verification', sourceRefs: [ref], delaySeen: 1, seenCount: 1,
-            question: `工单「${ticket.title}」(${ticket.id}) 已静默 ${Math.round(staleMinutes)} 分钟，请确认是否需要介入或催办`,
-          }, 'standing-order').catch(() => undefined)
+  if (orders.length > 0 && openTickets.length > 0) {
+    for (const ticket of openTickets) {
+      const running = ticket.assignments.find(a => a.state === 'running')
+      const lastIso = running?.idleAt ?? running?.deliveredAt ?? running?.report?.at ?? running?.startedAt ?? running?.createdAt ?? ticket.updatedAt
+      const staleMinutes = Math.max(0, (nowMs - Date.parse(lastIso)) / 60_000)
+      if (!Number.isFinite(staleMinutes) || staleMinutes < maxIdleMinutes) continue
+      for (const order of orders) {
+        const prevTs = lastFiredAt.get(`${order.id}:${ticket.id}`)
+        const elapsedMs = prevTs !== undefined ? Math.max(0, nowMs - prevTs) : Number.MAX_SAFE_INTEGER
+        const verdict = await evaluateCompiledEntry(order as unknown as RegistryEntry, {
+          signal: 'ticket.stale', elapsedMs, isolation: 'I1',
+          payload: {
+            status: 'working', ticketId: ticket.id, staleMinutes, idleExceeded: true,
+            ticketOpen: !ticket.ended, completedSteps: ['verify-heartbeat-timeout', 'confirm-open-ticket'],
+          },
+        })
+        evaluated += 1
+        const ref = gov.appender.append({
+          id: `patrol:${order.id}:${ticket.id}:${nowMs}:${evaluated}`, at: now.toISOString(), stream: `ticket:${ticket.id}`,
+          type: 'standing_order.evaluated', source: { kind: 'system', ref: 'governance.patrol' },
+          evidence: [{ kind: 'event', ref: `ticket:${ticket.id}` }], taint: 'trusted',
+          payload: { orderId: order.id, signal: 'ticket.stale', ticketId: ticket.id, staleMinutes, elapsedMs, verdict, action: order.action },
+        })
+        if (verdict.kind === 'allow') {
+          lastFiredAt.set(`${order.id}:${ticket.id}`, nowMs)
+          if (order.action.name === 'ticket.remind' && stageById.get(order.id) !== 'shadow') {
+            reminded += 1
+            await gov.memory.upsertAttention({
+              kind: 'verification', sourceRefs: [ref], delaySeen: 1, seenCount: 1,
+              question: `工单「${ticket.title}」(${ticket.id}) 已静默 ${Math.round(staleMinutes)} 分钟，请确认是否需要介入或催办`,
+            }, 'standing-order').catch(() => undefined)
+          }
         }
+      }
+    }
+  }
+
+  const hasFrictionGate = gov.registry.list().some(e => e.kind === 'gate' && (e.point as string) === 'deposit.friction' && e.stage !== 'retired')
+  const frictionOrders = gov.registry.standingOrders('friction.repeated')
+  const verifyOrders = gov.registry.standingOrders('verify.failed')
+  if (m0Events.length > 0 && (hasFrictionGate || frictionOrders.length > 0 || verifyOrders.length > 0)) {
+    const clusters = new Map<string, { seenCount: number; workspaces: Set<string> }>()
+    for (const ev of m0Events) {
+      const p = (ev.payload ?? {}) as Record<string, unknown>
+      const tid = typeof p['ticketId'] === 'string' ? p['ticketId'] : ev.stream.startsWith('ticket:') ? ev.stream.slice(7) : undefined
+      const vKind = (p['verdict'] as { kind?: unknown } | undefined)?.kind
+      const isFric = (ev.type === 'worker.tool_finished' && p['isError'] === true) || ev.type === 'ticket.circuit_broken'
+        || (ev.type === 'gate.evaluated' && p['point'] !== 'deposit.friction' && (vKind === 'deny' || vKind === 'unmeasured'))
+      if (isFric) {
+        const key = typeof p['clusterKey'] === 'string' ? p['clusterKey'] : ev.type === 'worker.tool_finished' ? `tool:${String(p['toolName'] ?? 'unknown')}` : `gate:${String(p['point'] ?? ev.type)}`
+        const ws = (typeof p['workspace'] === 'string' ? p['workspace'] : tid ? gov.storeRef.tickets.get(tid)?.execution?.workspace : undefined) ?? tid ?? 'global'
+        const cur = clusters.get(key) ?? { seenCount: 0, workspaces: new Set<string>() }
+        cur.seenCount += 1; cur.workspaces.add(ws); clusters.set(key, cur)
+      }
+      if (ev.type === 'gate.evaluated' && typeof p['point'] === 'string' && p['point'].startsWith('verify.') && p['point'] !== 'deposit.friction' && vKind === 'deny') {
+        const blockers = Array.isArray(p['verdict'] && (p['verdict'] as { blockers?: unknown }).blockers) ? ((p['verdict'] as { blockers: unknown[] }).blockers).length : 1
+        for (const order of verifyOrders) {
+          const dedupKey = `vf:${ev.id}`
+          if (seenSignals.has(`${order.id}:${dedupKey}`)) continue
+          seenSignals.add(`${order.id}:${dedupKey}`)
+          const verdict = await evaluateCompiledEntry(order as unknown as RegistryEntry, { signal: 'verify.failed', elapsedMs: Number.MAX_SAFE_INTEGER, isolation: 'I1', payload: { ticketId: tid ?? 'unknown', point: p['point'], blockerCount: blockers } })
+          gov.appender.append({
+            id: `patrol:vf:${order.id}:${ev.seq}`, at: now.toISOString(), stream: tid ? `ticket:${tid}` : 'patrol:verify',
+            type: 'standing_order.evaluated', source: { kind: 'system', ref: 'governance.patrol' }, evidence: [{ kind: 'event', ref: ev.id }], taint: 'trusted',
+            payload: { orderId: order.id, signal: 'verify.failed', dedupKey, ticketId: tid, point: p['point'], verdict, action: order.action },
+          })
+        }
+      }
+    }
+    for (const [key, c] of clusters) {
+      const dedupKey = `${key}:${c.seenCount}`, distinctWorkspaces = c.workspaces.size
+      if (hasFrictionGate && !seenSignals.has(`deposit.friction:${dedupKey}`)) {
+        seenSignals.add(`deposit.friction:${dedupKey}`)
+        const evRes = await gov.registry.evaluate('deposit.friction' as never, { seenCount: c.seenCount, distinctWorkspaces } as never)
+        gov.appender.append({
+          id: `patrol:fric-gate:${key}:${c.seenCount}`, at: now.toISOString(), stream: `deposit:${key}`,
+          type: 'gate.evaluated', source: { kind: 'system', ref: 'governance.patrol' }, evidence: [], taint: 'trusted',
+          payload: { point: 'deposit.friction', dedupKey, clusterKey: key, seenCount: c.seenCount, distinctWorkspaces, verdict: evRes.verdict, ran: evRes.ran, observed: evRes.observed },
+        })
+      }
+      for (const order of frictionOrders) {
+        if (seenSignals.has(`${order.id}:${dedupKey}`)) continue
+        seenSignals.add(`${order.id}:${dedupKey}`)
+        const verdict = await evaluateCompiledEntry(order as unknown as RegistryEntry, { signal: 'friction.repeated', elapsedMs: Number.MAX_SAFE_INTEGER, isolation: 'I1', payload: { patternId: key, seenCount: c.seenCount, distinctWorkspaces } })
+        gov.appender.append({
+          id: `patrol:fric:${order.id}:${key}:${c.seenCount}`, at: now.toISOString(), stream: `deposit:${key}`,
+          type: 'standing_order.evaluated', source: { kind: 'system', ref: 'governance.patrol' }, evidence: [], taint: 'trusted',
+          payload: { orderId: order.id, signal: 'friction.repeated', dedupKey, clusterKey: key, seenCount: c.seenCount, distinctWorkspaces, verdict, action: order.action },
+        })
       }
     }
   }

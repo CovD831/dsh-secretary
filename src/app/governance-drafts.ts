@@ -9,8 +9,8 @@ import {
 } from '../authoring/index.ts'
 import {
   RESERVED_BUILTIN_DEPOSIT_IDS, auditRequires, compileDeclarativeEntry, evaluateCompiledEntry, loadDepositPackage,
-  parseDepositMarkdown, validateDeclarativeRule, type AnyGateDef, type DeclarativeRule, type MandateBinding,
-  type ParamSpec, type Point, type RegistryEntry, type Verdict,
+  validateAndNormalizePlaybook, validateDeclarativeRule, type AnyGateDef, type DeclarativeRule, type MandateBinding,
+  type ParamSpec, type PlaybookSpec, type Point, type RegistryEntry, type Verdict,
 } from '../judgement/index.ts'
 import type { AttentionItem, WriteResult } from '../memory/index.ts'
 import { collectOnlineRsiSnapshot } from '../rsi/index.ts'
@@ -143,6 +143,7 @@ function normalizeRawDraft(raw: Record<string, unknown>): DepositDraft {
       ...(typeof trig['workspace'] === 'string' ? { workspace: trig['workspace'] } : {}),
       ...(Array.isArray(trig['globs']) ? { globs: trig['globs'] as string[] } : {}),
       ...(typeof trig['signal'] === 'string' ? { signal: trig['signal'] } : {}),
+      ...(trig['match'] && typeof trig['match'] === 'object' && !Array.isArray(trig['match']) ? { match: trig['match'] as Record<string, unknown> } : {}),
     },
     requires: Array.isArray(raw['requires']) ? raw['requires'] as string[] : [],
     params: (raw['params'] && typeof raw['params'] === 'object' ? raw['params'] : {}) as DepositDraft['params'],
@@ -158,14 +159,24 @@ function normalizeRawDraft(raw: Record<string, unknown>): DepositDraft {
     ...(typeof raw['mandateRef'] === 'string' ? { mandateRef: raw['mandateRef'] } : {}),
     ...(raw['action'] && typeof raw['action'] === 'object' ? { action: raw['action'] as DepositDraft['action'] } : {}),
     ...(Array.isArray(raw['unansweredSlots']) ? { unansweredSlots: raw['unansweredSlots'] as string[] } : {}),
+    ...(raw['playbook'] && typeof raw['playbook'] === 'object' ? { playbook: raw['playbook'] as PlaybookSpec } : {}),
+    ...(raw['rule'] && typeof raw['rule'] === 'object' ? { rule: raw['rule'] as DeclarativeRule } : {}),
+    ...(typeof raw['measures'] === 'string' && raw['measures'].trim() ? { measures: raw['measures'] } : {}),
+    ...(raw['mandate'] && typeof raw['mandate'] === 'object' ? { mandate: raw['mandate'] as MandateBinding } : {}),
   }
 }
 
 function inspectDraft(draft: DepositDraft, raw?: Record<string, unknown>) {
   const validation = validateDepositDraft(draft)
-  const ruleIssues = raw?.['rule'] !== undefined
-    ? validateDeclarativeRule(raw['rule']).map(i => ({ ruleId: 'invalid-declarative-rule', field: i.field, reason: i.reason, repairHint: '修正零代码声明式 rule 配置' }))
+  const pbIssues = raw?.['playbook'] !== undefined
+    ? validateAndNormalizePlaybook(raw['playbook'], '').issues.map(i => ({ ruleId: 'invalid-playbook', field: i.field, reason: i.reason, repairHint: '修正 playbook 配置' }))
     : []
+  const ruleIssues = [
+    ...pbIssues,
+    ...(raw?.['rule'] !== undefined
+      ? validateDeclarativeRule(raw['rule']).map(i => ({ ruleId: 'invalid-declarative-rule', field: i.field, reason: i.reason, repairHint: '修正零代码声明式 rule 配置' }))
+      : []),
+  ]
   return { validation, ruleIssues, ready: validation.ok && ruleIssues.length === 0 }
 }
 
@@ -199,17 +210,6 @@ export async function listDepositDrafts(gov: GovernanceRuntime, options: { inclu
   return [...byId.values()]
 }
 
-async function mergeExtras(depositMdPath: string, raw: Record<string, unknown>): Promise<void> {
-  if (raw['rule'] === undefined && !raw['measures'] && !raw['mandate']) return
-  await assertNotSymlink(depositMdPath)
-  const parsed = parseDepositMarkdown(await readFile(depositMdPath, 'utf8'))
-  const m: Record<string, unknown> = { ...parsed.rawManifest }
-  if (raw['rule'] !== undefined) m['rule'] = raw['rule']
-  if (raw['measures']) m['measures'] = raw['measures']
-  if (raw['mandate']) m['mandate'] = raw['mandate']
-  await writeFile(depositMdPath, `---\n${JSON.stringify(m, null, 2)}\n---\n\n${parsed.prose}\n`, 'utf8')
-}
-
 function buildShadowGate(draft: DepositDraft, raw: Record<string, unknown>): AnyGateDef {
   const params = Object.fromEntries(Object.entries(draft.params ?? {}).flatMap(([k, v]) =>
     v && typeof v === 'object' && 'default' in v && (v as ParamSpec).default !== undefined ? [[k, (v as ParamSpec).default]] : []))
@@ -224,9 +224,10 @@ function buildShadowGate(draft: DepositDraft, raw: Record<string, unknown>): Any
         return audit.ok ? { kind: 'unmeasured', cause: 'no-evidence', detail: `草稿 "${draft.id}" 尚未绑定已注册判据实现` }
           : { kind: 'unmeasured', cause: 'missing-input', detail: `缺少必需输入路径: ${audit.missing.join(', ')}` }
       }
+  const shadowEnforce = draft.kind === 'counter-rule' ? false : draft.enforce
   return {
     kind: 'gate', id: draft.id, version: draft.version, point: draft.point as Point,
-    description: draft.intent || draft.name, placement: { timing: 'pre', enforce: false }, requires: draft.requires, gate: gateFn,
+    description: draft.intent || draft.name, placement: { timing: 'pre', enforce: shadowEnforce ?? true }, requires: draft.requires, gate: gateFn,
   } as AnyGateDef
 }
 
@@ -254,20 +255,20 @@ export async function adoptDepositDraft(gov: GovernanceRuntime, input: AdoptDepo
   if (RESERVED_BUILTIN_DEPOSIT_IDS.has(safeId) || (existing && existing.stage !== 'shadow')) {
     return { ok: false, reason: `禁止影子安装包覆盖内置保留或非 shadow 阶段判据: ${safeId}` }
   }
-  const shadowDraft: DepositDraft = { ...draft, stage: 'shadow', enforce: false }
+  const shadowEnforce = draft.kind === 'counter-rule' ? false : draft.enforce
+  const shadowDraft: DepositDraft = { ...draft, stage: 'shadow', ...(shadowEnforce !== undefined ? { enforce: shadowEnforce } : {}) }
   let compiledEntry: RegistryEntry | undefined
   if (redactedRaw['rule'] !== undefined || shadowDraft.kind === 'standing-order') {
     compiledEntry = compileDeclarativeEntry({
       id: shadowDraft.id, version: shadowDraft.version, kind: shadowDraft.kind, trust: 'owner', cases: 'cases/',
       prose: shadowDraft.intent, params: shadowDraft.params, requires: shadowDraft.requires,
-      ...(shadowDraft.kind === 'gate' || shadowDraft.kind === 'counter-rule' ? { point: shadowDraft.point as Point, placement: { timing: 'pre', enforce: false } } : {}),
-      stage: 'shadow', enforce: false, actionClass: shadowDraft.actionClass,
+      ...(shadowDraft.kind === 'gate' || shadowDraft.kind === 'counter-rule' ? { point: shadowDraft.point as Point } : {}),
+      stage: 'shadow', ...(shadowEnforce !== undefined ? { enforce: shadowEnforce } : {}), actionClass: shadowDraft.actionClass,
       ...(redactedRaw['rule'] !== undefined ? { rule: redactedRaw['rule'] as DeclarativeRule } : {}),
       ...(redactedRaw['mandate'] ? { mandate: redactedRaw['mandate'] as MandateBinding } : {}),
     })
   }
   const written = await writeDepositDraftPackage(join(gov.stateDir, 'deposits'), shadowDraft)
-  await mergeExtras(written.depositMdPath, redactedRaw)
   const loaded = await loadDepositPackage(written.packageDir)
   if (!loaded.admission.admitted) return { ok: false, reason: `影子包准入异常: ${loaded.admission.violations.map(v => v.reason).join('; ')}` }
   if (existing) gov.registry.unregister(safeId)

@@ -57,7 +57,7 @@ export const MandateSchema = z.object({
   strength: z.enum(['explicit', 'delegated', 'inferred']),
   scope: z.string(),
   policyVersion: z.string(),
-  ceiling: z.enum(['read', 'draft', 'local-write', 'remote-write', 'external-effect']),
+  ceiling: z.enum(['read', 'draft', 'local-write', 'commit', 'push-branch', 'outward-post', 'merge']),
   isolation: z.enum(['I1', 'I2', 'I3', 'I4', 'I5']),
 }).strict()
 
@@ -69,9 +69,9 @@ export const DraftSchema = z.object({
   scope: z.string().optional(),
   kind: z.enum(['gate', 'standing-order', 'evaluator', 'counter-rule']).optional(),
   level: z.enum(['object', 'meta']).optional(),
-  point: z.string().optional().describe('挂载点 <scope>.<stage>，如 verify.preflight/verify.completion/ticket.dispatch/outbox.send/intake.received'),
+  point: z.string().optional().describe('挂载点 <scope>.<stage>'),
   requires: z.array(z.string()).optional(),
-  params: z.record(z.string(), z.unknown()).optional().describe('ParamSpec 对象：{ type: "string"|"number"|"boolean"|"enum", default?, min?, max?, values? }'),
+  params: z.record(z.string(), z.unknown()).optional().describe('ParamSpec 字典'),
   exceptions: z.array(z.string()).optional(),
   repairHint: z.string().optional(),
   intent: z.string().optional(),
@@ -99,11 +99,10 @@ export const DraftSchema = z.object({
     note: z.string().optional(),
   }).strict()).optional(),
   unansweredSlots: z.array(z.string()).optional(),
-  rule: z.record(z.string(), z.unknown()).optional().describe(
-    '声明式规则（自定义 gate/counter-rule/evaluator 必填）：command_check { kind, requiredCommands, inputField? }（ctx: { commands: [{ command, exitCode }] }）、path_rules、predicates 或 workflow_sop',
-  ),
+  rule: z.record(z.string(), z.unknown()).optional().describe('声明式规则: command_check | path_rules | predicates | workflow_sop'),
   measures: z.string().optional(),
   mandate: MandateSchema.optional(),
+  playbook: z.record(z.string(), z.unknown()).optional(),
 }).strict()
 
 export type RawDraft = z.infer<typeof DraftSchema>
