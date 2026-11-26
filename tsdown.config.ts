@@ -11,4 +11,6 @@ export default defineConfig([
   { entry: { client: 'src/client/index.tsx' }, outDir: 'lib', format: 'cjs', platform: 'browser', dts: false, clean: false, plugins: [raw],
     deps: { neverBundle: ['react', 'react/jsx-runtime', 'react-dom'] },
     outputOptions: { entryFileNames: 'client.js', banner: 'window.__ModuleLoader__.load({ id: "dsh-superagent", factory: (require) => {', footer: 'return module.exports; } });', intro: 'var module = { exports: {} }; var exports = module.exports;' } },
+  { entry: { 'office-app': 'src/office-app/main.tsx' }, outDir: 'lib/office', format: 'esm', fixedExtension: false, platform: 'browser', target: 'es2022', dts: false, clean: false,
+    deps: { alwaysBundle: [/.*/] }, outputOptions: { entryFileNames: 'office-app.js' } },
 ])
