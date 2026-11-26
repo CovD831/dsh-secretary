@@ -55,6 +55,14 @@ describe('Phase O3 Pixel Office Stage', () => {
   let container: HTMLElement | undefined
 
   beforeEach(() => {
+    const store = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => { store.set(k, String(v)) },
+      removeItem: (k: string) => { store.delete(k) },
+      clear: () => { store.clear() },
+    })
+    localStorage.clear()
     calls.length = 0
     MockEventSource.instances = []
     activeRuling = null
@@ -355,5 +363,6 @@ describe('Phase O3 Pixel Office Stage', () => {
     expect(seedBtn.textContent).toBe('种子 #1')
     await act(async () => { seedBtn.click() })
     expect(seedBtn.textContent).toBe('种子 #2')
+    expect(localStorage.getItem('dsh_office_world_seed')).toBe('2')
   })
 })

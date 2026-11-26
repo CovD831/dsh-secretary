@@ -22,7 +22,11 @@ import type { OfficeCamera, OfficeWorldPlan, WorkspaceWingSpec, WorldPickResult,
 
 type TicketItem = TicketListView['items'][number]
 const WORLD_CENTER = { u: 10.3, v: 8.5 } as const
+const SEED_STORAGE_KEY = 'dsh_office_world_seed'
 const defaultZoomFor = (w: number): 1 | 2 => (w >= 1320 ? 2 : 1)
+function readInitialSeed(): number {
+  try { const n = typeof localStorage !== 'undefined' ? Number.parseInt(localStorage.getItem(SEED_STORAGE_KEY) ?? '', 10) : NaN; return Number.isInteger(n) && n > 0 ? n : 1 } catch { return 1 }
+}
 
 const getInitialViewport = () => typeof window === 'undefined'
   ? { w: CANVAS_W, h: CANVAS_H }
@@ -38,8 +42,17 @@ function syncWorldActors(prev: OfficeActor[], tickets: readonly TicketItem[], wo
   const residents = createInitialWorldActors(world)
   const residentIds = new Set(residents.map(r => r.id))
   const openIds = new Set(tickets.map(t => t.id))
-  const keptWorkers = prev.filter(a => a.role === 'worker' && a.lifecycle !== 'removed').map(a =>
-    a.ticketId && !openIds.has(a.ticketId) && a.lifecycle !== 'leaving' ? { ...a, lifecycle: 'leaving' as const } : a)
+  const allSuites = [...world.lobby.suites, ...world.wings.flatMap(w => w.suites)]
+  const keptWorkers = prev.filter(a => a.role === 'worker' && a.lifecycle !== 'removed').map(a => {
+    const leaving = a.ticketId && !openIds.has(a.ticketId) && a.lifecycle !== 'leaving' ? { ...a, lifecycle: 'leaving' as const } : a
+    if (leaving.pose !== 'sit' || leaving.lifecycle === 'leaving' || !leaving.assignedSuiteId) return leaving
+    const s = allSuites.find(x => x.id === leaving.assignedSuiteId)
+    if (!s) return leaving
+    const faceSE = s.suiteKind === 'reception' || s.facing === 'SE'
+    const cu = s.suiteKind === 'reception' ? s.anchor.u - 0.7 : s.suiteKind === 'executive' ? s.anchor.u + 0.95 : faceSE ? s.anchor.u - 0.7 : s.anchor.u + 0.55
+    const cv = s.suiteKind === 'reception' ? s.anchor.v + 0.9 : s.suiteKind === 'executive' ? s.anchor.v - 0.95 : faceSE ? s.anchor.v + 0.55 : s.anchor.v - 0.7
+    return { ...leaving, u: cu + 0.1, v: cv + 0.1, facing: faceSE ? 'SE' as const : 'SW' as const }
+  })
   const mergedResidents = residents.map(r => { const ex = prev.find(p => p.id === r.id && residentIds.has(p.id)); return ex ? { ...r, animMs: ex.animMs } : r })
   const usedSuites = new Set(keptWorkers.filter(a => a.lifecycle !== 'leaving').map(a => a.assignedSuiteId))
   const activeIds = new Set(keptWorkers.filter(a => a.lifecycle !== 'leaving').map(a => a.ticketId))
@@ -60,8 +73,8 @@ function syncWorldActors(prev: OfficeActor[], tickets: readonly TicketItem[], wo
 export function StageApp() {
   const [viewport, setViewport] = useState(getInitialViewport)
   const [workspaceId, setWorkspaceId] = useState('default')
-  const [worldSeed, setWorldSeed] = useState(1)
-  const [camera, setCamera] = useState<OfficeCamera>(() => { const vp = getInitialViewport(); return cameraForGridPoint(WORLD_CENTER, solveWorldFloorplan([{ id: 'default', title: 'default' }], 1), defaultZoomFor(vp.w), vp.w, vp.h) })
+  const [worldSeed, setWorldSeed] = useState(readInitialSeed)
+  const [camera, setCamera] = useState<OfficeCamera>(() => { const vp = getInitialViewport(); return cameraForGridPoint(WORLD_CENTER, solveWorldFloorplan([{ id: 'default', title: 'default' }], readInitialSeed()), defaultZoomFor(vp.w), vp.w, vp.h) })
   const [dialogCollapsed, setDialogCollapsed] = useState(true)
   const [feed, setFeed] = useState<SecretaryFeedEntry[]>([])
   const [activeRuling, setActiveRuling] = useState<RulingItem | null>(null)
@@ -113,24 +126,19 @@ export function StageApp() {
   const refreshAll = useCallback(async () => {
     try {
       const [feedRes, ticketRes, settingsRes, avatarRes, spineRes] = await Promise.all([
-        officeCall('GET secretary/feed'), officeCall('GET tickets', { query: { state: 'open', limit: 20 } }),
-        officeCall('GET settings'), officeCall('GET avatars'),
+        officeCall('GET secretary/feed'), officeCall('GET tickets', { query: { state: 'open', limit: 20 } }), officeCall('GET settings'), officeCall('GET avatars'),
         officeCall('GET projection/spine', { query: { type: 'gate.evaluated', limit: 10, tail: '1', ...(lastGateSeqRef.current > 0 ? { sinceSeq: lastGateSeqRef.current } : {}) } }),
       ])
-      setFeed(feedRes.items); setActiveRuling(feedRes.activeRuling); setPendingCount(feedRes.pendingCount)
-      setTickets(ticketRes.items); setSettings(settingsRes)
+      setFeed(feedRes.items); setActiveRuling(feedRes.activeRuling); setPendingCount(feedRes.pendingCount); setTickets(ticketRes.items); setSettings(settingsRes)
       setAvatar(avatarRes.items.find(i => i.id === avatarRes.activeId) ?? avatarRes.items[0] ?? null)
       const latestDeny = [...spineRes.items].reverse().find(ev => {
         if (ev.seq <= lastGateSeqRef.current) return false
-        const v = (ev.payload as Record<string, unknown> | undefined)?.verdict
-        const kind = typeof v === 'string' ? v : (v as { kind?: unknown } | undefined)?.kind
+        const v = (ev.payload as Record<string, unknown> | undefined)?.verdict, kind = typeof v === 'string' ? v : (v as { kind?: unknown } | undefined)?.kind
         return (kind === 'deny' || kind === 'unmeasured') && Date.now() - Date.parse(ev.at) < 15_000
       })
       if (latestDeny) {
-        lastGateSeqRef.current = latestDeny.seq
-        const tid = (latestDeny.payload as Record<string, unknown> | undefined)?.ticketId
-        gateTicketRef.current = typeof tid === 'string' ? tid : undefined
-        setGateUntil(Date.now() + 8_000)
+        lastGateSeqRef.current = latestDeny.seq; const tid = (latestDeny.payload as Record<string, unknown> | undefined)?.ticketId
+        gateTicketRef.current = typeof tid === 'string' ? tid : undefined; setGateUntil(Date.now() + 8_000)
       }
       setOnline(true)
     } catch { setOnline(false) }
@@ -140,11 +148,9 @@ export function StageApp() {
   useEffect(() => { loadSprite(avatar?.spriteUrl || WORLD_ASSET_CATALOG.char_secretary!.spriteUrl, img => { spritesRef.current.images.char_secretary = img }) }, [avatar?.spriteUrl])
 
   useEffect(() => {
-    void refreshAll()
-    let debounceTimer: ReturnType<typeof setTimeout> | undefined
+    void refreshAll(); let debounceTimer: ReturnType<typeof setTimeout> | undefined
     const unsub = subscribeOfficeStream(() => {
-      setOnline(true); setStreamTick(t => t + 1)
-      if (debounceTimer) clearTimeout(debounceTimer)
+      setOnline(true); setStreamTick(t => t + 1); if (debounceTimer) clearTimeout(debounceTimer)
       debounceTimer = setTimeout(() => { void refreshAll() }, 120)
     })
     const timer = setInterval(() => { void refreshAll() }, 8000)
@@ -160,8 +166,8 @@ export function StageApp() {
     }
     for (const actor of actorSnap) {
       if (actor.role !== 'worker' || !actor.assignedSuiteId || actor.lifecycle === 'leaving') continue
-      const ticket = actor.ticketId ? tickets.find(t => t.id === actor.ticketId) : undefined
-      out[actor.assignedSuiteId] = !ticket ? 'off' : ticket.stage === 'person' ? 'needsDecision' : ticket.stage === 'working' ? 'working' : 'done'
+      const t = actor.ticketId ? tickets.find(x => x.id === actor.ticketId) : undefined
+      out[actor.assignedSuiteId] = !t ? 'off' : t.stage === 'person' ? 'needsDecision' : t.stage === 'working' ? 'working' : 'done'
     }
     return out
   }, [activeRuling, tickets, world, settings, workspaceId, actorSnap])
@@ -179,22 +185,18 @@ export function StageApp() {
   useEffect(() => {
     if (!pendingBoss) return
     if (activeRuling || (latestSayId && latestSayId !== pendingBoss.baseSayId)) { setPendingBoss(null); return }
-    const timer = setTimeout(() => setPendingBoss(null), Math.max(0, 45_000 - (Date.now() - pendingBoss.sentAt)))
-    return () => clearTimeout(timer)
+    const timer = setTimeout(() => setPendingBoss(null), Math.max(0, 45_000 - (Date.now() - pendingBoss.sentAt))); return () => clearTimeout(timer)
   }, [pendingBoss, activeRuling, latestSayId])
   useEffect(() => { if (!secretaryThinking) return; const fast = setInterval(() => { void refreshAll() }, 1200); return () => clearInterval(fast) }, [secretaryThinking, refreshAll])
   const pixiHandleRef = useRef<{ resize: (w: number, h: number) => void; destroy: () => void } | null>(null)
   useEffect(() => {
     const syncVp = () => {
-      const el = canvasRef.current?.parentElement
-      const vp = el && el.clientWidth > 0 && el.clientHeight > 0 ? { w: Math.max(640, el.clientWidth), h: Math.max(480, el.clientHeight) } : getInitialViewport()
-      setViewport(vp); pixiHandleRef.current?.resize(vp.w, vp.h)
-      setCamera(cameraForGridPoint(WORLD_CENTER, world, defaultZoomFor(vp.w), vp.w, vp.h))
+      const el = canvasRef.current?.parentElement, vp = el && el.clientWidth > 0 && el.clientHeight > 0 ? { w: Math.max(640, el.clientWidth), h: Math.max(480, el.clientHeight) } : getInitialViewport()
+      setViewport(vp); pixiHandleRef.current?.resize(vp.w, vp.h); setCamera(cameraForGridPoint(WORLD_CENTER, world, defaultZoomFor(vp.w), vp.w, vp.h))
     }
     const ro = typeof ResizeObserver !== 'undefined' && canvasRef.current?.parentElement ? new ResizeObserver(syncVp) : null
     if (ro && canvasRef.current?.parentElement) ro.observe(canvasRef.current.parentElement)
-    window.addEventListener('resize', syncVp)
-    return () => { ro?.disconnect(); window.removeEventListener('resize', syncVp) }
+    window.addEventListener('resize', syncVp); return () => { ro?.disconnect(); window.removeEventListener('resize', syncVp) }
   }, [world])
 
   const liveRef = useRef({ world, screenStates, workspaceId, hoverTarget, gateUntil, secretaryThinking, camera, viewport })
@@ -228,7 +230,7 @@ export function StageApp() {
   }, [usePixiWebGL])
 
   useEffect(() => {
-    if (usePixiWebGL) return
+    if (usePixiWebGL || !canvasRef.current) return
     let raf = 0, last = performance.now(), elapsed = 0
     const tick = (now: number) => {
       const dt = Math.min(100, Math.max(0, now - last)); last = now; elapsed += dt
@@ -236,8 +238,7 @@ export function StageApp() {
       if (ctx) { ctx.clearRect(0, 0, f.viewport.w, f.viewport.h); renderWorldFrame(ctx, f.scene, spritesRef.current, f.camera) }
       raf = requestAnimationFrame(tick)
     }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
+    raf = requestAnimationFrame(tick); return () => cancelAnimationFrame(raf)
   }, [usePixiWebGL])
 
   const toCanvasCoords = (clientX: number, clientY: number) => {
@@ -246,8 +247,7 @@ export function StageApp() {
   }
   const focusWing = (wing: WorldWingPlan) => { if (wing.workspaceId) setWorkspaceId(wing.workspaceId); setCamera(c => cameraForGridPoint(wing.focusPoint, world, c.zoom, viewport.w, viewport.h)) }
   const handleCanvasClick = (clientX: number, clientY: number) => {
-    const { x, y } = toCanvasCoords(clientX, clientY)
-    const hit = pickWorldTarget(x, y, { world, actors: actorsRef.current, screenStates, activeWorkspaceId: workspaceId, elapsedMs: 0 }, camera)
+    const { x, y } = toCanvasCoords(clientX, clientY), hit = pickWorldTarget(x, y, { world, actors: actorsRef.current, screenStates, activeWorkspaceId: workspaceId, elapsedMs: 0 }, camera)
     if (!hit) return
     if (hit.type === 'prop') { if (hit.workspaceId) setWorkspaceId(hit.workspaceId); if (hit.prop === 'doorplate') setDrawerMode('doorplate'); else setActiveProp(hit.prop) }
     else if (hit.type === 'wing') { const w = world.wings.find(x => x.id === hit.wingId); if (w) focusWing(w); else if (hit.workspaceId) setWorkspaceId(hit.workspaceId) }
@@ -272,9 +272,12 @@ export function StageApp() {
   const handleDecideRuling = async (input: { id: string; decision: RulingDecision; optionId?: string; attribution?: FourWayAttribution; note?: string; captureAsRule?: boolean }) => {
     const { id, ...body } = input; await officeCall('POST rulings/:id/decide', { id, body }); await refreshAll()
   }
-
   const resetCam = () => setCamera(cameraForGridPoint(WORLD_CENTER, world, defaultZoomFor(viewport.w), viewport.w, viewport.h))
-  const rerollSeed = () => { const next = (worldSeed % 99) + 1; setWorldSeed(next); setCamera(c => cameraForGridPoint(WORLD_CENTER, solveWorldFloorplan(workspaces, next), c.zoom, viewport.w, viewport.h)) }
+  const rerollSeed = () => {
+    const next = (worldSeed % 99) + 1; setWorldSeed(next)
+    try { if (typeof localStorage !== 'undefined') localStorage.setItem(SEED_STORAGE_KEY, String(next)) } catch {}
+    setCamera(c => cameraForGridPoint(WORLD_CENTER, solveWorldFloorplan(workspaces, next), c.zoom, viewport.w, viewport.h))
+  }
 
   return (
     <div style={{ position: 'fixed', inset: 0, width: '100vw', height: '100vh', background: OFFICE_THEME.bgDeep, color: OFFICE_THEME.inkCream, overflow: 'hidden' }}>
