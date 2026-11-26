@@ -21,7 +21,7 @@ import { createInitialWorldActors, pickWorldTarget, renderWorldFrame, spawnWorld
 import type { OfficeCamera, OfficeWorldPlan, WorkspaceWingSpec, WorldPickResult, WorldWingPlan } from './world-types.ts'
 
 type TicketItem = TicketListView['items'][number]
-const WORLD_CENTER = { u: 11, v: 9 } as const
+const WORLD_CENTER = { u: 10.3, v: 8.5 } as const
 const defaultZoomFor = (w: number): 1 | 2 => (w >= 1320 ? 2 : 1)
 
 const getInitialViewport = () => typeof window === 'undefined'
@@ -184,12 +184,16 @@ export function StageApp() {
   useEffect(() => { if (!secretaryThinking) return; const fast = setInterval(() => { void refreshAll() }, 1200); return () => clearInterval(fast) }, [secretaryThinking, refreshAll])
   const pixiHandleRef = useRef<{ resize: (w: number, h: number) => void; destroy: () => void } | null>(null)
   useEffect(() => {
-    const onResize = () => {
-      const vp = getInitialViewport()
+    const syncVp = () => {
+      const el = canvasRef.current?.parentElement
+      const vp = el && el.clientWidth > 0 && el.clientHeight > 0 ? { w: Math.max(640, el.clientWidth), h: Math.max(480, el.clientHeight) } : getInitialViewport()
       setViewport(vp); pixiHandleRef.current?.resize(vp.w, vp.h)
       setCamera(cameraForGridPoint(WORLD_CENTER, world, defaultZoomFor(vp.w), vp.w, vp.h))
     }
-    window.addEventListener('resize', onResize); return () => window.removeEventListener('resize', onResize)
+    const ro = typeof ResizeObserver !== 'undefined' && canvasRef.current?.parentElement ? new ResizeObserver(syncVp) : null
+    if (ro && canvasRef.current?.parentElement) ro.observe(canvasRef.current.parentElement)
+    window.addEventListener('resize', syncVp)
+    return () => { ro?.disconnect(); window.removeEventListener('resize', syncVp) }
   }, [world])
 
   const liveRef = useRef({ world, screenStates, workspaceId, hoverTarget, gateUntil, secretaryThinking, camera, viewport })
@@ -216,7 +220,7 @@ export function StageApp() {
     const handle = mountPixiDioramaStage(canvasRef.current, () => {
       const now = performance.now(), dt = Math.min(100, Math.max(0, now - last)); last = now; elapsed += dt
       return buildFrameState(dt, elapsed)
-    })
+    }, liveRef.current.viewport.w, liveRef.current.viewport.h)
     pixiHandleRef.current = handle
     handle.resize(liveRef.current.viewport.w, liveRef.current.viewport.h)
     return () => { pixiHandleRef.current = null; handle.destroy() }

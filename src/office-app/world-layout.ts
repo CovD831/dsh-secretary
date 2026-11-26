@@ -33,14 +33,15 @@ function buildLobby(buildingRows: number): WorldWingPlan {
     floorStyle: 'warm_parquet', themeHex: '#6B4A32',
     suites: [makeEntity('lobby-reception', 'reception_desk', 'reception', 10, 4, 'SE', { u: 9, v: 5 })],
     shared: [
-      makeEntity('lobby-bookshelf', 'bookshelf', 'shared', 9, 0, 'SE', undefined, 'back'),
-      makeEntity('lobby-cabinet', 'file_cabinet', 'shared', 9, 2, 'SE', undefined, 'left'),
-      makeEntity('lobby-plant-1', 'plant_pot', 'shared', 9, 9, 'SW'),
-      makeEntity('lobby-plant-2', 'plant_pot', 'shared', 12, 14, 'SW'),
+      makeEntity('lobby-bookshelf', 'bookshelf', 'shared', 11, 0, 'SE', undefined, 'back'),
+      makeEntity('lobby-cabinet', 'file_cabinet', 'shared', 9, 0, 'SE', undefined, 'left'),
+      makeEntity('lobby-lamp', 'lamp_table', 'shared', 9, 11, 'SE'),
+      makeEntity('lobby-plant-1', 'plant_pot', 'shared', 9, 8, 'SW'),
+      makeEntity('lobby-plant-2', 'plant_pot', 'shared', 12, 15, 'SW'),
     ],
     wallMounts: [
-      { id: 'lobby-clock', assetId: 'clock_wall', wall: 'back', at: 10.2, h: 48, span: 1 },
-      { id: 'lobby-corkboard', assetId: 'corkboard', wall: 'back', at: 11.7, h: 14, span: 2, propKind: 'corkboard' },
+      { id: 'lobby-clock', assetId: 'clock_wall', wall: 'back', at: 10.1, h: 26, span: 1 },
+      { id: 'lobby-corkboard', assetId: 'corkboard', wall: 'back', at: 11.6, h: 16, span: 2, propKind: 'corkboard' },
     ],
   }
 }
@@ -60,7 +61,9 @@ function buildLeftPrimaryStudio(ws: WorkspaceWingSpec): WorldWingPlan {
       makeEntity(`bookshelf-${ws.id}`, 'bookshelf', 'shared', 6, 0, 'SE', undefined, 'back'),
       makeEntity(`cooler-${ws.id}`, 'water_cooler', 'shared', 0, 3, 'SE', undefined, 'left'),
       makeEntity(`printer-${ws.id}`, 'printer_copier', 'shared', 0, 12, 'SE', undefined, 'left'),
+      makeEntity(`cab-shared-${ws.id}`, 'file_cabinet', 'shared', 4, 13, 'SW'),
       makeEntity(`plant-${ws.id}`, 'plant_pot', 'shared', 7, 1, 'SW'),
+      makeEntity(`plant2-${ws.id}`, 'plant_pot', 'shared', 7, 13, 'SW'),
     ],
     wallMounts: [
       { id: `wb-${ws.id}`, assetId: 'whiteboard_wall', wall: 'left', at: 5.5, h: 10, span: 3 },
@@ -80,14 +83,18 @@ function buildUpperRightWing(ws?: WorkspaceWingSpec): WorldWingPlan {
     makeEntity(`ws-${ws.id}-3`, 'worker_desk', 'workstation', 15, 6, 'SE', { u: 14, v: 6 }),
   ] : []
   const shared = [
-    ...(ws ? [] : [makeEntity('reserve-collab', 'collab_table', 'shared', 16, 3, 'SE')]),
+    ...(ws ? [] : [
+      makeEntity('reserve-collab', 'collab_table', 'shared', 16, 3, 'SE'),
+      makeEntity('reserve-cooler', 'water_cooler', 'shared', 14, 1, 'SE'),
+      makeEntity('reserve-plant-2', 'plant_pot', 'shared', 14, 7, 'SW'),
+    ]),
     makeEntity(`bookshelf-${id}`, 'bookshelf', 'shared', 18, 0, 'SE', undefined, 'back'),
     makeEntity(`plant-${id}`, 'plant_pot', 'shared', 20, 1, 'SW'),
   ]
   const wallMounts: RoomWallMount[] = [
     { id: `idea-${id}`, assetId: 'idea_board', wall: 'back', at: 16.2, h: 8, span: 3 },
     { id: `win-${id}`, assetId: 'window_wide', wall: 'back', at: 20.2, h: 10, span: 3 },
-    { id: `clk-${id}`, assetId: 'clock_wall', wall: 'back', at: 14.4, h: 28, span: 1 },
+    { id: `clk-${id}`, assetId: 'clock_wall', wall: 'back', at: 14.4, h: 26, span: 1 },
   ]
   if (ws) wallMounts.push({ id: `doorplate-${ws.id}`, assetId: 'doorplate', wall: 'back', at: 13.5, h: 24, span: 1, propKind: 'doorplate' })
   return {
@@ -111,8 +118,9 @@ function buildLowerRightWing(ws?: WorkspaceWingSpec): WorldWingPlan {
     : [
         makeEntity('lounge-desk', 'exec_desk', 'shared', 17, 10, 'SW'),
         makeEntity('lounge-armchair', 'armchair_green', 'shared', 14, 14, 'SE'),
+        makeEntity('lounge-armchair-2', 'armchair_green', 'shared', 17, 15, 'SW'),
         makeEntity('lounge-lamp-1', 'lamp_table', 'shared', 20, 10, 'SW'),
-        makeEntity('lounge-lamp-2', 'lamp_table', 'shared', 18, 15, 'SW'),
+        makeEntity('lounge-lamp-2', 'lamp_table', 'shared', 20, 14, 'SW'),
         makeEntity('lounge-bookshelf', 'bookshelf', 'shared', 15, 9, 'SE', undefined, 'back'),
         makeEntity('lounge-plant', 'plant_pot', 'shared', 14, 11, 'SW'),
       ]
@@ -192,28 +200,31 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
     .map((w) => ({ id: `door-${w.id}`, u: w.rect.u === 0 ? 9 : 13, v: w.doorway.v, axis: 'u', wingId: w.id }))
   const frontFacade: FacadeSegmentSpec[] = [
     { from: { u: 9, v: buildingRows }, to: { u: 13, v: buildingRows }, heightPx: 18, isEntrance: true },
-    { from: { u: 13, v: 18 }, to: { u: 20, v: 18 }, heightPx: 18, hasWindow: true },
-    { from: { u: 20, v: 18 }, to: { u: 22, v: 16 }, heightPx: 18 },
-    { from: { u: 22, v: 16 }, to: { u: 22, v: 0 }, heightPx: 18 },
+    { from: { u: 13, v: buildingRows }, to: { u: 20, v: buildingRows }, heightPx: 18, hasWindow: true },
+    { from: { u: 20, v: buildingRows }, to: { u: 22, v: buildingRows - 2 }, heightPx: 18 },
+    { from: { u: 22, v: buildingRows - 2 }, to: { u: 22, v: 0 }, heightPx: 18 },
   ]
   const lightSources: LightSourceSpec[] = [
-    { id: 'sc-1', kind: 'sconce', u: 9.4, v: 3.5, radiusTiles: 2.2, intensity: 0.24 },
-    { id: 'sc-2', kind: 'sconce', u: 12.6, v: 3.5, radiusTiles: 2.2, intensity: 0.24 },
-    { id: 'sc-3', kind: 'sconce', u: 9.4, v: 11.5, radiusTiles: 2.2, intensity: 0.24 },
-    { id: 'sc-4', kind: 'sconce', u: 12.6, v: 11.5, radiusTiles: 2.2, intensity: 0.24 },
+    { id: 'sc-1', kind: 'sconce', u: 9, v: 4.5, radiusTiles: 2.2, intensity: 0.24 },
+    { id: 'sc-2', kind: 'sconce', u: 13, v: 9.5, radiusTiles: 2.2, intensity: 0.24 },
+    { id: 'sc-3', kind: 'sconce', u: 9.6, v: buildingRows, radiusTiles: 2.2, intensity: 0.24 },
+    { id: 'sc-4', kind: 'sconce', u: 12.4, v: buildingRows, radiusTiles: 2.2, intensity: 0.24 },
     { id: 'lp-1', kind: 'lamp', u: 3.2, v: 2.2, radiusTiles: 2.0, intensity: 0.22 },
     { id: 'lp-2', kind: 'lamp', u: 20.5, v: 10.5, radiusTiles: 2.0, intensity: 0.22 },
-    { id: 'lp-3', kind: 'lamp', u: 19.5, v: 15.5, radiusTiles: 2.0, intensity: 0.22 },
+    { id: 'lp-3', kind: 'lamp', u: 20.5, v: 14.5, radiusTiles: 2.0, intensity: 0.22 },
     { id: 'wn-1', kind: 'window', u: 20.2, v: 1.5, radiusTiles: 3.2, intensity: 0.26 },
     { id: 'wn-2', kind: 'window', u: 16.5, v: 10.5, radiusTiles: 3.2, intensity: 0.26 },
   ]
   const exteriorProps: RoomEntity[] = [
     makeEntity('ext-tree-1', 'courtyard_tree', 'shared', -1, 15, 'SE'),
-    makeEntity('ext-shrub-1', 'tree_shrub', 'shared', 1, 18, 'SE'),
-    makeEntity('ext-shrub-2', 'tree_shrub', 'shared', 4, 18, 'SE'),
-    makeEntity('ext-tree-2', 'courtyard_tree', 'shared', 7, 18, 'SW'),
-    makeEntity('ext-shrub-3', 'tree_shrub', 'shared', 14, 18, 'SW'),
-    makeEntity('ext-shrub-4', 'tree_shrub', 'shared', 18, 18, 'SW'),
+    makeEntity('ext-shrub-1', 'tree_shrub', 'shared', 1, buildingRows, 'SE'),
+    makeEntity('ext-shrub-2', 'tree_shrub', 'shared', 4, buildingRows, 'SE'),
+    makeEntity('ext-tree-2', 'courtyard_tree', 'shared', 7, buildingRows, 'SW'),
+    makeEntity('ext-pot-l', 'plant_pot', 'shared', 9, buildingRows, 'SW'),
+    makeEntity('ext-pot-r', 'plant_pot', 'shared', 13, buildingRows, 'SW'),
+    makeEntity('ext-shrub-3', 'tree_shrub', 'shared', 14, buildingRows, 'SW'),
+    makeEntity('ext-shrub-4', 'tree_shrub', 'shared', 18, buildingRows, 'SW'),
+    makeEntity('ext-shrub-5', 'tree_shrub', 'shared', 21, buildingRows - 2, 'SW'),
   ]
   return {
     seed, buildingCols: WORLD_BUILDING_COLS, buildingRows, baseOrigin: { ...WORLD_BASE_ORIGIN },

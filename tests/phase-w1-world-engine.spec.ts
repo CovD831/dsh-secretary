@@ -82,6 +82,9 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
     expect(createDioramaLayerNames()).toEqual([
       'stageVignette', 'baseAndFloors', 'aoShadows', 'cutawayWalls', 'ySortedEntities', 'warmLighting',
     ])
+    const rendererSrc = readFileSync(join(ROOT, 'src', 'office-app', 'world-renderer.ts'), 'utf8')
+    expect(rendererSrc).not.toContain('rgba(20, 14, 12')
+    expect(rendererSrc).not.toContain('rgba(255, 232, 178')
   })
 
   it('audits all 18 office-diorama and 16 office-ui PNGs for strict palette & binary alpha', () => {

@@ -7,22 +7,10 @@ import type { RoomEntity, RoomWallMount } from './layout-solver.ts'
 import { worldIsoToScreen } from './world-renderer.ts'
 import type { OfficeCamera, OfficeWorldPlan, WorldSceneState, WorldWingPlan } from './world-types.ts'
 
-export const DIORAMA_LAYER_NAMES = [
-  'stageVignette', 'baseAndFloors', 'aoShadows', 'cutawayWalls', 'ySortedEntities', 'warmLighting',
-] as const
-
+export const DIORAMA_LAYER_NAMES = ['stageVignette', 'baseAndFloors', 'aoShadows', 'cutawayWalls', 'ySortedEntities', 'warmLighting'] as const
 export const createDioramaLayerNames = (): readonly string[] => [...DIORAMA_LAYER_NAMES]
-
-export interface PixiDioramaSourceState {
-  readonly scene: WorldSceneState
-  readonly camera: OfficeCamera
-  readonly images: Record<string, CanvasImageSource>
-}
-
-export interface PixiDioramaHandle {
-  resize: (w: number, h: number) => void
-  destroy: () => void
-}
+export interface PixiDioramaSourceState { readonly scene: WorldSceneState; readonly camera: OfficeCamera; readonly images: Record<string, CanvasImageSource> }
+export interface PixiDioramaHandle { resize: (w: number, h: number) => void; destroy: () => void }
 
 function inWing(u: number, v: number, w: WorldWingPlan): boolean {
   if (u < w.rect.u || u >= w.rect.u + w.rect.w || v < w.rect.v || v >= w.rect.v + w.rect.h) return false
@@ -52,12 +40,14 @@ function makeChairs(suite: RoomEntity): RoomEntity[] {
 
 const hexNum = (hex: string): number => Number.parseInt(hex.slice(1), 16)
 
-export function mountPixiDioramaStage(canvas: HTMLCanvasElement, getState: () => PixiDioramaSourceState): PixiDioramaHandle {
+export function mountPixiDioramaStage(
+  canvas: HTMLCanvasElement, getState: () => PixiDioramaSourceState, initialW = 1440, initialH = 900,
+): PixiDioramaHandle {
   let destroyed = false, initialized = false
+  let pendingW = initialW || canvas.clientWidth || 1440, pendingH = initialH || canvas.clientHeight || 900
   const app = new Application()
-  const sources = new Map<HTMLImageElement, ImageSource>()
-  const baseTextures = new Map<string, Texture>()
-  const charTextures = new Map<string, Texture>()
+  const sources = new Map<HTMLImageElement, ImageSource>(), baseTextures = new Map<string, Texture>()
+  const charTextures = new Map<string, Texture>(), wingLabels = new Map<string, Text>()
 
   const getTex = (id: string, images: Record<string, CanvasImageSource>): Texture | null => {
     const img = images[id]
@@ -80,15 +70,11 @@ export function mountPixiDioramaStage(canvas: HTMLCanvasElement, getState: () =>
     return tex
   }
 
-  const stageVignette = new Graphics()
-  const baseAndFloors = new Container()
-  const runnerGfx = new Graphics()
+  const stageVignette = new Graphics(), baseAndFloors = new Container(), runnerGfx = new Graphics()
   const aoShadows = new Graphics(); aoShadows.blendMode = 'multiply'
-  const cutawayWalls = new Container()
-  const wallGfx = new Graphics()
+  const cutawayWalls = new Container(), wallGfx = new Graphics()
   const ySortedEntities = new Container(); ySortedEntities.sortableChildren = true
-  const warmLighting = new Container()
-  const lightGfx = new Graphics()
+  const warmLighting = new Container(), lightGfx = new Graphics()
 
   const addSp = (parent: Container, tex: Texture, x: number, y: number, w: number, h: number, mirrorX = false, zIndex = 0) => {
     const sp = new Sprite(tex); sp.width = w; sp.height = h; sp.x = mirrorX ? x + w : x; sp.y = y
@@ -98,6 +84,10 @@ export function mountPixiDioramaStage(canvas: HTMLCanvasElement, getState: () =>
 
   const drawFrame = () => {
     if (destroyed || !initialized) return
+    const targetW = canvas.clientWidth || pendingW, targetH = canvas.clientHeight || pendingH
+    if (targetW > 0 && targetH > 0 && (app.screen.width !== targetW || app.screen.height !== targetH)) {
+      pendingW = targetW; pendingH = targetH; app.renderer.resize(targetW, targetH)
+    }
     const { scene, camera, images } = getState()
     const { world, actors, screenStates, gateIntercept, hoverTarget, elapsedMs } = scene
     const z = camera.zoom, cw = app.screen.width, ch = app.screen.height
@@ -112,14 +102,13 @@ export function mountPixiDioramaStage(canvas: HTMLCanvasElement, getState: () =>
       const p = worldIsoToScreen(u + 0.5, v + 0.5, world, camera)
       addSp(baseAndFloors, tex, Math.round(p.x - 16 * z), Math.round(p.y - 8 * z), 32 * z, 16 * z)
     }
-    // Seamless continuous navy-and-gold woven hallway runner
     const r0 = worldIsoToScreen(10.35, 7.2, world, camera), r1 = worldIsoToScreen(11.65, 7.2, world, camera)
     const r2 = worldIsoToScreen(11.65, world.buildingRows - 0.8, world, camera), r3 = worldIsoToScreen(10.35, world.buildingRows - 0.8, world, camera)
     runnerGfx.poly([r0.x, r0.y, r1.x, r1.y, r2.x, r2.y, r3.x, r3.y]).fill(0x3f5a78).stroke({ color: 0x1a1412, width: z })
     const i0 = worldIsoToScreen(10.5, 7.45, world, camera), i1 = worldIsoToScreen(11.5, 7.45, world, camera)
     const i2 = worldIsoToScreen(11.5, world.buildingRows - 1.05, world, camera), i3 = worldIsoToScreen(10.5, world.buildingRows - 1.05, world, camera)
     runnerGfx.poly([i0.x, i0.y, i1.x, i1.y, i2.x, i2.y, i3.x, i3.y]).stroke({ color: 0xc9a46a, width: z })
-    for (let mv = 9; mv < world.buildingRows - 2; mv += 3) {
+    for (let mv = 8; mv < world.buildingRows - 1; mv += 2.5) {
       const mp = worldIsoToScreen(11, mv + 0.5, world, camera)
       runnerGfx.poly([mp.x, mp.y - 3 * z, mp.x + 6 * z, mp.y, mp.x, mp.y + 3 * z, mp.x - 6 * z, mp.y]).fill(0xc9a46a)
     }
@@ -176,36 +165,25 @@ export function mountPixiDioramaStage(canvas: HTMLCanvasElement, getState: () =>
       const p1 = pw.axis === 'u' ? worldIsoToScreen(pw.fixed, pw.start, world, camera) : worldIsoToScreen(pw.start, pw.fixed, world, camera)
       const p2 = pw.axis === 'u' ? worldIsoToScreen(pw.fixed, pw.end, world, camera) : worldIsoToScreen(pw.end, pw.fixed, world, camera)
       const steps = Math.max(1, Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y) / (2 * z)))
+      for (let i = 0; i <= steps; i++) { const wx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - 2 * z), wy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - 22 * z); wallGfx.rect(wx - z, wy - z, 5 * z, 23 * z).fill(0x1a1412) }
       for (let i = 0; i <= steps; i++) {
         const wx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - 2 * z), wy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - 22 * z)
-        wallGfx.rect(wx - z, wy - z, 5 * z, 23 * z).fill(0x1a1412)
-      }
-      for (let i = 0; i <= steps; i++) {
-        const wx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - 2 * z), wy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - 22 * z)
-        wallGfx.rect(wx, wy, 4 * z, 4 * z).fill(0x4a3428)
-        wallGfx.rect(wx, wy + 4 * z, 4 * z, 12 * z).fill(pw.axis === 'u' ? 0xbfa48c : 0xd9c4a8)
-        wallGfx.rect(wx, wy + 16 * z, 4 * z, 5 * z).fill(0x6b4a32)
+        wallGfx.rect(wx, wy, 4 * z, 4 * z).fill(0x4a3428); wallGfx.rect(wx, wy + 4 * z, 4 * z, 12 * z).fill(pw.axis === 'u' ? 0xbfa48c : 0xd9c4a8); wallGfx.rect(wx, wy + 16 * z, 4 * z, 5 * z).fill(0x6b4a32)
       }
     }
     const doorWood = getTex('door_wood', images)
-    if (doorWood) for (const d of world.interiorDoors ?? []) {
-      const dp = worldIsoToScreen(d.u, d.v + 1, world, camera)
-      addSp(cutawayWalls, doorWood, Math.round(dp.x - 20 * z), Math.round(dp.y - 58 * z), 40 * z, 64 * z, d.axis === 'v')
-    }
+    if (doorWood) for (const d of world.interiorDoors ?? []) { const dp = worldIsoToScreen(d.u, d.v + 1, world, camera); addSp(cutawayWalls, doorWood, Math.round(dp.x - 20 * z), Math.round(dp.y - 58 * z), 40 * z, 64 * z, d.axis === 'v') }
     for (const f of world.frontFacade ?? []) {
       const p1 = worldIsoToScreen(f.from.u, f.from.v, world, camera), p2 = worldIsoToScreen(f.to.u, f.to.v, world, camera)
       const steps = Math.max(1, Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y) / (2 * z))), fh = f.heightPx * z
-      for (let i = 0; i <= steps; i++) {
-        const fx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - z), fy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - fh)
-        wallGfx.rect(fx - z, fy - z, 4 * z, fh + 2 * z).fill(0x1a1412)
-        wallGfx.rect(fx, fy, 3 * z, 4 * z).fill(0x4a3428)
-        wallGfx.rect(fx, fy + 4 * z, 3 * z, fh - 4 * z).fill(0x7a6150)
-      }
+      for (let i = 0; i <= steps; i++) { const fx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - z), fy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - fh); wallGfx.rect(fx - z, fy - z, 5 * z, fh + 2 * z).fill(0x1a1412) }
+      for (let i = 0; i <= steps; i++) { const fx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - z), fy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - fh); wallGfx.rect(fx, fy, 4 * z, 4 * z).fill(0x4a3428); wallGfx.rect(fx, fy + 4 * z, 4 * z, fh - 4 * z).fill(0x7a6150) }
       const fwin = f.hasWindow ? getTex('facade_window', images) : null
       if (fwin) { const wp = worldIsoToScreen((f.from.u + f.to.u) / 2, (f.from.v + f.to.v) / 2, world, camera); addSp(cutawayWalls, fwin, Math.round(wp.x - 32 * z), Math.round(wp.y - 36 * z), 64 * z, 40 * z, true) }
     }
-    const dglass = getTex('door_glass', images)
+    const dglass = getTex('door_glass', images), sconce = getTex('wall_sconce', images)
     if (dglass) { const dp = worldIsoToScreen(11, world.buildingRows, world, camera); addSp(cutawayWalls, dglass, Math.round(dp.x - 40 * z), Math.round(dp.y - 52 * z), 80 * z, 56 * z, true) }
+    if (sconce) for (const ls of world.lightSources ?? []) if (ls.kind === 'sconce') { const sp = worldIsoToScreen(ls.u, ls.v, world, camera); addSp(cutawayWalls, sconce, Math.round(sp.x - 9 * z), Math.round(sp.y - 34 * z), 18 * z, 28 * z) }
 
     ySortedEntities.removeChildren()
     for (const e of allEntities) {
@@ -255,7 +233,9 @@ export function mountPixiDioramaStage(canvas: HTMLCanvasElement, getState: () =>
         const pos = worldIsoToScreen(w.rect.u + w.rect.w / 2, w.rect.v + Math.min(4.2, w.rect.h / 2), world, camera)
         const bw = Math.max(72, w.title.length * 10 + 14) * z, bh = 14 * z, bx = Math.round(pos.x - bw / 2), by = Math.round(pos.y - bh)
         lightGfx.rect(bx, by, bw, bh).fill({ color: 0x201a18, alpha: 0.88 }).stroke({ color: hexNum(w.workspaceId && w.workspaceId === scene.activeWorkspaceId ? HIGHLIGHT_GOLD : '#6B4A32'), width: z })
-        const label = new Text({ text: w.title, style: new TextStyle({ fontFamily: 'monospace', fontSize: 9 * z, fill: 0xe8dccb }) })
+        let label = wingLabels.get(w.id)
+        if (!label) { label = new Text({ text: w.title, style: new TextStyle({ fontFamily: 'monospace', fontSize: 9 * z, fill: 0xe8dccb }) }); wingLabels.set(w.id, label) }
+        else { label.text = w.title; label.style.fontSize = 9 * z }
         label.x = bx + 6 * z; label.y = by + 2 * z; warmLighting.addChild(label)
       }
     }
@@ -274,17 +254,23 @@ export function mountPixiDioramaStage(canvas: HTMLCanvasElement, getState: () =>
     if (hoverTarget) lightGfx.rect(hoverTarget.bounds.x, hoverTarget.bounds.y, hoverTarget.bounds.w, hoverTarget.bounds.h).stroke({ color: hexNum(HIGHLIGHT_GOLD), width: z })
   }
 
-  void app.init({ canvas, width: canvas.width || 1440, height: canvas.height || 900, backgroundColor: 0x201a18, antialias: false, roundPixels: true, resolution: 1, preference: 'webgl' })
+  void app.init({ canvas, width: pendingW, height: pendingH, backgroundColor: 0x201a18, antialias: false, roundPixels: true, resolution: 1, preference: 'webgl' })
     .then(() => {
       if (destroyed) { app.destroy(true); return }
       initialized = true
+      app.renderer.resize(pendingW, pendingH)
       app.stage.addChild(stageVignette, baseAndFloors, aoShadows, cutawayWalls, ySortedEntities, warmLighting)
       app.ticker.add(drawFrame)
       drawFrame()
     })
 
   return {
-    resize: (w: number, h: number) => { if (initialized && !destroyed) app.renderer.resize(w, h) },
-    destroy: () => { destroyed = true; if (initialized) { app.ticker.remove(drawFrame); app.destroy(true) } },
+    resize: (w: number, h: number) => { pendingW = w; pendingH = h; if (initialized && !destroyed) app.renderer.resize(w, h) },
+    destroy: () => {
+      destroyed = true
+      for (const lbl of wingLabels.values()) lbl.destroy()
+      wingLabels.clear()
+      if (initialized) { app.ticker.remove(drawFrame); app.destroy(true) }
+    },
   }
 }
