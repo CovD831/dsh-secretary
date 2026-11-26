@@ -17,7 +17,9 @@ export interface MineWorkflowSopInput {
 const SHELL_TOOLS = new Set(['bash', 'pwsh', 'shell', 'bash_persistent', 'pwsh_persistent', 'run_command'])
 const LOCATE_TOOLS = new Set(['read', 'read_file', 'view_file', 'glob', 'grep', 'grep_search', 'rg', 'find', 'find_by_name', 'list', 'list_dir', 'ls', 'search'])
 const EDIT_TOOLS = new Set(['edit', 'write', 'edit_file', 'write_file', 'replace_file_content', 'multi_replace_file_content', 'apply_patch', 'notebook_edit'])
-const VERIFY_CMD_RE = /\b(vitest|jest|mocha|pytest|tsc|typecheck|eslint|lint|tsdown|build|test|check)\b/i
+const SAFE_SUBCMD_TOOLS = new Set(['git', 'pnpm', 'npm', 'cargo', 'go', 'docker'])
+const VERIFY_HEAD_RE = /^(?:vitest|jest|mocha|pytest|tsc|typecheck|eslint|lint|tsdown|test|check|build)\b/i
+const VERIFY_PKG_RE = /^(?:pnpm|npm|yarn|bun)\s+(?:run\s+)?(?:test|typecheck|lint|build|check)\b/i
 const LOCATE_CMD_RE = /^(?:rg|grep|find|ls|cat|head|tail|git\s+(?:status|log|diff|show))\b/i
 const EDIT_CMD_RE = /^(?:sed|awk|tee|mv|cp|mkdir|rm|touch|git\s+(?:add|commit|apply))\b/i
 const isRec = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === 'object' && !Array.isArray(v))
@@ -32,22 +34,30 @@ function topDirOf(args: unknown): string {
   const rawPath = args['file_path'] ?? args['path'] ?? args['filePath'] ?? args['TargetFile'] ?? args['Directory'] ?? args['SearchPath'] ?? args['dir']
   if (typeof rawPath !== 'string' || !rawPath.trim()) return 'workspace'
   const segs = rawPath.trim().replace(/\\/g, '/').replace(/^\.\//, '').split('/').filter(Boolean)
-  if (segs.length <= 1) return segs[0]?.includes('.') ? 'root' : (segs[0] || 'workspace')
-  return segs[0]!.replace(/[^a-zA-Z0-9._-]/g, '') || 'workspace'
+  const rawTop = segs.length <= 1 ? (segs[0]?.includes('.') ? 'root' : (segs[0] ?? 'workspace')) : segs[0]!
+  if (!rawTop || rawTop.includes('REDACTED')) return 'workspace'
+  return rawTop.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^\.+|\.+$/g, '').slice(0, 32) || 'workspace'
 }
 
 function normalizeShellCommand(rawCmd: string): { phase: SessionStepPhase; skeleton: string } {
   const scrubbed = redactValue(rawCmd).value.replace(/^(?:[A-Z_][A-Z0-9_]*=[^\s]+\s+)+/, '').trim()
   const unwrapped = scrubbed.replace(/^(?:pnpm|npm\s+run|npx|yarn|bun)\s+/, '').trim()
+  const isLocate = LOCATE_CMD_RE.test(unwrapped), isEdit = EDIT_CMD_RE.test(unwrapped)
+  const isVerify = !isLocate && !isEdit && (VERIFY_HEAD_RE.test(unwrapped) || VERIFY_PKG_RE.test(scrubbed))
   let skeleton = 'shell:exec'
-  if (/\bvitest\b/i.test(scrubbed)) skeleton = 'vitest run'
-  else if (/\b(tsc|typecheck)\b/i.test(scrubbed)) skeleton = /\btsc\b/i.test(scrubbed) && !scrubbed.includes('--noEmit') ? 'tsc' : 'tsc --noEmit'
-  else if (/\btsdown\b/i.test(scrubbed)) skeleton = 'tsdown'
-  else if (/^(?:pnpm|npm|yarn|bun)\s+test\b/i.test(scrubbed)) skeleton = 'pnpm test'
-  else if (/^(?:pnpm|npm|yarn|bun)\s+build\b/i.test(scrubbed)) skeleton = 'pnpm build'
-  else if (/\beslint\b/i.test(scrubbed)) skeleton = 'eslint'
-  else skeleton = unwrapped.split(/\s+/).filter(t => /^[a-zA-Z0-9._-]+$/.test(t) && !t.includes('REDACTED')).slice(0, 2).join(' ').slice(0, 32) || 'shell:exec'
-  const phase: SessionStepPhase = VERIFY_CMD_RE.test(scrubbed) ? 'verify' : LOCATE_CMD_RE.test(unwrapped) ? 'locate' : EDIT_CMD_RE.test(unwrapped) ? 'edit' : 'other'
+  if (isVerify && /\bvitest\b/i.test(unwrapped)) skeleton = 'vitest run'
+  else if (isVerify && /\b(tsc|typecheck)\b/i.test(unwrapped)) skeleton = /\btsc\b/i.test(unwrapped) && !scrubbed.includes('--noEmit') ? 'tsc' : 'tsc --noEmit'
+  else if (isVerify && /\btsdown\b/i.test(unwrapped)) skeleton = 'tsdown'
+  else if (isVerify && /^(?:pnpm|npm|yarn|bun)\s+test\b/i.test(scrubbed)) skeleton = 'pnpm test'
+  else if (isVerify && /^(?:pnpm|npm|yarn|bun)\s+build\b/i.test(scrubbed)) skeleton = 'pnpm build'
+  else if (isVerify && /\beslint\b/i.test(unwrapped)) skeleton = 'eslint'
+  else {
+    const parts = unwrapped.split(/\s+/).filter(Boolean)
+    const cmd = (parts[0] && /^[a-zA-Z0-9._-]+$/.test(parts[0]) && !parts[0].includes('..') && !parts[0].includes('REDACTED')) ? parts[0].slice(0, 24) : ''
+    const sub = cmd && SAFE_SUBCMD_TOOLS.has(cmd.toLowerCase()) && parts[1] && /^[a-z][a-z0-9_-]{0,20}$/.test(parts[1]) ? parts[1] : ''
+    skeleton = cmd ? (sub ? `${cmd} ${sub}` : cmd) : 'shell:exec'
+  }
+  const phase: SessionStepPhase = isLocate ? 'locate' : isEdit ? 'edit' : isVerify ? 'verify' : 'other'
   return { phase, skeleton }
 }
 
@@ -113,11 +123,14 @@ function buildTicketSummaries(input: MineWorkflowSopInput): TicketTraceSummary[]
   const summaries: TicketTraceSummary[] = []
   for (const [tid, tEvents] of byTicket) {
     const steps: SessionStepTrace[] = [], seenSession = new Set<string>()
-    let gateDenied = false, endedClean = false
+    let gateDenied = false, endedExplicitly = false, endedClean = false
     for (const ev of tEvents) {
       const p = isRec(ev.payload) ? ev.payload : {}
       if (ev.type === 'gate.evaluated' && isRec(p['verdict']) && p['verdict']['kind'] === 'deny') gateDenied = true
-      if (ev.type === 'ticket.ended' && (p['outcome'] === 'completed' || p['outcome'] === 'merged')) endedClean = true
+      if (ev.type === 'ticket.ended') {
+        endedExplicitly = true
+        endedClean = p['outcome'] === 'completed' || p['outcome'] === 'merged'
+      }
       const row = rowBySeq.get(ev.seq)
       if (row?.steps?.length) {
         const key = row.sessionId ?? `seq:${row.envelopeSeq}`
@@ -125,13 +138,18 @@ function buildTicketSummaries(input: MineWorkflowSopInput): TicketTraceSummary[]
       }
     }
     const verifySteps = steps.filter(s => s.phase === 'verify')
-    const passedVerify = [...new Set(verifySteps.filter(s => !s.isError && (s.exitCode === undefined || s.exitCode === 0)).map(s => s.skeleton))].sort()
+    const lastByVerify = new Map<string, SessionStepTrace>()
+    for (const vs of verifySteps) lastByVerify.set(vs.skeleton, vs)
+    const passedVerify = [...lastByVerify.entries()].filter(([, s]) => !s.isError && (s.exitCode === undefined || s.exitCode === 0)).map(([k]) => k).sort()
+    const lastVerify = verifySteps[verifySteps.length - 1]
     const failedStep = verifySteps.find(s => s.isError || (s.exitCode !== undefined && s.exitCode !== 0)) ?? steps.find(s => s.isError)
     const tLabels = labelsByTicket.get(tid)
     const hadLabelFriction = Boolean(tLabels && (tLabels.has('L1:verify_failed') || tLabels.has('L2:gate_denied_fixed') || tLabels.has('L3:rework_retry') || tLabels.has('L5:tool_error')))
     const rc = caseById.get(tid)
-    const isClean = rc ? rc.expectedOutcome === 'clean' : (endedClean && !failedStep)
-    const converged = (gateDenied || hadLabelFriction || Boolean(failedStep)) && passedVerify.length > 0 && (endedClean || rc?.expectedOutcome === 'clean' || !steps[steps.length - 1]?.isError)
+    const forbiddenFail = (endedExplicitly && !endedClean) || (!endedExplicitly && rc?.expectedOutcome === 'defect')
+    const lastVerifyOk = Boolean(lastVerify && !lastVerify.isError && (lastVerify.exitCode === undefined || lastVerify.exitCode === 0))
+    const isClean = !forbiddenFail && (rc ? rc.expectedOutcome === 'clean' : (endedClean && lastVerifyOk))
+    const converged = !forbiddenFail && (gateDenied || hadLabelFriction || Boolean(failedStep)) && passedVerify.length > 0 && (endedClean || rc?.expectedOutcome === 'clean' || (!endedExplicitly && lastVerifyOk))
     summaries.push({
       ticketId: tid, steps, verifyCommands: passedVerify,
       ...(failedStep ? { failedVerifyCommand: { command: failedStep.skeleton, ...(failedStep.exitCode !== undefined ? { exitCode: failedStep.exitCode } : {}) } } : {}),
@@ -145,13 +163,19 @@ function buildSopDraft(
   signature: string, verifyCommands: readonly string[], mode: 'rework-converged' | 'frequent-sop',
   group: readonly TicketTraceSummary[], failedSample?: { readonly ticketId: string; readonly command: string; readonly exitCode?: number },
 ): DepositDraft {
-  const slug = signature.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'verify'
+  const slug = signature.toLowerCase().replace(/\.{2,}/g, '-').replace(/[^a-z0-9._-]+/g, '-').replace(/^[.-]+|[.-]+$/g, '').slice(0, 48) || 'verify'
   const sample = group[0]!, phases = [...new Set(sample.steps.map(s => s.phase))].filter(p => p !== 'other')
+  const removedCmd = verifyCommands[verifyCommands.length - 1]!
+  const counterfactualCmds = verifyCommands.slice(0, -1).filter(c => !c.includes(removedCmd))
+  const denyCmds = counterfactualCmds.length > 0
+    ? counterfactualCmds.map(command => ({ command, exitCode: 0 }))
+    : [{ command: '__missing_required_verify__', exitCode: 0 }]
+  const failCode = failedSample?.exitCode !== undefined && failedSample.exitCode !== 0 ? failedSample.exitCode : 1
   const cases: DepositFixtureCase[] = [
     { name: `sop-allow-${sample.ticketId}`, expected: 'allow', ctx: { commands: verifyCommands.map(command => ({ command, exitCode: 0 })) }, note: `来自真实工单 ${sample.ticketId} 的完整验证轨迹` },
     failedSample
-      ? { name: `sop-deny-failed-${failedSample.ticketId}`, expected: 'deny', ctx: { commands: [{ command: failedSample.command, exitCode: failedSample.exitCode ?? 1 }] }, note: `来自真实返工/失败工单 ${failedSample.ticketId} 的失败命令反例` }
-      : { name: `sop-deny-missing-${sample.ticketId}`, expected: 'deny', ctx: { commands: verifyCommands.length > 1 ? verifyCommands.slice(0, -1).map(command => ({ command, exitCode: 0 })) : [{ command: 'echo skipped', exitCode: 0 }] }, note: '缺少必需验证命令的反事实反例' },
+      ? { name: `sop-deny-failed-${failedSample.ticketId}`, expected: 'deny', ctx: { commands: [{ command: failedSample.command, exitCode: failCode }] }, note: `来自真实返工/失败工单 ${failedSample.ticketId} 的失败命令反例` }
+      : { name: `sop-deny-missing-${sample.ticketId}`, expected: 'deny', ctx: { commands: denyCmds }, note: '缺少必需验证命令的反事实反例' },
     { name: 'sop-unmeasured-missing-commands', expected: 'unmeasured', expectedCause: 'missing-input', ctx: {}, note: '缺少 commands 输入时诚实返回 unmeasured' },
   ]
   const stepsMd = [
@@ -191,8 +215,10 @@ export function mineWorkflowSopDrafts(input: MineWorkflowSopInput): DepositDraft
   }
   const drafts: DepositDraft[] = []
   for (const [sig, group] of bySig) {
-    if (group.hasRework) drafts.push(buildSopDraft(sig, group.verifyCommands, 'rework-converged', group.items, failedSample))
-    else if (group.items.length >= minSupport) drafts.push(buildSopDraft(sig, group.verifyCommands, 'frequent-sop', group.items, failedSample))
+    const groupFailOwner = group.items.find(s => s.failedVerifyCommand)
+    const groupFail = groupFailOwner?.failedVerifyCommand ? { ticketId: groupFailOwner.ticketId, ...groupFailOwner.failedVerifyCommand } : failedSample
+    if (group.hasRework) drafts.push(buildSopDraft(sig, group.verifyCommands, 'rework-converged', group.items, groupFail))
+    else if (group.items.length >= minSupport) drafts.push(buildSopDraft(sig, group.verifyCommands, 'frequent-sop', group.items, groupFail))
   }
   return drafts
 }

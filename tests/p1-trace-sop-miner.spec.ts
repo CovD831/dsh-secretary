@@ -8,7 +8,7 @@ import { GovernanceRuntime } from '../src/app/governance.ts'
 import { adoptDepositDraft, listDepositDrafts } from '../src/app/governance-drafts.ts'
 import { Store } from '../src/app/store.ts'
 import { validateDepositDraft } from '../src/authoring/index.ts'
-import { compileDeclarativeRuleFn, validateDeclarativeRule, type CommandCheckConfig } from '../src/judgement/declarative.ts'
+import { compileDeclarativeEntry, compileDeclarativeRuleFn, loadDepositPackage, runDepositCases, validateDeclarativeRule, type CommandCheckConfig } from '../src/judgement/index.ts'
 import { collectOnlineRsiSnapshot, extractSessionStepSequence, joinNativeSessionMetrics, mineWorkflowSopDrafts } from '../src/rsi/index.ts'
 import { createSpineAppender, ensureSpineSchema, type SpineEnvelope } from '../src/spine/index.ts'
 
@@ -148,6 +148,35 @@ describe('P1 Trace-to-SOP Miner', () => {
     const adopted = await adoptDepositDraft(gov, { draftId: mined[0]!.id, installShadow: true })
     expect(adopted.ok && adopted.installed && adopted.stage === 'shadow' && adopted.enforce === false).toBe(true)
     expect(gov.registry.list().some(g => g.id === mined[0]!.id && g.stage === 'shadow')).toBe(true)
+    if (adopted.ok && adopted.packageDir) {
+      const loaded = await loadDepositPackage(adopted.packageDir)
+      expect(loaded.admission.admitted).toBe(true)
+      if (!loaded.admission.admitted) throw new Error('expected admitted')
+      const entry = compileDeclarativeEntry(loaded.admission.manifest)
+      const report = await runDepositCases(entry, loaded.cases)
+      expect(report.ok).toBe(true)
+      expect(report.mutationPassed).toBe(true)
+    }
     await gov.shutdown()
+  })
+
+  it('拦截脱敏/阶段误判/未收敛失败工单（Blocker 1-3 回归守卫）', async () => {
+    const noisyLog: SessionEvent[] = [
+      callEv(0, 'n1', 'bash', { command: 'mysql -pMyPass123' }), resEv(1, 'n1', 'ok'),
+      callEv(2, 'n2', 'bash', { command: 'git diff tests/a.ts' }), resEv(3, 'n2', 'ok'),
+      callEv(4, 'n3', 'bash', { command: 'rg check src/' }), resEv(5, 'n3', 'ok'),
+      callEv(6, 'n4', 'bash', { command: 'rm -rf build' }), resEv(7, 'n4', 'ok'),
+      callEv(8, 'n5', 'bash', { command: 'tsc --noEmit' }), resEv(9, 'n5', 'ok\n[exit code: 0]'),
+      callEv(10, 'n6', 'bash', { command: 'tsc --noEmit' }), resEv(11, 'n6', 'fail\n[exit code: 2]'),
+      callEv(12, 'n7', 'present', {}), resEv(13, 'n7', 'ok'),
+    ]
+    const steps = extractSessionStepSequence(noisyLog)
+    expect(steps[0]!.skeleton).toBe('mysql')
+    expect(steps[1]!.phase).toBe('locate')
+    expect(steps[2]!.phase).toBe('locate')
+    expect(steps[3]!.phase).toBe('edit')
+    const envs = [spineEv(1, 't-fail-end', 'ticket.ended', { outcome: 'failed' }, 's-noisy')]
+    const joined = await joinNativeSessionMetrics(envs, () => noisyLog)
+    expect(mineWorkflowSopDrafts({ events: envs, joinedSessionMetrics: joined })).toHaveLength(0)
   })
 })
