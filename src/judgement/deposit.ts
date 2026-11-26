@@ -1,6 +1,7 @@
 import { readdir, readFile, realpath } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { evaluateCompiledEntry, validateDeclarativeRule } from './declarative.ts'
+import { extractPlaybookSection, validateAndNormalizePlaybook } from './playbook.ts'
 import { createJudgementRegistry, isValidScopeStage } from './registry.ts'
 import { auditRequires } from './requires.ts'
 import { parseFrontmatterData } from './yaml.ts'
@@ -60,7 +61,8 @@ export function parseDepositMarkdown(content: string) {
   const rawManifest = parseFrontmatterData(match[1]!)
   const prose = (match[2] ?? '').trim()
   const { sections, missing } = extractDepositSections(prose)
-  return { rawManifest, prose, sections, missingSections: missing }
+  const playbookSection = extractPlaybookSection(prose)
+  return { rawManifest, prose, sections, missingSections: missing, ...(playbookSection ? { playbookSection } : {}) }
 }
 
 function isValidParamSpec(spec: unknown): spec is ParamSpec {
@@ -158,6 +160,8 @@ function validateManifestFields(raw: Record<string, unknown>, prose: string): { 
   if (raw['rule'] !== undefined) {
     for (const issue of validateDeclarativeRule(raw['rule'])) fail('invalid-declarative-rule', issue.field, issue.reason, '修正零代码声明式 rule 配置')
   }
+  const checkedPlaybook = validateAndNormalizePlaybook(raw['playbook'], prose)
+  for (const issue of checkedPlaybook.issues) fail('invalid-playbook', issue.field, issue.reason, '修正 playbook 字段或操作手册小节')
   if (violations.length > 0) return { violations }
   return {
     violations,
@@ -175,6 +179,7 @@ function validateManifestFields(raw: Record<string, unknown>, prose: string): { 
       ...(typeof raw['measures'] === 'string' && raw['measures'].trim() ? { measures: raw['measures'].trim() } : {}),
       ...(typeof raw['cooldownMs'] === 'number' && Number.isFinite(raw['cooldownMs']) ? { cooldownMs: raw['cooldownMs'] } : {}),
       ...(isPlainRecord(raw['rule']) ? { rule: raw['rule'] as unknown as DeclarativeRule } : {}),
+      ...(checkedPlaybook.playbook ? { playbook: checkedPlaybook.playbook } : {}),
     },
   }
 }

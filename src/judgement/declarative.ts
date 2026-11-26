@@ -1,4 +1,5 @@
 import { confidenceOf } from '../rsi/evaluator.ts'
+import { validateWorkflowSopDeps } from './playbook.ts'
 import { auditRequires, readPath } from './requires.ts'
 import {
   ISOLATION_CEILINGS,
@@ -67,8 +68,7 @@ export function validateDeclarativeRule(raw: unknown): DeclarativeRuleIssue[] {
       if (c['op'] === 'in' && c['param'] === undefined && !Array.isArray(c['value'])) push(`rule.clauses[${i}].value`, 'in 需数组 value')
     })
   } else if (kind === 'workflow_sop') {
-    if (!Array.isArray(raw['steps']) || raw['steps'].length === 0) push('rule.steps', 'workflow_sop 至少需 1 个检查步骤')
-    else raw['steps'].forEach((s, i) => { if (!isRec(s) || typeof s['id'] !== 'string' || !s['id'].trim()) push(`rule.steps[${i}].id`, 'SOP 步骤缺少非空 id') })
+    validateWorkflowSopDeps(raw, push)
     if (raw['signal'] !== undefined && (typeof raw['signal'] !== 'string' || !GOVERNED_SIGNALS.has(raw['signal']))) push('rule.signal', '信号不在受治理 SignalCatalog 内')
     if (raw['action'] !== undefined && (!isRec(raw['action']) || typeof raw['action']['name'] !== 'string' || !GOVERNED_ACTIONS.has(raw['action']['name']))) push('rule.action.name', '动作不在受治理 ActionCatalog 内')
   } else push('rule.kind', `未知零代码积木 "${String(kind)}"`)
@@ -164,14 +164,18 @@ function evalPredicates(rule: PredicatesConfig, ctx: unknown, params: Record<str
 
 function evalWorkflowSop(rule: WorkflowSopConfig, ctx: unknown): Verdict {
   const blockers: string[] = []
-  let doneSet: Set<string> | undefined
+  let doneSet: Set<string> | undefined, firstIndex: Map<string, number> | undefined
   if (rule.checklistField) {
     const rawList = readPath(ctx, rule.checklistField)
     if (rawList === undefined || rawList === null) return { kind: 'unmeasured', cause: 'missing-input', detail: `缺少 SOP 检查清单字段 "${rule.checklistField}"` }
     if (!Array.isArray(rawList)) return { kind: 'deny', blockers: [`SOP 检查清单 "${rule.checklistField}" 必须为数组`] }
-    doneSet = new Set(rawList.filter((v): v is string => typeof v === 'string'))
+    doneSet = new Set(); firstIndex = new Map()
+    rawList.forEach((v, idx) => {
+      if (typeof v === 'string') { doneSet!.add(v); if (!firstIndex!.has(v)) firstIndex!.set(v, idx) }
+    })
   }
-  for (const s of rule.steps) {
+  for (let i = 0; i < rule.steps.length; i++) {
+    const s = rule.steps[i]!
     if (s.requiredField) {
       const v = readPath(ctx, s.requiredField)
       if (v === undefined || v === null || (typeof v === 'string' && !v.trim())) return { kind: 'unmeasured', cause: 'missing-input', detail: `SOP 步骤 "${s.id}" 缺少输入 "${s.requiredField}"` }
@@ -182,6 +186,16 @@ function evalWorkflowSop(rule: WorkflowSopConfig, ctx: unknown): Verdict {
       if (b !== true) blockers.push(s.message ?? `SOP 检查项 "${s.id}" 未满足`)
     }
     if (doneSet && !doneSet.has(s.id)) blockers.push(s.message ?? `SOP 步骤 "${s.id}" 尚未完成`)
+    if (firstIndex && firstIndex.has(s.id)) {
+      const currIdx = firstIndex.get(s.id)!
+      if (rule.enforceOrder && i > 0) {
+        const prev = rule.steps[i - 1]!.id
+        if (firstIndex.has(prev) && firstIndex.get(prev)! >= currIdx) blockers.push(`SOP 步骤顺序颠倒: "${prev}" 必须早于 "${s.id}"`)
+      }
+      for (const dep of s.dependsOn ?? []) {
+        if (firstIndex.has(dep) && firstIndex.get(dep)! >= currIdx) blockers.push(`SOP 步骤顺序颠倒: "${dep}" 必须早于 "${s.id}"`)
+      }
+    }
   }
   return blockers.length > 0 ? { kind: 'deny', blockers: blockers as [string, ...string[]] }
     : { kind: 'allow', produced: { completedSteps: rule.steps.map(s => s.id), ...(rule.action ? { action: rule.action } : {}) } }
