@@ -74,6 +74,7 @@ export function StageApp() {
   const [drawerMode, setDrawerMode] = useState<WorkerDrawerMode>(null)
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null)
   const [hoverTarget, setHoverTarget] = useState<ScenePickResult | null>(null)
+  const [pendingBoss, setPendingBoss] = useState<{ text: string; sentAt: number; baseSayId?: string } | null>(null)
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
@@ -168,6 +169,26 @@ export function StageApp() {
   }, [activeRuling, roomTickets])
 
   const gateBlocked = gateUntil > Date.now()
+  const latestSayId = useMemo(() => [...feed].reverse().find(e => e.role === 'secretary')?.id, [feed])
+  const latestEntry = feed[feed.length - 1]
+  const secretaryThinking = Boolean(pendingBoss)
+    || Boolean(latestEntry?.role === 'boss' && !activeRuling && Date.now() - Date.parse(latestEntry.at) < 45_000)
+
+  useEffect(() => {
+    if (!pendingBoss) return
+    if (activeRuling || (latestSayId && latestSayId !== pendingBoss.baseSayId)) {
+      setPendingBoss(null)
+      return
+    }
+    const timer = setTimeout(() => setPendingBoss(null), Math.max(0, 45_000 - (Date.now() - pendingBoss.sentAt)))
+    return () => clearTimeout(timer)
+  }, [pendingBoss, activeRuling, latestSayId])
+
+  useEffect(() => {
+    if (!secretaryThinking) return
+    const fast = setInterval(() => { void refreshAll() }, 1200)
+    return () => clearInterval(fast)
+  }, [secretaryThinking, refreshAll])
 
   useEffect(() => {
     let raf = 0
@@ -187,6 +208,7 @@ export function StageApp() {
           actors: actorsRef.current,
           screenStates,
           hoverTarget,
+          secretaryThinking,
           elapsedMs: elapsed,
           ...(gateUntil > Date.now() ? { gateIntercept: { targetActorId: gateActorId, frame: Math.floor(elapsed / 200) % 3 } } : {}),
         }, spritesRef.current, 2)
@@ -195,7 +217,7 @@ export function StageApp() {
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [plan, screenStates, hoverTarget, gateUntil])
+  }, [plan, screenStates, hoverTarget, gateUntil, secretaryThinking])
 
   const toCanvasCoords = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current
@@ -222,8 +244,14 @@ export function StageApp() {
   }
 
   const handleSendMessage = async (text: string) => {
-    await officeCall('POST secretary/messages', { body: { text } })
-    await refreshAll()
+    setPendingBoss({ text, sentAt: Date.now(), baseSayId: latestSayId })
+    try {
+      await officeCall('POST secretary/messages', { body: { text } })
+      await refreshAll()
+    } catch (err) {
+      setPendingBoss(null)
+      throw err
+    }
   }
 
   const handleDecideRuling = async (input: {
@@ -270,11 +298,16 @@ export function StageApp() {
           style={{ width: '100%', height: 'auto', display: 'block', imageRendering: 'pixelated', cursor: hoverTarget ? 'pointer' : 'default' }}
         />
 
-        <NpcDialog
-          feed={feed} activeRuling={activeRuling} pendingCount={pendingCount} avatar={avatar}
-          hasWorkingTickets={roomTickets.some(t => t.stage === 'working')} gateBlocked={gateBlocked} inputRef={inputRef}
-          onSendMessage={handleSendMessage} onDecideRuling={handleDecideRuling} onOpenHandover={entry => setHandoverEntry(entry)}
-        />
+        <div style={{ marginTop: -220, position: 'relative' }}>
+          <NpcDialog
+            feed={feed} activeRuling={activeRuling} pendingCount={pendingCount} avatar={avatar}
+            hasWorkingTickets={roomTickets.some(t => t.stage === 'working')} gateBlocked={gateBlocked}
+            secretaryThinking={secretaryThinking}
+            pendingBossText={pendingBoss?.text ?? (latestEntry?.role === 'boss' ? latestEntry.text : null)}
+            inputRef={inputRef}
+            onSendMessage={handleSendMessage} onDecideRuling={handleDecideRuling} onOpenHandover={entry => setHandoverEntry(entry)}
+          />
+        </div>
       </div>
 
       <PropsDrawer activeProp={activeProp} onClose={() => setActiveProp(null)} onChanged={() => { void refreshAll() }} />

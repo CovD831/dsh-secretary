@@ -12,6 +12,8 @@ export interface NpcDialogProps {
   readonly avatar: AvatarPackSummary | null
   readonly hasWorkingTickets: boolean
   readonly gateBlocked: boolean
+  readonly secretaryThinking?: boolean
+  readonly pendingBossText?: string | null
   readonly inputRef?: RefObject<HTMLInputElement>
   readonly onSendMessage: (text: string) => Promise<void>
   readonly onDecideRuling: (input: {
@@ -43,9 +45,10 @@ export function resolveSecretaryMood(
   gateBlocked: boolean,
   hasWorkingTickets: boolean,
   feed: readonly SecretaryFeedEntry[],
+  secretaryThinking = false,
 ): SecretaryExpression {
   if (activeRuling || gateBlocked) return 'concerned'
-  if (hasWorkingTickets) return 'working'
+  if (secretaryThinking || hasWorkingTickets) return 'working'
   for (let i = feed.length - 1; i >= 0; i--) {
     const entry = feed[i]!
     if (entry.role === 'secretary' && entry.expression) return entry.expression
@@ -54,7 +57,8 @@ export function resolveSecretaryMood(
 }
 
 export function NpcDialog({
-  feed, activeRuling, pendingCount, avatar, hasWorkingTickets, gateBlocked, inputRef,
+  feed, activeRuling, pendingCount, avatar, hasWorkingTickets, gateBlocked,
+  secretaryThinking = false, pendingBossText = null, inputRef,
   onSendMessage, onDecideRuling, onOpenHandover,
 }: NpcDialogProps) {
   const [draft, setDraft] = useState('')
@@ -64,6 +68,7 @@ export function NpcDialog({
   const [captureAsRule, setCaptureAsRule] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [dots, setDots] = useState(1)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -73,20 +78,31 @@ export function NpcDialog({
     setCaptureAsRule(false)
   }, [activeRuling?.id])
 
-  const mood = resolveSecretaryMood(activeRuling, gateBlocked, hasWorkingTickets, feed)
+  useEffect(() => {
+    if (!secretaryThinking) { setDots(1); return }
+    const t = setInterval(() => setDots(d => (d % 3) + 1), 380)
+    return () => clearInterval(t)
+  }, [secretaryThinking])
+
+  const mood = resolveSecretaryMood(activeRuling, gateBlocked, hasWorkingTickets, feed, secretaryThinking)
   const portraitSrc = avatar?.portraitUrls[mood] ?? `/assets/f1-proof/portrait_${mood}.png`
-  const latestSay = useMemo(() => [...feed].reverse().find(e => e.role === 'secretary'), [feed])
+  const latestSayIdx = useMemo(() => {
+    for (let i = feed.length - 1; i >= 0; i--) if (feed[i]!.role === 'secretary') return i
+    return -1
+  }, [feed])
+  const latestSay = latestSayIdx >= 0 ? feed[latestSayIdx] : undefined
+  const repliedBossText = latestSayIdx > 0 && feed[latestSayIdx - 1]?.role === 'boss' ? feed[latestSayIdx - 1]!.text : null
   const latestHandover = useMemo(() => [...feed].reverse().find(e => e.kind === 'handover' && e.handover), [feed])
   const effectiveOption = selectedOption ?? activeRuling?.options.find(o => o.recommended)?.id ?? activeRuling?.options[0]?.id
 
   const handleSend = async () => {
     const text = draft.trim()
     if (!text || busy) return
-    setBusy(true); setError(null)
+    setBusy(true); setError(null); setDraft('')
     try {
       await onSendMessage(text)
-      setDraft('')
     } catch (err) {
+      setDraft(text)
       setError(err instanceof Error ? err.message : String(err))
     } finally { setBusy(false) }
   }
@@ -147,7 +163,7 @@ export function NpcDialog({
         style={{ position: 'absolute', left: 24, bottom: 16, width: 384, height: 480, imageRendering: 'pixelated', pointerEvents: 'none', zIndex: 20 }}
       />
       <div style={{
-        background: OFFICE_THEME.bgPanel, color: OFFICE_THEME.inkCream,
+        boxSizing: 'border-box', background: OFFICE_THEME.bgPanel, color: OFFICE_THEME.inkCream,
         border: `2px solid ${OFFICE_THEME.borderWood}`, boxShadow: `inset 0 0 0 1px ${OFFICE_THEME.borderGold}`,
         borderRadius: 4, minHeight: 220, padding: '16px 24px 16px 432px',
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', display: 'flex', flexDirection: 'column', gap: 10,
@@ -206,7 +222,27 @@ export function NpcDialog({
           </>
         ) : (
           <>
-            <div style={{ fontSize: 18, lineHeight: 1.5, minHeight: 54 }}>
+            {secretaryThinking && (
+              <div role="status" aria-label="秘书思考中" style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap',
+                background: OFFICE_THEME.bgDeep, border: `1px solid ${OFFICE_THEME.borderGold}`,
+                borderRadius: 3, padding: '6px 12px', fontSize: 13,
+              }}>
+                <span>
+                  <strong style={{ color: OFFICE_THEME.borderGold }}>你：</strong>
+                  <span>「{pendingBossText ?? '刚发送指令'}」</span>
+                </span>
+                <span style={{ color: OFFICE_THEME.working, fontWeight: 700 }}>
+                  秘书正在思考回应 {'·'.repeat(dots)}
+                </span>
+              </div>
+            )}
+            {!secretaryThinking && repliedBossText && (
+              <div style={{ fontSize: 12, color: OFFICE_THEME.borderGold, opacity: 0.88 }}>
+                回应「{repliedBossText.length > 44 ? `${repliedBossText.slice(0, 44)}…` : repliedBossText}」：
+              </div>
+            )}
+            <div style={{ fontSize: 18, lineHeight: 1.5, minHeight: 46, opacity: secretaryThinking ? 0.72 : 1 }}>
               {latestSay?.text ?? '老板好，办公室已就绪。点按场景器物可查阅卷宗，或直接在此吩咐任务。'}
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 'auto' }}>

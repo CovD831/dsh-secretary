@@ -169,6 +169,8 @@ describe('Phase O3 Pixel Office Stage', () => {
     await vi.waitFor(() => {
       expect(calls.some(c => c.method === 'POST' && c.path === 'secretary/messages' && (c.body as Record<string, unknown>)['text'] === '请检查 PR #42')).toBe(true)
     })
+    expect(document.querySelector('[aria-label="秘书思考中"]')?.textContent).toContain('请检查 PR #42')
+    expect(document.querySelector<HTMLImageElement>('img[alt="秘书立绘 (working)"]')).toBeTruthy()
 
     activeRuling = {
       id: 'r-1', kind: 'dsh_approval', status: 'pending', createdAt: '2026-11-26T08:06:00Z',

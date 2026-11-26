@@ -15,7 +15,8 @@ export interface OfficeActor {
 export interface OfficeSprites { images: Record<string, CanvasImageSource> }
 export interface OfficeSceneState {
   plan: OfficeRoomPlan; actors: OfficeActor[]; screenStates: Record<string, StatusKind | 'off'>
-  gateIntercept?: { targetActorId: string; frame: number }; hoverTarget?: ScenePickResult | null; elapsedMs: number
+  gateIntercept?: { targetActorId: string; frame: number }; hoverTarget?: ScenePickResult | null
+  secretaryThinking?: boolean; elapsedMs: number
 }
 export type ScenePickResult =
   | { type: 'prop'; prop: PropKind; label: string; bounds: { x: number; y: number; w: number; h: number } }
@@ -55,8 +56,8 @@ function findOrthogonalPath(plan: OfficeRoomPlan, from: GridPoint, to: GridPoint
 export function createInitialActors(plan: OfficeRoomPlan): OfficeActor[] {
   const rec = plan.suites.find((s) => s.id === 'reception'), exec = plan.suites.find((s) => s.id === 'executive')
   return [
-    { id: 'secretary', role: 'secretary', u: (rec?.anchor.u ?? 0) + 1.15, v: (rec?.anchor.v ?? 5) + 0.55, facing: 'SW', pose: 'sit', lifecycle: 'resident', assignedSuiteId: 'reception', path: [], animMs: 0 },
-    { id: 'lead', role: 'lead', u: (exec?.anchor.u ?? 8) + 0.25, v: (exec?.anchor.v ?? 0) + 0.55, facing: 'SE', pose: 'sit', lifecycle: 'resident', assignedSuiteId: 'executive', path: [], animMs: 0 },
+    { id: 'secretary', role: 'secretary', u: (rec?.anchor.u ?? 1) - 0.55, v: (rec?.anchor.v ?? 4) + 1.0, facing: 'SE', pose: 'sit', lifecycle: 'resident', assignedSuiteId: 'reception', path: [], animMs: 0 },
+    { id: 'lead', role: 'lead', u: (exec?.anchor.u ?? 8) + 0.9, v: (exec?.anchor.v ?? 1) - 0.85, facing: 'SW', pose: 'sit', lifecycle: 'resident', assignedSuiteId: 'executive', path: [], animMs: 0 },
   ]
 }
 
@@ -84,27 +85,43 @@ export function stepActors(actors: OfficeActor[], plan: OfficeRoomPlan, dtMs: nu
     if (next.lifecycle === 'entering') {
       next.lifecycle = 'working'; next.pose = 'sit'
       const suite = plan.suites.find((s) => s.id === next.assignedSuiteId)
-      if (suite) next.facing = suite.facing === 'NE' ? 'SE' : 'SW'
+      if (suite) {
+        const chair = makeSuiteChair(suite)
+        next.u = chair.anchor.u + 0.1; next.v = chair.anchor.v + 0.1
+        next.facing = chair.facing
+      }
     } else if (next.lifecycle === 'leaving') { next.lifecycle = 'removed'; next.pose = 'idle' }
     return next
   })
+}
+
+function makeSuiteChair(suite: RoomEntity): RoomEntity {
+  const isRec = suite.id === 'reception', isExec = suite.id === 'executive', faceSE = isRec || suite.facing === 'SE'
+  const u = isRec ? suite.anchor.u - 0.7 : isExec ? suite.anchor.u + 0.95 : faceSE ? suite.anchor.u - 0.7 : suite.anchor.u + 0.55
+  const v = isRec ? suite.anchor.v + 0.9 : isExec ? suite.anchor.v - 0.95 : faceSE ? suite.anchor.v + 0.55 : suite.anchor.v - 0.7
+  const facing: Facing = faceSE ? 'SE' : 'SW'
+  return { id: `chair-${suite.id}`, assetId: 'office_chair', suiteKind: 'shared', anchor: { u, v }, size: [1, 1], facing, mirrorX: facing === 'SW', footprint: [] }
 }
 
 export function computeL2RenderList(plan: OfficeRoomPlan, actors: readonly OfficeActor[], origin: { x: number; y: number }, scale = 2): L2RenderItem[] {
   const items: L2RenderItem[] = []
   for (const entity of [...plan.suites, ...plan.shared]) {
     const foot = isoToScreen(entity.anchor.u + entity.size[0], entity.anchor.v + entity.size[1], origin, scale)
-    items.push({ id: entity.id, kind: 'entity', footScreenY: Math.round(foot.y), entity })
+    const deskY = Math.round(foot.y)
+    items.push({ id: entity.id, kind: 'entity', footScreenY: deskY, entity })
+    if (entity.suiteKind !== 'shared') {
+      const chair = makeSuiteChair(entity)
+      items.push({ id: chair.id, kind: 'entity', footScreenY: deskY - 6, entity: chair })
+    }
   }
   for (const actor of actors) {
     if (actor.lifecycle === 'removed') continue
-    const behindDesk = actor.pose === 'sit' && (actor.assignedSuiteId === 'reception' || actor.assignedSuiteId === 'executive')
-      ? plan.suites.find((s) => s.id === actor.assignedSuiteId)
-      : undefined
-    const foot = behindDesk
-      ? isoToScreen(behindDesk.anchor.u + behindDesk.size[0], behindDesk.anchor.v + behindDesk.size[1], origin, scale)
-      : isoToScreen(actor.u + 0.5, actor.v + 0.5, origin, scale)
-    items.push({ id: actor.id, kind: 'actor', footScreenY: Math.round(foot.y) + 1, actor })
+    const suite = actor.pose === 'sit' && actor.assignedSuiteId ? plan.suites.find((s) => s.id === actor.assignedSuiteId) : undefined
+    const suiteFoot = suite ? Math.round(isoToScreen(suite.anchor.u + suite.size[0], suite.anchor.v + suite.size[1], origin, scale).y) : undefined
+    const footY = suite && suiteFoot !== undefined
+      ? suiteFoot - 3
+      : Math.round(isoToScreen(actor.u + 0.5, actor.v + 0.5, origin, scale).y) + 1
+    items.push({ id: actor.id, kind: 'actor', footScreenY: footY, actor })
   }
   return items.sort((a, b) => a.footScreenY - b.footScreenY || a.id.localeCompare(b.id))
 }
@@ -117,8 +134,7 @@ function getEntityBounds(entity: RoomEntity, origin: { x: number; y: number }, s
 
 function getActorBounds(actor: OfficeActor, origin: { x: number; y: number }, scale: number) {
   const pos = isoToScreen(actor.u + 0.5, actor.v + 0.5, origin, scale)
-  const cropH = actor.pose === 'sit' && actor.assignedSuiteId === 'reception' ? 30 : actor.pose === 'sit' && actor.assignedSuiteId === 'executive' ? 40 : 48
-  return { x: Math.round(pos.x - 16 * scale), y: Math.round(pos.y - 44 * scale), w: 32 * scale, h: cropH * scale }
+  return { x: Math.round(pos.x - 16 * scale), y: Math.round(pos.y - 44 * scale), w: 32 * scale, h: 48 * scale }
 }
 
 function getWallMountBounds(mount: OfficeRoomPlan['wallMounts'][number], origin: { x: number; y: number }, scale: number) {
@@ -135,6 +151,15 @@ function renderL0AndL1(ctx: CanvasRenderingContext2D, plan: OfficeRoomPlan, spri
       const p = isoToScreen(u + 0.5, v + 0.5, origin, scale)
       ctx.drawImage(floorImg, Math.round(p.x - 16 * scale), Math.round(p.y - 8 * scale), 32 * scale, 16 * scale)
     }
+    const leftCorner = isoToScreen(0, plan.rows, origin, scale), rightCorner = isoToScreen(plan.cols, 0, origin, scale)
+    ctx.fillStyle = '#4A3428'
+    for (let step = 0; step < plan.cols * 8; step++) {
+      ctx.fillRect(Math.round(leftCorner.x + step * 2 * scale), Math.round(leftCorner.y + step * scale), 2 * scale, 5 * scale)
+    }
+    ctx.fillStyle = '#3B2A22'
+    for (let step = 0; step < plan.rows * 8; step++) {
+      ctx.fillRect(Math.round(rightCorner.x - (step + 1) * 2 * scale), Math.round(rightCorner.y + step * scale), 2 * scale, 5 * scale)
+    }
   }
   if (rugImg) {
     const p = isoToScreen(plan.rugRect.u + plan.rugRect.w / 2, plan.rugRect.v + plan.rugRect.h / 2, origin, scale)
@@ -143,13 +168,13 @@ function renderL0AndL1(ctx: CanvasRenderingContext2D, plan: OfficeRoomPlan, spri
   if (wallImg) {
     for (let u = 0; u < plan.cols; u += 2) {
       const p = isoToScreen(u + 1, 0, origin, scale)
-      const dx = Math.round(p.x - 40 * scale), dy = Math.round(p.y - 52 * scale)
-      ctx.save(); ctx.translate(dx + 80 * scale, dy); ctx.scale(-1, 1)
-      ctx.drawImage(wallImg, 0, 0, 80 * scale, 56 * scale); ctx.restore()
+      const dx = Math.round(p.x - 16 * scale), dy = Math.round(p.y - 72 * scale)
+      ctx.save(); ctx.translate(dx + 32 * scale, dy); ctx.scale(-1, 1)
+      ctx.drawImage(wallImg, 0, 0, 32 * scale, 80 * scale); ctx.restore()
     }
     for (let v = 0; v < plan.rows; v += 2) {
       const p = isoToScreen(0, v + 1, origin, scale)
-      ctx.drawImage(wallImg, Math.round(p.x - 40 * scale), Math.round(p.y - 52 * scale), 80 * scale, 56 * scale)
+      ctx.drawImage(wallImg, Math.round(p.x - 16 * scale), Math.round(p.y - 72 * scale), 32 * scale, 80 * scale)
     }
   }
   for (const mount of plan.wallMounts) {
@@ -198,6 +223,20 @@ function renderL3Overlays(ctx: CanvasRenderingContext2D, state: OfficeSceneState
       ctx.fillRect(b.x, b.y + b.h - 4 * scale, b.w, 3 * scale)
     }
   }
+  if (state.secretaryThinking) {
+    const sec = actors.find((a) => a.id === 'secretary')
+    if (sec) {
+      const b = getActorBounds(sec, origin, scale), bob = (Math.floor(elapsedMs / 350) % 2) * scale
+      const bx = b.x + 6 * scale, by = b.y - 14 * scale - bob, bw = 20 * scale, bh = 11 * scale
+      ctx.fillStyle = '#1A1412'; ctx.fillRect(bx - scale, by - scale, bw + 2 * scale, bh + 2 * scale)
+      ctx.fillStyle = '#E8DCCB'; ctx.fillRect(bx, by, bw, bh); ctx.fillRect(bx + 8 * scale, by + bh, 3 * scale, 2 * scale)
+      const activeDot = Math.floor(elapsedMs / 280) % 3
+      for (let d = 0; d < 3; d++) {
+        ctx.fillStyle = d === activeDot ? STATUS_GLOW_COLORS.working.bright : '#4A3428'
+        ctx.fillRect(bx + (4 + d * 5) * scale, by + 4 * scale, 2 * scale, 3 * scale)
+      }
+    }
+  }
   if (hoverTarget) {
     const hb = hoverTarget.bounds
     ctx.strokeStyle = HIGHLIGHT_GOLD; ctx.lineWidth = scale; ctx.strokeRect(hb.x, hb.y, hb.w, hb.h)
@@ -226,8 +265,7 @@ export function renderOfficeFrame(ctx: CanvasRenderingContext2D, state: OfficeSc
       const col = item.actor.pose === 'idle' ? 0 : item.actor.pose === 'walkA' ? 1 : item.actor.pose === 'walkB' ? 2 : 3
       const row = item.actor.facing === 'SW' || item.actor.facing === 'NW' ? 1 : 0
       const b = getActorBounds(item.actor, state.plan.origin, scale)
-      const srcH = item.actor.pose === 'sit' && (item.actor.assignedSuiteId === 'reception' || item.actor.assignedSuiteId === 'executive') ? 28 : 48
-      ctx.drawImage(img, col * 32, row * 48, 32, srcH, b.x, b.y, b.w, srcH * scale)
+      ctx.drawImage(img, col * 32, row * 48, 32, 48, b.x, b.y, b.w, b.h)
     }
   }
   renderL3Overlays(ctx, state, scale)
@@ -242,8 +280,10 @@ export function pickSceneTarget(px: number, py: number, state: OfficeSceneState,
   for (let i = l2.length - 1; i >= 0; i--) {
     const item = l2[i]!
     if (item.kind === 'actor' && item.actor) {
-      const b = getActorBounds(item.actor, origin, scale)
-      if (hitRect(px, py, b)) return { type: 'actor', actorId: item.actor.id, role: item.actor.role, ticketId: item.actor.ticketId, bounds: b }
+      const fullB = getActorBounds(item.actor, origin, scale)
+      const behindReception = item.actor.pose === 'sit' && item.actor.assignedSuiteId === 'reception'
+      const pickB = behindReception ? { ...fullB, h: 30 * scale } : fullB
+      if (hitRect(px, py, pickB)) return { type: 'actor', actorId: item.actor.id, role: item.actor.role, ticketId: item.actor.ticketId, bounds: pickB }
     }
   }
   for (let i = l2.length - 1; i >= 0; i--) {
@@ -251,9 +291,9 @@ export function pickSceneTarget(px: number, py: number, state: OfficeSceneState,
     if (item.kind === 'entity' && item.entity) {
       const b = getEntityBounds(item.entity, origin, scale)
       if (item.entity.assetId === 'reception_desk') {
-        const hy = b.y + Math.round(b.h * 0.56), hh = Math.round(b.h * 0.4), hw = Math.round(b.w * 0.44)
-        const ledgerBounds = { x: b.x + 4, y: hy, w: hw, h: hh }
-        const notebookBounds = { x: b.x + b.w - hw - 4, y: hy, w: hw, h: hh }
+        const hy = b.y + Math.round(b.h * 0.36), hh = Math.round(b.h * 0.56), hw = Math.round(b.w * 0.45)
+        const ledgerBounds = { x: b.x + 6, y: hy, w: hw, h: hh }
+        const notebookBounds = { x: b.x + b.w - hw - 6, y: hy, w: hw, h: hh }
         if (hitRect(px, py, ledgerBounds)) return { type: 'prop', prop: 'ledger', label: PROP_LABELS.ledger.zh, bounds: ledgerBounds }
         if (hitRect(px, py, notebookBounds)) return { type: 'prop', prop: 'notebook', label: PROP_LABELS.notebook.zh, bounds: notebookBounds }
       } else if (item.entity.propKind && hitRect(px, py, b)) {

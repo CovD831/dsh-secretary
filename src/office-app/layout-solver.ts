@@ -6,7 +6,7 @@ export const TILE_W = 32
 export const TILE_H = 16
 export const CANVAS_W = 1440
 export const CANVAS_H = 900
-export const DEFAULT_ORIGIN = { x: 720, y: 156 } as const
+export const DEFAULT_ORIGIN = { x: 760, y: 172 } as const
 
 export type Facing = 'NE' | 'NW' | 'SE' | 'SW'
 export type WallSide = 'back' | 'left'
@@ -204,7 +204,7 @@ function buildPlanCandidate(
   workspaceId: string,
   seed: number,
   execU: number,
-  ws1V: number,
+  ws1U: number,
   ws2V: number,
   ws3U: number,
   coolerV: number,
@@ -217,38 +217,38 @@ function buildPlanCandidate(
     origin: { ...DEFAULT_ORIGIN },
     doorCells: [{ u: 0, v: 9 }, { u: 0, v: 10 }, { u: 1, v: 9 }, { u: 1, v: 10 }],
     suites: [
-      buildEntity('reception', 'reception_desk', 'reception', 0, 5, 'SE', { u: 1, v: 6 }, 'left'),
-      buildEntity('executive', 'exec_desk', 'executive', execU, 0, 'SW', { u: execU + 2, v: 1 }, 'back'),
-      buildEntity('ws-1', 'worker_desk', 'workstation', 14, ws1V, 'SW', { u: 13, v: ws1V + 1 }, 'right'),
-      buildEntity('ws-2', 'worker_desk', 'workstation', 14, ws2V, 'SW', { u: 13, v: ws2V + 1 }, 'right'),
-      buildEntity('ws-3', 'worker_desk', 'workstation', ws3U, 10, 'NE', { u: ws3U + 1, v: 9 }),
+      buildEntity('reception', 'reception_desk', 'reception', 1, 4, 'SE', { u: 0, v: 5 }, 'left'),
+      buildEntity('executive', 'exec_desk', 'executive', execU, 1, 'SW', { u: execU + 1, v: 0 }, 'back'),
+      buildEntity('ws-1', 'worker_desk', 'workstation', ws1U, 4, 'SW', { u: ws1U + 1, v: 3 }, 'right'),
+      buildEntity('ws-2', 'worker_desk', 'workstation', ws1U, ws2V, 'SW', { u: ws1U + 1, v: ws2V - 1 }, 'right'),
+      buildEntity('ws-3', 'worker_desk', 'workstation', ws3U, 8, 'SE', { u: ws3U - 1, v: 8 }),
     ],
     shared: [
-      buildEntity('bookshelf', 'bookshelf', 'shared', 3, 0, 'SE', undefined, 'back'),
-      buildEntity('file-cabinet', 'file_cabinet', 'shared', 12, 10, 'NW'),
+      buildEntity('bookshelf', 'bookshelf', 'shared', 2, 0, 'SE', undefined, 'back'),
+      buildEntity('file-cabinet', 'file_cabinet', 'shared', 5, 0, 'SE', undefined, 'back'),
       buildEntity('water-cooler', 'water_cooler', 'shared', 0, coolerV, 'SE', undefined, 'left'),
-      buildEntity('plant-pot', 'plant_pot', 'shared', 15, 0, 'SW', undefined, 'back'),
+      buildEntity('plant-pot', 'plant_pot', 'shared', 14, 0, 'SW', undefined, 'back'),
     ],
     wallMounts: [
-      { id: 'entry-door', assetId: 'door_glass', wall: 'left', at: 9, h: 0, span: 2 },
-      { id: 'doorplate', assetId: 'doorplate', wall: 'left', at: 7.5, h: 20, span: 1, propKind: 'doorplate' },
-      { id: 'back-window', assetId: 'window_day', wall: 'back', at: 5, h: 12, span: 2 },
-      { id: 'wall-clock', assetId: 'clock_wall', wall: 'back', at: 7.5, h: 24, span: 1 },
-      { id: 'corkboard', assetId: 'corkboard', wall: 'back', at: 11.5, h: 10, span: 2, propKind: 'corkboard' },
+      { id: 'entry-door', assetId: 'door_glass', wall: 'left', at: 9.2, h: 0, span: 2 },
+      { id: 'doorplate', assetId: 'doorplate', wall: 'left', at: 7.4, h: 24, span: 1, propKind: 'doorplate' },
+      { id: 'wall-clock', assetId: 'clock_wall', wall: 'back', at: 4.3, h: 32, span: 1 },
+      { id: 'back-window', assetId: 'window_day', wall: 'back', at: 7.2, h: 12, span: 2 },
+      { id: 'corkboard', assetId: 'corkboard', wall: 'back', at: 12.4, h: 8, span: 2, propKind: 'corkboard' },
     ],
-    rugRect: { u: 6, v: 4, w: 4, h: 4 },
+    rugRect: { u: 5, v: 4, w: 4, h: 4 },
   }
 }
 
 export function solveOfficeLayout(workspaceId: string, seed = 1): OfficeRoomPlan {
   const rng = mulberry32(fnv1aHash(workspaceId, seed))
-  const execU = 7 + Math.floor(rng() * 3)
-  const ws1V = 2 + Math.floor(rng() * 2)
-  const ws2V = 6 + Math.floor(rng() * 2)
-  const ws3U = 5 + Math.floor(rng() * 3)
+  const execU = 8 + Math.floor(rng() * 2)
+  const ws1U = 13 + Math.floor(rng() * 2)
+  const ws2V = 8 + Math.floor(rng() * 2)
+  const ws3U = 7 + Math.floor(rng() * 2)
   const coolerV = 1 + Math.floor(rng() * 2)
-  const candidate = buildPlanCandidate(workspaceId, seed, execU, ws1V, ws2V, ws3U, coolerV)
+  const candidate = buildPlanCandidate(workspaceId, seed, execU, ws1U, ws2V, ws3U, coolerV)
   return validateOfficeLayout(candidate).valid
     ? candidate
-    : buildPlanCandidate(workspaceId, seed, 8, 3, 7, 6, 1)
+    : buildPlanCandidate(workspaceId, seed, 8, 13, 8, 7, 1)
 }
