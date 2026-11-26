@@ -1,8 +1,18 @@
+<p align="right">
+  <strong>English</strong> · <a href="./README_ZH.md">简体中文</a>
+</p>
+
 # dsh-secretary
 
 **Governance-first autonomous coding agent harness** — append-only `M0–M6` memory spine, three-state pre-execution gates, physically zero-execution secretary orchestration, and a 2:1 isometric PixiJS v8 agent office.
 
 > Built on the MIT-licensed [DeepSeek Harness (DSH)](https://www.deepseek.com/en/harness/) bundle interface (`dsh-superagent` origin) and substantially re-architected with an independent governance, verification, memory, and visual-telemetry stack (`224` TypeScript modules, `90` Vitest test suites).
+
+<p align="center">
+  <img src="./assets/f1-proof/room_ai_quantized.png" width="760" alt="dsh-secretary 2:1 isometric pixel office diorama" />
+  <br />
+  <sub>2:1 isometric PixiJS v8 agent office — read-only projection of live rulings, worktree sessions & memory spine</sub>
+</p>
 
 ---
 
