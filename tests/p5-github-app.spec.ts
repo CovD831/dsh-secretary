@@ -28,6 +28,7 @@ import { SourceRegistry } from '../src/sources/registry.ts'
 import { testDeployment, testMachine } from './fixtures/deployment.ts'
 
 const exec = promisify(execFile)
+vi.setConfig({ testTimeout: 30_000 })
 const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
 const PRIVATE_PEM = privateKey.export({ type: 'pkcs1', format: 'pem' }).toString()
 const PUBLIC_PEM = publicKey.export({ type: 'spki', format: 'pem' }).toString()
@@ -152,14 +153,28 @@ describe('GitHub App JWT & credentials', () => {
       const { stdout: userOut } = await exec(wrapper, ['api', 'user'])
       expect(JSON.parse(userOut)).toEqual({ login: 'dsh-maint[bot]', id: 88, type: 'Bot' })
 
-      const credRes = await runGhAppProxy(appDir, ['auth', 'git-credential', 'get'], { stdinText: 'protocol=https\nhost=github.com\n\n' })
+      const loginRes = await runGhAppProxy(appDir, ['api', 'user', '--jq', '.login'])
+      expect(loginRes.stdout).toBe('dsh-maint[bot]\n')
+
+      const credRes = await runGhAppProxy(appDir, ['auth', 'git-credential', 'get'], { stdinText: 'protocol=https\nhost=127.0.0.1\n\n' })
       expect(credRes.stdout).toContain('username=x-access-token')
       expect(credRes.stdout).toContain('password=ghs_subproc_token')
+
+      // Negative security fixtures: never leak token to mismatched host, http protocol, or github.com under GHES apiBase
+      const spyFetch = vi.fn<typeof fetch>()
+      expect((await runGhAppProxy(appDir, ['auth', 'git-credential', 'get'], { stdinText: 'protocol=https\nhost=evil.com\n\n', fetchFn: spyFetch })).stdout).toBeUndefined()
+      expect((await runGhAppProxy(appDir, ['auth', 'git-credential', 'get'], { stdinText: 'protocol=http\nhost=github.com\n\n', fetchFn: spyFetch })).stdout).toBeUndefined()
+      const gheDir = join(dir, 'ghe-app')
+      await saveGithubAppCredentials(gheDir, { appId: 8, slug: 'dsh-ghe', apiBase: 'https://ghe.example.com/api/v3', pem: PRIVATE_PEM, repo: 'acme/widgets' })
+      expect((await runGhAppProxy(gheDir, ['auth', 'git-credential', 'get'], { stdinText: 'protocol=https\nhost=github.com\n\n', fetchFn: spyFetch })).stdout).toBeUndefined()
+      expect(spyFetch).not.toHaveBeenCalled()
 
       const { stdout: ghOut } = await exec(wrapper, ['issue', 'list'], { env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}` } })
       expect(ghOut).toContain('TOKEN=ghs_subproc_token')
       expect(ghOut).toContain(`CONFIG=${join(appDir, 'gh-empty-config')}`)
       expect(ghOut).toContain('ARGS=issue list')
+
+      await expect(saveGithubAppCredentials(process.cwd(), { appId: 1, slug: 'x', pem: PRIVATE_PEM })).rejects.toThrow(/Refusing/)
     } finally {
       await new Promise<void>(resolve => server.close(() => resolve()))
     }
@@ -185,6 +200,37 @@ describe('GitHub App kernel compatibility', () => {
     const userDep = await resolveDeployment(machine, { repository: 'acme/widgets', cli: makeGh('gh-user', '{"login":"Agent-Bot","id":7}') }, probe, binDir)
     expect(userDep.github).toEqual({ cli: join(binDir, 'gh-user'), login: 'Agent-Bot', noreply: '7+Agent-Bot@users.noreply.github.com' })
     expect(userDep.github).not.toHaveProperty('app')
+
+    // Installation token permissions fallback: contents: write passes, contents: read fails with repositoryReadOnly
+    let contentsPerm = 'write'
+    const permServer = createServer((req, res) => {
+      if (req.url === '/repos/acme/widgets/installation') {
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ id: 21, permissions: { contents: contentsPerm } }))
+      } else if (req.url === '/app/installations/21/access_tokens') {
+        res.writeHead(201, { 'Content-Type': 'application/json' }).end(JSON.stringify({ token: 'ghs_perm', expires_at: new Date(Date.now() + 3600_000).toISOString(), permissions: { contents: contentsPerm } }))
+      } else if (req.url === '/users/dsh-perm%5Bbot%5D') {
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ login: 'dsh-perm[bot]', id: 91, type: 'Bot' }))
+      } else {
+        res.writeHead(404).end()
+      }
+    })
+    await new Promise<void>(resolve => permServer.listen(0, '127.0.0.1', resolve))
+    try {
+      const { port } = permServer.address() as { port: number }
+      const permDir = join(dir, 'perm-write')
+      await saveGithubAppCredentials(permDir, { appId: 21, slug: 'dsh-perm', apiBase: `http://127.0.0.1:${port}`, pem: PRIVATE_PEM, repo: 'acme/widgets' })
+      const wWrite = await writeGhAppWrapper(permDir, { scriptPath: SCRIPT_PATH, repo: 'acme/widgets' })
+      const okDep = await resolveDeployment(machine, { repository: 'acme/widgets', cli: wWrite }, probe, binDir)
+      expect(okDep.github.app).toBe(true)
+
+      contentsPerm = 'read'
+      const roDir = join(dir, 'perm-read')
+      await saveGithubAppCredentials(roDir, { appId: 21, slug: 'dsh-perm', apiBase: `http://127.0.0.1:${port}`, pem: PRIVATE_PEM, repo: 'acme/widgets' })
+      const wRead = await writeGhAppWrapper(roDir, { scriptPath: SCRIPT_PATH, repo: 'acme/widgets' })
+      await expect(resolveDeployment(machine, { repository: 'acme/widgets', cli: wRead }, probe, binDir)).rejects.toMatchObject({ code: 'repositoryReadOnly' })
+    } finally {
+      await new Promise<void>(resolve => permServer.close(() => resolve()))
+    }
   })
 
   it('mentions matches @slug[bot] and @slug without false-matching @slug-other', () => {

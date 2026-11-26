@@ -114,8 +114,9 @@ export async function resolveDeployment(machine: Machine, github: unknown, probe
   }))
   if (!access) throw new SetupError('repositoryUnreported', { repository: remote })
   const repository = access.name
-  if (access.push !== true) throw new SetupError('repositoryReadOnly', { account: agent.login, repository })
   const isApp = agent.login.endsWith('[bot]') || agent.type === 'Bot'
+  const canPush = access.push === true || (isApp && access.push === null && (await probe([cli, 'api', 'installation/repositories', '--jq', `[.repositories[] | select(.full_name == "${repository}")][0] != null`]).catch(() => '')).trim() === 'true')
+  if (!canPush) throw new SetupError('repositoryReadOnly', { account: agent.login, repository })
   return { ...machine, repository, github: { cli, login: agent.login, noreply: `${agent.id}+${agent.login}@users.noreply.github.com`, ...(isApp ? { app: true as const } : {}) } }
 }
 

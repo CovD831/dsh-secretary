@@ -3,7 +3,8 @@ import { spawn } from 'node:child_process'
 import { createSign } from 'node:crypto'
 import { accessSync, constants, statSync } from 'node:fs'
 import { chmod, lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { delimiter, isAbsolute, join } from 'node:path'
+import { homedir } from 'node:os'
+import { delimiter, isAbsolute, join, resolve } from 'node:path'
 
 export interface GithubAppCredentials {
   appId: number; slug: string; name: string; htmlUrl: string; apiBase: string; pem: string; repo?: string
@@ -37,7 +38,7 @@ async function ensureSecureDir(dir: string): Promise<void> {
 async function writeSecureFile(file: string, content: string, mode = 0o600): Promise<void> {
   await assertNotSymlink(file)
   const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
-  await writeFile(tmp, content, { encoding: 'utf8', mode })
+  await writeFile(tmp, content, { encoding: 'utf8', mode, flag: 'wx' })
   await chmod(tmp, mode)
   await rename(tmp, file)
 }
@@ -76,6 +77,10 @@ export async function saveGithubAppCredentials(
   dir: string,
   creds: { appId: number; slug: string; name?: string; htmlUrl?: string; apiBase?: string; pem: string; repo?: string },
 ): Promise<void> {
+  const resolved = resolve(dir)
+  if (resolved === '/' || resolved === resolve(homedir()) || resolved === resolve(process.cwd())) {
+    throw new Error(`Refusing to use ${resolved} directly as GitHub App credentials directory`)
+  }
   await ensureSecureDir(dir)
   const meta = {
     appId: creds.appId,
@@ -200,16 +205,22 @@ export async function runGhAppProxy(
 ): Promise<{ code: number; stdout?: string }> {
   const env = options.env ?? process.env
   const creds = await loadGithubAppCredentials(outDir)
-  if (args[0] === 'api' && args[1] === 'user') {
+  if (args[0] === 'api' && args[1] === 'user' && (args.length === 2 || (args.length === 4 && args[2] === '--jq' && args[3] === '.login'))) {
     const repo = inferRepo(args, options.repo, env, creds.repo)
     const { botUser } = await getInstallationAccessToken(outDir, repo, { fetchFn: options.fetchFn })
-    return { code: 0, stdout: `${JSON.stringify({ login: botUser.login, id: botUser.id, type: botUser.type })}\n` }
+    const out = args.length === 4 ? `${botUser.login}\n` : `${JSON.stringify({ login: botUser.login, id: botUser.id, type: botUser.type })}\n`
+    return { code: 0, stdout: out }
+  }
+  if (args[0] === 'api' && /^\/?repos\/[^/]+\/[^/]+$/.test(args[1] ?? '') && args[2] === '--jq' && args[3] === '{name: .full_name, push: .permissions.push}') {
+    const repo = inferRepo(args, options.repo, env, creds.repo)
+    const { permissions } = await getInstallationAccessToken(outDir, repo, { fetchFn: options.fetchFn })
+    return { code: 0, stdout: `${JSON.stringify({ name: repo, push: permissions.contents === 'write' })}\n` }
   }
   if (args[0] === 'auth' && args[1] === 'git-credential') {
     if (args[2] !== 'get') return { code: 0 }
     const kv = Object.fromEntries((options.stdinText ?? '').split(/\r?\n/).map(l => l.split('=', 2)).filter(p => p.length === 2))
     const expectedHost = creds.apiBase === DEFAULT_API_BASE ? 'github.com' : new URL(creds.apiBase).hostname
-    if (kv.protocol !== 'https' || (kv.host !== 'github.com' && kv.host !== expectedHost)) return { code: 0 }
+    if (kv.protocol !== 'https' || kv.host !== expectedHost) return { code: 0 }
     const repo = inferRepo(args, options.repo, env, creds.repo)
     const { token } = await getInstallationAccessToken(outDir, repo, { fetchFn: options.fetchFn })
     return { code: 0, stdout: `protocol=https\nhost=${kv.host}\nusername=x-access-token\npassword=${token}\n\n` }

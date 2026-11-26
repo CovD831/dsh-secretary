@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Local one-click GitHub App Manifest registration wizard, verifier, and `gh-app` CLI proxy entrypoint. */
 import { execFile } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer } from 'node:http'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -86,9 +86,13 @@ async function runWizard(opts) {
   const appName = opts.appName ?? `dsh-${opts.repo.replace(/[^A-Za-z0-9-]/g, '-')}`.slice(0, 32)
   const server = createServer(async (req, res) => {
     try {
-      const url = new URL(req.url ?? '/', `http://127.0.0.1:${server.address().port}`)
+      const port = server.address().port
+      if (req.headers.host !== `127.0.0.1:${port}`) {
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Forbidden')
+        return
+      }
+      const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
       if (req.method === 'GET' && url.pathname === '/') {
-        const port = server.address().port
         const manifest = {
           name: appName,
           url: `${opts.githubBase}/${opts.repo}`,
@@ -105,7 +109,9 @@ async function runWizard(opts) {
       }
       if (req.method === 'GET' && url.pathname === '/callback') {
         const code = url.searchParams.get('code')
-        if (!code || url.searchParams.get('state') !== state) {
+        const gotState = url.searchParams.get('state') ?? ''
+        const stateOk = gotState.length === state.length && timingSafeEqual(Buffer.from(gotState), Buffer.from(state))
+        if (!code || !stateOk) {
           res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' })
           res.end('Invalid state or missing code')
           return
