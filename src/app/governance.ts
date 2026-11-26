@@ -1,6 +1,5 @@
 /** 运行时治理编排中枢：串联 M0 事件脊、判局注册表、FTS5 记忆索引、工作区安全 GC 与发射前上下文胶囊。 */
 import { randomUUID } from 'node:crypto'
-import { readdir, readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import type { Assignment, DomainEvent, OutboundMessage, Ticket } from '../core/index.ts'
 import { prepareLaunchCapsule, type PreparedLaunchCapsule } from '../executor/capsule-hook.ts'
@@ -17,6 +16,7 @@ import {
   observeWorktrees, planWorkspaceGc, registerDispatchIsolationGate, registerWorkspaceGcGate,
   type GcSubject, type WorkspaceDef, type WorkspaceRegistry, type WorktreeObservation,
 } from '../workspaces/index.ts'
+import { applyDecidedRuling, readSpineEnvelopeFromStore, runStandingOrderPatrol, type PatrolRunReport } from './governance-drafts.ts'
 import { collectPostTicketPatches, readSyncTailSeq, refreshSecretaryMemoryBlock, syncDepositsAndLedger } from './governance-ops.ts'
 import { ingestFeishuCardAction, type FeishuCardIngestResult, type IngestFeishuCardOptions } from './governance-ruling.ts'
 import { RulingQueue, type RulingItem } from './ruling-queue.ts'
@@ -34,8 +34,6 @@ export interface GovernanceOptions {
   readonly onSpineAppended?: (ref: SourceRef, draft: SpineDraft<Record<string, unknown>>) => void
 }
 
-const SHARD_NAME_RE = /^\d{4}-\d{2}-\d{2}\.jsonl$/
-
 /** 串联 M0 事件脊、判局注册表、FTS5 派生索引、外发事前闸、发射切片与工作区自动 GC 的运行时治理中枢。 */
 export class GovernanceRuntime {
   readonly storeRef: Store; readonly stateDir: string; readonly memoryDir: string; readonly memoryRepoLock: GitRepoLock
@@ -47,6 +45,7 @@ export class GovernanceRuntime {
   private readonly bootId = randomUUID().slice(0, 8); private readonly pendingTasks = new Set<Promise<void>>()
   private readonly repoLocks = new Map<string, GitRepoLock>()
   private eventSeq = 0; private shuttingDown = false; private closed = false
+  private patrolTimer?: ReturnType<typeof setInterval>
 
   constructor(options: GovernanceOptions) {
     this.store = options.store; this.storeRef = options.store; this.stateDir = options.stateDir
@@ -76,7 +75,10 @@ export class GovernanceRuntime {
       store: this.store, appender: this.appender, memory: this.memory, memoryDir: this.memoryDir, memoryRepoLock: this.memoryRepoLock,
       now: this.now,
       ...(options.onRulingQueued ? { onQueued: options.onRulingQueued } : {}),
-      ...(options.onRulingDecided ? { onDecided: options.onRulingDecided } : {}),
+      onDecided: item => {
+        this.trackTask(applyDecidedRuling(this, item).then(() => undefined).catch(err => this.onError(err)))
+        options.onRulingDecided?.(item)
+      },
     })
 
     this.registry = createJudgementRegistry({ scopes: ['outbox'] })
@@ -120,8 +122,16 @@ export class GovernanceRuntime {
     await syncDepositsAndLedger(this).catch(err => this.onError(err))
     await this.ftsIndex.open().catch(err => this.onError(err))
     this.secretaryMemoryCache = await refreshSecretaryMemoryBlock(this, '', false).catch(() => '')
+    if (!this.patrolTimer && !this.closed && !this.shuttingDown) {
+      this.patrolTimer = setInterval(() => {
+        if (!this.closed && !this.shuttingDown) this.trackTask(this.tickPatrol().then(() => undefined, err => this.onError(err)))
+      }, 60_000)
+      this.patrolTimer.unref?.()
+    }
     return report
   }
+
+  tickPatrol(maxIdleMinutes?: number): Promise<PatrolRunReport> { return runStandingOrderPatrol(this, ...(maxIdleMinutes !== undefined ? [{ maxIdleMinutes }] : [])) }
 
   async flush(): Promise<FlushReport> {
     while (this.pendingTasks.size > 0) await Promise.allSettled([...this.pendingTasks])
@@ -131,6 +141,7 @@ export class GovernanceRuntime {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true
+    if (this.patrolTimer) { clearInterval(this.patrolTimer); this.patrolTimer = undefined }
     try {
       while (this.pendingTasks.size > 0) await Promise.allSettled([...this.pendingTasks])
       await new Promise<void>(r => queueMicrotask(r))
@@ -151,33 +162,7 @@ export class GovernanceRuntime {
 
   private async resolveSpineRefUnlocked(ref: SourceRef): Promise<boolean> { return (await this.readSpineEnvelopeUnlocked(ref)) !== undefined }
 
-  private async readSpineEnvelopeUnlocked(ref: SourceRef): Promise<SpineEnvelope<Record<string, unknown>> | undefined> {
-    if (!ref || !Number.isSafeInteger(ref.seq) || ref.seq <= 0 || typeof ref.id !== 'string' || !ref.id.trim()) return undefined
-    if (!this.closed) {
-      const row = this.store.db.prepare('SELECT id, value FROM event_spine WHERE seq = ?').get(ref.seq) as { id?: string; value?: string } | undefined
-      if (row) return row.id === ref.id && row.value ? JSON.parse(row.value) as SpineEnvelope<Record<string, unknown>> : undefined
-    }
-    const m0Dir = join(this.memoryDir, 'm0')
-    let shards: string[]
-    try { shards = (await readdir(m0Dir)).filter(n => SHARD_NAME_RE.test(n)).sort() } catch { return undefined }
-    for (let i = shards.length - 1; i >= 0; i--) {
-      const raw = await readFile(join(m0Dir, shards[i]!), 'utf8').catch(() => '')
-      const lines = (raw.endsWith('\n') ? raw : raw.slice(0, raw.lastIndexOf('\n') + 1)).split('\n')
-      let maxInShard: number | undefined
-      for (let j = lines.length - 1; j >= 0; j--) {
-        const line = lines[j]?.trim()
-        if (!line) continue
-        try {
-          const parsed = JSON.parse(line) as SpineEnvelope<Record<string, unknown>>
-          if (typeof parsed.seq !== 'number') continue
-          maxInShard ??= parsed.seq
-          if (parsed.seq === ref.seq) return parsed.id === ref.id ? parsed : undefined
-        } catch { continue }
-      }
-      if (maxInShard !== undefined && maxInShard < ref.seq) return undefined
-    }
-    return undefined
-  }
+  private readSpineEnvelopeUnlocked(ref: SourceRef) { return readSpineEnvelopeFromStore(this.store, this.memoryDir, this.closed, ref) }
 
   recordDomainEvent(event: DomainEvent): void {
     if (this.closed) return
@@ -189,6 +174,9 @@ export class GovernanceRuntime {
       const trig = this.store.triggers.get(event.data.triggerId)
       const isLocalTrusted = trig?.source === 'secretary-bus' && trig.meta.localAuthenticated === true
       taint = isLocalTrusted ? 'trusted' : joinTaint('trusted', 'untrusted')
+      if (trig?.source === 'github' && this.registry.list().some(e => e.id === 'intake.bug-quadruple' && e.stage !== 'retired')) {
+        this.trackTask(this.evaluateIssueIntake({ body: trig.text }, trig.id, ticketId).then(() => undefined).catch(err => this.onError(err)))
+      }
     }
     const draft = domainEventToSpineDraft(event, {
       id: `dom:${event.type}:${this.bootId}:${++this.eventSeq}`,
@@ -196,6 +184,13 @@ export class GovernanceRuntime {
       ...(sessionPtr ? { evidence: [{ kind: 'event', ref: sessionPtr }] } : {}),
     })
     this.appendEvent({ ...draft, payload: { ...draft.payload, ...(ticketId ? { ticketId } : {}), ...(sessionPtr ? { sessionPtr } : {}) } })
+  }
+
+  async evaluateIssueIntake(ctx: Record<string, unknown>, key = 'intake', ticketId?: string): Promise<Verdict> {
+    if (!this.registry.list().some(e => e.id === 'intake.bug-quadruple' && e.stage !== 'retired')) return { kind: 'allow' }
+    const ev = await this.registry.evaluate('intake.bug-quadruple' as never, ctx as never)
+    this.recordGate('intake.bug-quadruple', key, 'governance.intake', ticketId, { verdict: ev.verdict, ran: ev.ran, observed: ev.observed })
+    return ev.verdict
   }
 
   async evaluateOutbound(message: OutboundMessage): Promise<Verdict> {
@@ -206,7 +201,13 @@ export class GovernanceRuntime {
         messageId: message.id, kind: message.kind, verdict: ev.verdict, ran: ev.ran, observed: ev.observed,
       })
     }
-    return ev.verdict
+    if (!this.registry.list().some(e => e.id === 'outward.reply-desk' && e.stage !== 'retired')) return ev.verdict
+    const messageKind = message.kind === 'acknowledgement' ? 'template_ack' : message.kind === 'notice' ? 'template_needs_info' : 'freeform_reply'
+    const rdEv = await this.registry.evaluate('outward.reply-desk' as never, { messageKind, body: message.text } as never)
+    this.recordGate('outward.reply-desk', message.id, 'governance.outbox', ticket?.id, {
+      messageId: message.id, kind: message.kind, verdict: rdEv.verdict, ran: rdEv.ran, observed: rdEv.observed,
+    })
+    return ev.verdict.kind !== 'allow' ? ev.verdict : rdEv.verdict
   }
 
   /** 执行器首次发射前加载宿主派生的 M3 避坑经验、提取 1-Hop 切片与自适应派发方案并记入事件脊。 */

@@ -9,6 +9,10 @@ import { readDepositsProjection, readNotebookProjection, readSpineProjection, re
 import type { AblationCase, HoldoutEvaluationResult, LeaveOneOutResult, ReplayCase } from '../rsi/index.ts'
 import type { Api, ApiResponse, RouteParams } from './api.ts'
 import {
+  adoptDepositDraft, listDepositDrafts,
+  type AdoptDepositDraftResult, type DepositDraftEntry, type PatrolRunReport,
+} from './governance-drafts.ts'
+import {
   changeDepositStage, decideMemoryPatch, openRsiSealedHoldout, readMemoryStudioView,
   readRsiStudioView, runRsiAblationCheck, saveDirectMemory, syncDepositsAndLedger,
   type MemoryStudioView, type RsiWorkbenchView,
@@ -19,8 +23,8 @@ import { generateAvatarPackViaProvider } from './avatar-provider.ts'
 import { ingestBossDesktopMessage } from './tools/secretary-core.ts'
 
 export type {
-  HoldoutEvaluationResult, LeaveOneOutResult, MemoryStudioView, RsiWorkbenchView,
-  TransitionDepositStageResult, UserDirectMemoryResult, WriteResult,
+  AdoptDepositDraftResult, DepositDraftEntry, HoldoutEvaluationResult, LeaveOneOutResult, MemoryStudioView,
+  PatrolRunReport, RsiWorkbenchView, TransitionDepositStageResult, UserDirectMemoryResult, WriteResult,
 }
 
 export interface GovernanceRouteInput<K extends keyof Api> {
@@ -32,7 +36,8 @@ export interface GovernanceRouteInput<K extends keyof Api> {
 export type GovernanceRouteKeys =
   | 'GET projection/state' | 'GET projection/notebook' | 'GET projection/spine' | 'GET projection/deposits'
   | 'GET rulings' | 'POST rulings/:id/decide' | 'GET secretary/feed' | 'POST secretary/messages'
-  | 'GET deposits/ledger' | 'POST deposits/:id/stage'
+  | 'GET deposits/ledger' | 'GET deposits/drafts' | 'POST deposits/drafts/adopt' | 'POST deposits/:id/stage'
+  | 'POST governance/patrol'
   | 'GET memory/studio' | 'POST memory/direct' | 'POST memory/patches/:index'
   | 'GET rsi/workbench' | 'POST rsi/ablation' | 'POST rsi/holdout'
   | 'GET pixel-office/proof'
@@ -103,6 +108,18 @@ const HoldoutBody = z.object({
 }).strict()
 
 const SelectAvatarBody = z.object({ avatarId: z.string().trim().min(1).max(64) }).strict()
+const AdoptDraftBody = z.object({
+  draftId: z.string().trim().min(1).max(120).optional(),
+  draft: z.record(z.string(), z.unknown()).optional(),
+  cases: z.array(z.object({
+    name: z.string(), expected: z.enum(['allow', 'deny', 'unmeasured']), ctx: z.unknown(),
+    expectedCause: z.string().optional(), note: z.string().optional(),
+  }).strict()).optional(),
+  overrides: z.record(z.string(), z.unknown()).optional(),
+  installShadow: z.boolean().optional(),
+  actorId: z.string().trim().min(1).max(80).optional(),
+}).strict()
+const PatrolBody = z.object({ maxIdleMinutes: z.number().finite().positive().max(1440).optional() }).strict()
 const GenerateAvatarBody = z.object({
   name: z.string().trim().min(1).max(80),
   prompt: z.string().trim().min(1).max(1000),
@@ -147,9 +164,21 @@ export function governanceRoutes(
       return { triggerId: trigger.id, received }
     },
     'GET deposits/ledger': async () => syncDepositsAndLedger(requireGov()),
+    'GET deposits/drafts': ({ query }) => {
+      const inc = query.includeOnlineCandidates !== '0' && query.includeOnlineCandidates !== 'false'
+      return listDepositDrafts(requireGov(), { includeOnlineCandidates: inc })
+    },
+    'POST deposits/drafts/adopt': async ({ body }) => {
+      const parsed = AdoptDraftBody.parse(await body())
+      return adoptDepositDraft(requireGov(), parsed as never)
+    },
     'POST deposits/:id/stage': async ({ params, body }) => {
       const parsed = DepositStageBody.parse(await body())
       return changeDepositStage(requireGov(), { id: params.id, toStage: parsed.toStage as Stage, ...(parsed.reason ? { reason: parsed.reason } : {}) })
+    },
+    'POST governance/patrol': async ({ body }) => {
+      const parsed = PatrolBody.parse((await body()) ?? {})
+      return requireGov().tickPatrol(parsed.maxIdleMinutes)
     },
     'GET memory/studio': () => readMemoryStudioView(requireGov()),
     'POST memory/direct': async ({ body }) => {

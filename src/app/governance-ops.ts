@@ -5,8 +5,9 @@ import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { latestReport, type Ticket } from '../core/index.ts'
 import { packagePath } from '../infra/paths.ts'
 import {
-  discoverAndRegisterDeposits, loadDepositPackage, renderDepositsLedgerMarkdown, transitionDepositStage,
-  type DiscoveredDepositRecord, type Stage, type TransitionDepositStageResult,
+  discoverAndRegisterDeposits, evaluateCompiledEntry, loadDepositPackage, renderDepositsLedgerMarkdown,
+  resolveDepositEntry, transitionDepositStage,
+  type DiscoveredDepositRecord, type RegistryEntry, type Stage, type TransitionDepositStageResult, type Verdict,
 } from '../judgement/index.ts'
 import { KV } from '../kv.ts'
 import {
@@ -263,9 +264,38 @@ export async function openRsiSealedHoldout(
   if (input.cases.length < 4) return { ok: false, reason: '样本集至少需 4 条带独立 family 的历史用例方可切分 Holdout' }
   const split = splitByFamily(input.cases)
   if (split.train.length === 0 || split.holdout.length === 0) return { ok: false, reason: '切分后 train 或 holdout 为空，请补充不同 family 样本' }
+  const otherEnforceIds = new Set(
+    gov.registry.list().filter(e => e.kind === 'gate' && e.point === input.point && e.stage === 'enforce' && e.id !== input.candidateId).map(e => e.id),
+  )
+  let diskEntry: RegistryEntry | undefined
+  if (!gov.registry.list().some(e => e.id === input.candidateId)) {
+    for (const dir of depositDirsOf(gov.stateDir)) {
+      const loaded = await loadDepositPackage(join(dir, input.candidateId)).catch(() => undefined)
+      if (loaded?.admission.admitted) { diskEntry = resolveDepositEntry(loaded.admission.manifest); break }
+    }
+  }
+  const evalBaseline = (ran: readonly { id: string; outcome: string; detail?: string }[]): Verdict => {
+    const baseRan = ran.filter(r => otherEnforceIds.has(r.id))
+    const denies = baseRan.filter(r => r.outcome === 'deny')
+    if (denies.length > 0) return { kind: 'deny', blockers: denies.map(r => r.detail || 'denied') as [string, ...string[]] }
+    const unmeas = baseRan.filter(r => r.outcome === 'unmeasured')
+    if (unmeas.length > 0) return { kind: 'unmeasured', cause: 'no-evidence', detail: unmeas.map(r => r.detail || 'unmeasured').join('; ') }
+    if (otherEnforceIds.size > 0 && baseRan.every(r => r.outcome === 'skipped')) return { kind: 'unmeasured', cause: 'all-skipped', detail: 'baseline gates skipped' }
+    return { kind: 'allow' }
+  }
   const result = await evaluateSealedHoldout({
-    baselineGate: () => ({ kind: 'allow' }),
-    candidateGate: async ctx => (await gov.registry.evaluate(input.point as never, ctx as never)).verdict,
+    baselineGate: async ctx => evalBaseline((await gov.registry.evaluate(input.point as never, ctx as never)).ran),
+    candidateGate: async ctx => {
+      const ev = await gov.registry.evaluate(input.point as never, ctx as never)
+      const base = evalBaseline(ev.ran)
+      if (base.kind !== 'allow') return base
+      const hit = [...ev.observed, ...ev.ran].find(r => r.id === input.candidateId)
+      if (!hit) return diskEntry ? evaluateCompiledEntry(diskEntry, ctx) : { kind: 'unmeasured', cause: 'no-evidence', detail: `未找到候选判据 ${input.candidateId}` }
+      if (hit.outcome === 'allow') return { kind: 'allow' }
+      if (hit.outcome === 'deny') return { kind: 'deny', blockers: [hit.detail || `${input.candidateId} denied`] }
+      if (hit.outcome === 'skipped') return { kind: 'unmeasured', cause: 'all-skipped', detail: hit.detail || `${input.candidateId} skipped` }
+      return { kind: 'unmeasured', cause: 'no-evidence', detail: hit.detail || `${input.candidateId} unmeasured` }
+    },
     split, candidateId: input.candidateId, actorId: 'boss', now: () => gov.nowDate(),
   })
   gov.storeRef.atomic(() => {
