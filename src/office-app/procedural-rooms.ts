@@ -80,18 +80,22 @@ export const FURNITURE_COMBO_TEMPLATES: Record<FurnitureComboKind, readonly Comb
     ['ws1', 'worker_desk', 'workstation', 4, 2, 'SW', [1, -1]],
     ['ws2', 'worker_desk', 'workstation', 5, 5, 'SW', [1, -1]],
     ['ws3', 'worker_desk', 'workstation', 1, 5, 'SE', [-1, 0]],
-    ['shared', 'collab_table', 'shared', 3, 3, 'SE', null],
+    ['shared', 'collab_table', 'shared', 2, 3, 'SE', null],
+    ['shared', 'water_cooler', 'shared', 1, 1, 'SE', null],
     ['shared', 'bookshelf', 'shared', 5, 0, 'SE', null],
-    ['shared', 'plant_pot', 'shared', 7, 1, 'SW', null],
+    ['shared', 'plant_pot', 'shared', 6, 1, 'SW', null],
   ],
   'exec-library-lounge': [
-    ['exec', 'exec_desk', 'executive', 1, 1, 'SW', [1, -1]],
-    ['ws1', 'worker_desk', 'workstation', 5, 2, 'SW', [1, -1]],
-    ['ws2', 'worker_desk', 'workstation', 5, 5, 'SW', [1, -1]],
+    ['exec', 'exec_desk', 'executive', 3, 1, 'SW', [1, -1]],
+    ['ws1', 'worker_desk', 'workstation', 6, 2, 'SW', [1, -1]],
+    ['ws2', 'worker_desk', 'workstation', 6, 5, 'SW', [1, -1]],
     ['ws3', 'worker_desk', 'workstation', 1, 5, 'SE', [-1, 0]],
-    ['shared', 'bookshelf', 'shared', 5, 0, 'SE', null],
-    ['shared', 'armchair_green', 'shared', 2, 4, 'SE', null],
-    ['shared', 'lamp_table', 'shared', 7, 1, 'SW', null],
+    ['shared', 'bookshelf', 'shared', 2, 0, 'SE', null],
+    ['shared', 'armchair_green', 'shared', 1, 4, 'SE', null],
+    ['shared', 'armchair_green', 'shared', 4, 5, 'SW', null],
+    ['shared', 'lamp_table', 'shared', 6, 1, 'SW', null],
+    ['shared', 'lamp_table', 'shared', 6, 4, 'SW', null],
+    ['shared', 'plant_pot', 'shared', 1, 2, 'SW', null],
   ],
   'atelier-split': [
     ['exec', 'exec_desk', 'executive', 2, 1, 'SW', [1, -1]],
@@ -99,6 +103,8 @@ export const FURNITURE_COMBO_TEMPLATES: Record<FurnitureComboKind, readonly Comb
     ['ws2', 'worker_desk', 'workstation', 6, 5, 'SW', [1, -1]],
     ['ws3', 'worker_desk', 'workstation', 2, 4, 'SE', [-1, 0]],
     ['shared', 'file_cabinet', 'shared', 4, 0, 'SE', null],
+    ['shared', 'armchair_green', 'shared', 4, 5, 'SW', null],
+    ['shared', 'lamp_table', 'shared', 1, 3, 'SE', null],
     ['shared', 'plant_pot', 'shared', 7, 1, 'SW', null],
   ],
   'agile-scrum-bay': [
@@ -107,7 +113,9 @@ export const FURNITURE_COMBO_TEMPLATES: Record<FurnitureComboKind, readonly Comb
     ['ws2', 'worker_desk', 'workstation', 6, 4, 'SW', [1, -1]],
     ['ws3', 'worker_desk', 'workstation', 1, 4, 'SE', [-1, 0]],
     ['shared', 'bookshelf', 'shared', 6, 0, 'SE', null],
+    ['shared', 'printer_copier', 'shared', 1, 6, 'SE', null],
     ['shared', 'water_cooler', 'shared', 1, 2, 'SE', null],
+    ['shared', 'plant_pot', 'shared', 7, 2, 'SW', null],
   ],
 }
 
@@ -154,22 +162,25 @@ export function populateWingFurniture(
 
   const placedSeats: GridPoint[] = []
   const placeSlot = ([role, assetId, suiteKind, du, dv, facing, seatOffset]: ComboTuple, idx: number) => {
-    if (!wsId && suiteKind !== 'shared') return
+    const asSharedConsole = !wsId && role === 'exec' && combo === 'exec-library-lounge'
+    if (!wsId && suiteKind !== 'shared' && !asSharedConsole) return
+    const effKind: SuiteKind = asSharedConsole ? 'shared' : suiteKind
+    const effSeat = asSharedConsole ? null : seatOffset
     const [mw, mh] = WORLD_ASSET_CATALOG[assetId]!.footprint
     const prefU = rect.u + Math.min(du, Math.max(0, rect.w - mw)), prefV = rect.v + Math.min(dv, Math.max(0, rect.h - mh))
     for (const cand of [{ u: prefU, v: prefV }, ...cells]) {
-      if (!canPlace(cand.u, cand.v, mw, mh, seatOffset)) continue
+      if (!canPlace(cand.u, cand.v, mw, mh, effSeat)) continue
       const added: string[] = []
       for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) { const k = cellKey(cand.u + x, cand.v + y); occupied.add(k); added.push(k) }
-      const seat = seatOffset ? { u: cand.u + seatOffset[0], v: cand.v + seatOffset[1] } : undefined
+      const seat = effSeat ? { u: cand.u + effSeat[0], v: cand.v + effSeat[1] } : undefined
       if (!isReachable(seat ? [...placedSeats, seat] : placedSeats)) {
         for (const k of added) occupied.delete(k)
         continue
       }
       if (seat) { occupied.add(cellKey(seat.u, seat.v)); placedSeats.push(seat) }
-      const id = role === 'exec' ? `exec-${wsId}` : role.startsWith('ws') ? `ws-${wsId}-${role.slice(2)}` : `${combo}-${wsId ?? 'pub'}-${idx}`
-      const ent = makeWorldEntity(id, assetId, suiteKind, cand.u, cand.v, facing, seat)
-      if (suiteKind === 'shared') shared.push(ent); else suites.push(ent)
+      const id = asSharedConsole ? `console-pub-${idx}` : role === 'exec' ? `exec-${wsId}` : role.startsWith('ws') ? `ws-${wsId}-${role.slice(2)}` : `${combo}-${wsId ?? 'pub'}-${idx}`
+      const ent = makeWorldEntity(id, assetId, effKind, cand.u, cand.v, facing, seat)
+      if (effKind === 'shared') shared.push(ent); else suites.push(ent)
       return
     }
   }
@@ -227,18 +238,14 @@ export function extractWallSegments3D(
   }
 
   const raw: WallSegment3D[] = []
-  const pushEdge = (from: GridPoint, to: GridPoint, tier: WallTier, shade: 'sunlit' | 'shaded' | 'exterior', startH: number, endH: number, hasWindow?: boolean) => {
+  const pushEdge = (from: GridPoint, to: GridPoint, tier: WallTier, shade: 'sunlit' | 'shaded' | 'exterior', startH: number, endH: number, hasWindow?: boolean) =>
     raw.push({ from, to, startH, endH, tier, shade, hasWindow })
-  }
 
   for (const [k, zId] of zoneOf.entries()) {
     const [u, v] = k.split(',').map(Number) as [number, number]
-    const nNW = zoneOf.get(cellKey(u - 1, v)), nNE = zoneOf.get(cellKey(u, v - 1))
-    const nSE = zoneOf.get(cellKey(u + 1, v)), nSW = zoneOf.get(cellKey(u, v + 1))
-
+    const nNW = zoneOf.get(cellKey(u - 1, v)), nNE = zoneOf.get(cellKey(u, v - 1)), nSE = zoneOf.get(cellKey(u + 1, v)), nSW = zoneOf.get(cellKey(u, v + 1))
     if (!nNW) pushEdge({ u, v }, { u, v: v + 1 }, 'back', 'shaded', 64, 64)
     if (!nNE) pushEdge({ u, v }, { u: u + 1, v }, 'back', 'sunlit', 64, 64)
-
     if (nSE && nSE !== zId && !doorSet.has(`u:${u + 1},${v}`)) {
       const touchesFront = !zoneOf.has(cellKey(u, v + 1)) || !zoneOf.has(cellKey(u + 1, v + 1))
       pushEdge({ u: u + 1, v }, { u: u + 1, v: v + 1 }, 'partition', 'shaded', 56, touchesFront ? 38 : 56)
@@ -254,33 +261,28 @@ export function extractWallSegments3D(
       if (!nSE) pushEdge({ u: u + 1, v }, { u: u + 1, v: v + 1 }, 'cutaway', 'shaded', 34, 34)
       if (!nSW) {
         const isPortal = v === buildingRows - 1 && Math.abs(u - mainEntrance.u) <= 2
-        const hasWin = !isPortal && v === buildingRows - 1 && (u === 15 || u === 16)
+        const hasWin = !isPortal && v === buildingRows - 1 && u === 15
         pushEdge({ u, v: v + 1 }, { u: u + 1, v: v + 1 }, isPortal ? 'portal' : 'cutaway', 'sunlit', isPortal ? 54 : 34, isPortal ? 54 : 34, hasWin)
       }
     }
   }
-  return mergeCollinearWalls(raw)
+  return mergeCollinearBackWalls(raw)
 }
 
-function mergeCollinearWalls(segs: readonly WallSegment3D[]): WallSegment3D[] {
-  const out: WallSegment3D[] = []
-  const used = new Uint8Array(segs.length)
+function mergeCollinearBackWalls(segs: readonly WallSegment3D[]): WallSegment3D[] {
+  const out: WallSegment3D[] = [], used = new Uint8Array(segs.length)
   for (let i = 0; i < segs.length; i++) {
     if (used[i]) continue
-    let cur = segs[i]!
-    used[i] = 1
-    if (cur.startH === cur.endH && (cur.from.u === cur.to.u || cur.from.v === cur.to.v)) {
-      let extended = true
-      while (extended) {
-        extended = false
+    let cur = segs[i]!; used[i] = 1
+    if (cur.tier === 'back' && (cur.from.u === cur.to.u || cur.from.v === cur.to.v)) {
+      let ext = true
+      while (ext) {
+        ext = false
         for (let j = 0; j < segs.length; j++) {
-          if (used[j]) continue
           const nxt = segs[j]!
-          if (nxt.tier === cur.tier && nxt.shade === cur.shade && nxt.startH === cur.startH && nxt.endH === cur.endH
-            && cur.to.u === nxt.from.u && cur.to.v === nxt.from.v && ((cur.from.u === cur.to.u && nxt.from.u === nxt.to.u) || (cur.from.v === cur.to.v && nxt.from.v === nxt.to.v))) {
-            cur = { ...cur, to: nxt.to, hasWindow: cur.hasWindow || nxt.hasWindow }
-            used[j] = 1
-            extended = true
+          if (!used[j] && nxt.tier === 'back' && nxt.shade === cur.shade && cur.to.u === nxt.from.u && cur.to.v === nxt.from.v
+            && ((cur.from.u === cur.to.u && nxt.from.u === nxt.to.u) || (cur.from.v === cur.to.v && nxt.from.v === nxt.to.v))) {
+            cur = { ...cur, to: nxt.to }; used[j] = 1; ext = true
           }
         }
       }
@@ -294,11 +296,13 @@ export function buildWallMountsForWing(
   wingId: string, rect: { u: number; v: number; w: number; h: number }, cells: readonly GridPoint[],
   doorway: GridPoint, wsId: string | undefined, isLeft: boolean, seedIdx: number,
 ): RoomWallMount[] {
-  const cellSet = new Set(cells.map((c) => cellKey(c.u, c.v)))
-  const mounts: RoomWallMount[] = []
+  const cellSet = new Set(cells.map((c) => cellKey(c.u, c.v))), mounts: RoomWallMount[] = []
   const hasBackAt = (u: number) => cellSet.has(cellKey(u, rect.v)) && !cellSet.has(cellKey(u, rect.v - 1))
-  if (hasBackAt(rect.u + 4)) mounts.push({ id: `art-${wingId}`, assetId: seedIdx % 2 === 0 ? 'wall_painting' : 'idea_board', wall: 'back', at: rect.u + 4.5, h: 14, span: 2 })
-  if (hasBackAt(rect.u + 6)) mounts.push({ id: `win-${wingId}`, assetId: 'window_wide', wall: 'back', at: rect.u + 6.5, h: 12, span: 3 })
+  const hasLeftAt = (v: number) => cellSet.has(cellKey(rect.u, v)) && !cellSet.has(cellKey(rect.u - 1, v))
+  if (hasBackAt(rect.u + 3) && hasBackAt(rect.u + 4)) mounts.push({ id: `art-${wingId}`, assetId: seedIdx % 2 === 0 ? 'wall_painting' : 'idea_board', wall: 'back', at: rect.u + 3.8, h: 10, span: 2 })
+  if (hasBackAt(rect.u + 6) && hasBackAt(rect.u + 7)) mounts.push({ id: `win-${wingId}`, assetId: 'window_wide', wall: 'back', at: rect.u + 6.8, h: 10, span: 3 })
+  if (isLeft && hasLeftAt(rect.v + 4) && hasLeftAt(rect.v + 5)) mounts.push({ id: `wb-${wingId}`, assetId: 'whiteboard_wall', wall: 'left', at: rect.v + 4.8, h: 8, span: 3 })
+  if (isLeft && hasLeftAt(rect.v + 9) && hasLeftAt(rect.v + 10)) mounts.push({ id: `winL-${wingId}`, assetId: 'window_wide', wall: 'left', at: rect.v + 9.8, h: 8, span: 3 })
   if (wsId) mounts.push({ id: `doorplate-${wsId}`, assetId: 'doorplate', wall: isLeft ? 'left' : 'back', at: isLeft ? doorway.v - 0.8 : doorway.u + 0.5, h: 24, span: 1, propKind: 'doorplate' })
   return mounts
 }

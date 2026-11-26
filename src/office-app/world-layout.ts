@@ -95,14 +95,14 @@ function buildProceduralStudio(o: StudioBuildOpts): WorldWingPlan {
 }
 
 function buildCourtyardSlot(): WorldWingPlan {
-  const rect = { u: 0, v: 15, w: 9, h: 3 }
+  const rect = { u: 2, v: 15, w: 7, h: 3 }
   return {
     id: 'courtyard-3', title: '待扩建庭院地块', kind: 'courtyard', rect,
     cells: rectCells(rect.u, rect.v, rect.w, rect.h),
-    focusPoint: { u: 4.5, v: 16.5 }, doorway: { u: 8, v: 16 },
+    focusPoint: { u: 5.5, v: 16.5 }, doorway: { u: 8, v: 16 },
     floorStyle: 'courtyard', themeHex: '#4A6A50', suites: [], wallMounts: [],
     shared: [
-      makeWorldEntity('cy-tree-a', 'tree_shrub', 'shared', 1, 15, 'SE'),
+      makeWorldEntity('cy-tree-a', 'tree_shrub', 'shared', 2, 15, 'SE'),
       makeWorldEntity('cy-tree-b', 'tree_shrub', 'shared', 5, 15, 'SW'),
       makeWorldEntity('cy-plant', 'plant_pot', 'shared', 8, 16, 'SW'),
     ],
@@ -124,21 +124,23 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
   const floors: readonly WingFloorStyle[] = ['honey_oak', 'warm_parquet']
   const isBaseSeed = seed === 1
 
-  const leftDoorV = isBaseSeed ? 6 : 3 + Math.floor(rng() * 7)
+  const topL = isBaseSeed ? 1 : (seed % 3)
+  const leftDoorV = isBaseSeed ? 6 : Math.max(topL + 2, 3 + Math.floor(rng() * 7))
+  const upperW = isBaseSeed ? 8 : 8 + (seed % 2)
   const upperDoorV = isBaseSeed ? 5 : (leftDoorV === 4 ? 3 : 4)
   const lowerDoorV = isBaseSeed ? 13 : 12 + Math.floor(rng() * 3)
 
   const wings: WorldWingPlan[] = [
     buildProceduralStudio({
       ws: list[0]!, id: `wing-${list[0]!.id}`, title: list[0]!.title,
-      rect: { u: 0, v: 0, w: 9, h: 15 }, doorway: { u: 8, v: leftDoorV }, isLeft: true,
+      rect: { u: 0, v: topL, w: 9, h: 15 - topL }, doorway: { u: 8, v: leftDoorV }, isLeft: true,
       floorStyle: isBaseSeed ? 'honey_oak' : pick(floors), rugStyle: isBaseSeed ? 'sage' : pick(rugs), themeHex: '#4A6A50',
       shapeKind: isBaseSeed ? 'l-alcove' : pick(PREFAB_SHAPE_KINDS),
       comboKind: isBaseSeed ? 'paired-dev-pod' : pick(FURNITURE_COMBO_KINDS), seedIdx: seed,
     }),
     buildProceduralStudio({
       ws: list[1], id: list[1] ? `wing-${list[1].id}` : 'wing-reserve', title: list[1]?.title ?? '预备研发工坊',
-      rect: { u: 13, v: 0, w: 9, h: 8 }, doorway: { u: 13, v: upperDoorV }, isLeft: false,
+      rect: { u: 13, v: 0, w: upperW, h: 8 }, doorway: { u: 13, v: upperDoorV }, isLeft: false,
       floorStyle: isBaseSeed ? 'warm_parquet' : pick(floors), rugStyle: isBaseSeed ? 'indigo' : pick(rugs), themeHex: '#3F5A78',
       shapeKind: isBaseSeed ? 'bay-window' : pick(PREFAB_SHAPE_KINDS),
       comboKind: isBaseSeed ? 'war-room-collab' : pick(FURNITURE_COMBO_KINDS), seedIdx: seed + 1,
@@ -170,8 +172,8 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
     ...wings.filter((w) => w.kind === 'studio').map((w) => ({
       id: `door-${w.id}`, u: w.rect.u === 0 ? 9 : 13, v: w.doorway.v, axis: 'u' as const, wingId: w.id,
     })),
-    { id: 'door-loop-upper', u: isBaseSeed ? 19 : 14, v: 8, axis: 'v', wingId: wings[1]!.id },
-    { id: 'door-loop-lower', u: 14, v: 10, axis: 'v', wingId: wings[2]!.id },
+    { id: 'door-loop-upper', u: isBaseSeed ? 18 : 15, v: 8, axis: 'v', wingId: wings[1]!.id },
+    { id: 'door-loop-lower', u: 15, v: 10, axis: 'v', wingId: wings[2]!.id },
   ]
   const wallSegments = extractWallSegments3D(lobby, wings, corridorCells, interiorDoors, mainEntrance, buildingRows)
   const partitionWalls: PartitionWallSegment[] = wallSegments
@@ -186,23 +188,24 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
 
   const lightSources: LightSourceSpec[] = [
     { id: 'sc-1', kind: 'sconce', u: 9, v: 4.5, radiusTiles: 2.2, intensity: 0.24 },
-    { id: 'sc-2', kind: 'sconce', u: 13, v: 9.5, radiusTiles: 2.2, intensity: 0.24 },
+    { id: 'sc-2', kind: 'sconce', u: 13, v: 9.2, radiusTiles: 2.2, intensity: 0.24 },
     { id: 'sc-3', kind: 'sconce', u: 9.6, v: buildingRows, radiusTiles: 2.2, intensity: 0.24 },
     { id: 'sc-4', kind: 'sconce', u: 12.4, v: buildingRows, radiusTiles: 2.2, intensity: 0.24 },
-    { id: 'lp-1', kind: 'lamp', u: 3.2, v: 2.2, radiusTiles: 2.0, intensity: 0.22 },
-    { id: 'lp-2', kind: 'lamp', u: 20.5, v: 11.5, radiusTiles: 2.0, intensity: 0.22 },
-    { id: 'wn-1', kind: 'window', u: 20.2, v: 1.5, radiusTiles: 3.2, intensity: 0.26 },
+    { id: 'lp-1', kind: 'lamp', u: 3.2, v: topL + 1.2, radiusTiles: 2.0, intensity: 0.22 },
+    { id: 'lp-2', kind: 'lamp', u: 19.5, v: 11.5, radiusTiles: 2.0, intensity: 0.22 },
+    { id: 'wn-1', kind: 'window', u: 19.8, v: 1.5, radiusTiles: 3.2, intensity: 0.26 },
     { id: 'wn-2', kind: 'window', u: 16.5, v: 11.5, radiusTiles: 3.2, intensity: 0.26 },
   ]
   const exteriorProps = [
-    makeWorldEntity('ext-tree-1', 'courtyard_tree', 'shared', -1, 15, 'SE'),
-    makeWorldEntity('ext-shrub-1', 'tree_shrub', 'shared', 1, buildingRows, 'SE'),
-    makeWorldEntity('ext-shrub-2', 'tree_shrub', 'shared', 4, buildingRows, 'SE'),
+    makeWorldEntity('ext-tree-1', 'courtyard_tree', 'shared', 0, 14, 'SE'),
+    makeWorldEntity('ext-shrub-1', 'tree_shrub', 'shared', 2, buildingRows, 'SE'),
+    makeWorldEntity('ext-shrub-2', 'tree_shrub', 'shared', 5, buildingRows, 'SE'),
     makeWorldEntity('ext-tree-2', 'courtyard_tree', 'shared', 7, buildingRows, 'SW'),
     makeWorldEntity('ext-pot-l', 'plant_pot', 'shared', 9, buildingRows, 'SW'),
     makeWorldEntity('ext-pot-r', 'plant_pot', 'shared', 13, buildingRows, 'SW'),
     makeWorldEntity('ext-shrub-3', 'tree_shrub', 'shared', 14, buildingRows, 'SW'),
-    makeWorldEntity('ext-shrub-4', 'tree_shrub', 'shared', 18, buildingRows, 'SW'),
+    makeWorldEntity('ext-shrub-4', 'tree_shrub', 'shared', 17, buildingRows, 'SW'),
+    makeWorldEntity('ext-shrub-5', 'tree_shrub', 'shared', 21, 9, 'SW'),
   ]
   return {
     seed, buildingCols: WORLD_BUILDING_COLS, buildingRows, baseOrigin: { ...WORLD_BASE_ORIGIN },

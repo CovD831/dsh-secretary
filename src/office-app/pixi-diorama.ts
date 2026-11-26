@@ -46,12 +46,13 @@ function makeChairs(suite: RoomEntity): RoomEntity[] {
 
 function drawWallSeg3D(gfx: Graphics, seg: WallSegment3D, world: OfficeWorldPlan, camera: OfficeCamera): void {
   const z = camera.zoom, p1 = worldIsoToScreen(seg.from.u, seg.from.v, world, camera), p2 = worldIsoToScreen(seg.to.u, seg.to.v, world, camera)
-  const h1 = seg.startH * z, h2 = seg.endH * z, capH = Math.min(5 * z, h1 * 0.25)
+  const h1 = seg.startH * z, h2 = seg.endH * z, capH = Math.min(5 * z, h1 * 0.25), bev = 3 * z
   const wainH = (seg.tier === 'back' ? 18 : seg.tier === 'partition' ? 16 : 10) * z
   const plaster = seg.tier === 'cutaway' || seg.tier === 'portal'
     ? (seg.shade === 'shaded' ? 0x7a6150 : 0x9c8069)
     : (seg.shade === 'shaded' ? 0xbfa48c : 0xd9c4a8)
   const wain = seg.tier === 'back' ? 0x4a3428 : 0x6b4a32
+  gfx.poly([p1.x, p1.y - h1 - bev, p2.x, p2.y - h2 - bev, p2.x, p2.y - h2, p1.x, p1.y - h1]).fill(0x6b4a32).stroke({ color: 0x1a1412, width: z })
   gfx.poly([p1.x, p1.y - h1, p2.x, p2.y - h2, p2.x, p2.y - h2 + capH, p1.x, p1.y - h1 + capH]).fill(0x4a3428)
   gfx.poly([p1.x, p1.y - h1 + capH, p2.x, p2.y - h2 + capH, p2.x, p2.y - wainH, p1.x, p1.y - wainH]).fill(plaster)
   gfx.poly([p1.x, p1.y - wainH, p2.x, p2.y - wainH, p2.x, p2.y, p1.x, p1.y]).fill(wain)
@@ -116,11 +117,14 @@ export function mountPixiDioramaStage(
 
     baseAndFloors.removeChildren(); runnerGfx.clear()
     const tileMap = buildTileLookup(world)
-    for (let v = -1; v <= world.buildingRows + 2; v++) for (let u = -1; u <= world.buildingCols; u++) {
-      const id = tileMap.get(`${u},${v}`) ?? (u >= -1 && u <= world.buildingCols && v >= -1 && v <= world.buildingRows + 1 ? 'stone_tile' : null)
-      const tex = id ? getTex(id, images) : null; if (!tex) continue
-      const p = worldIsoToScreen(u + 0.5, v + 0.5, world, camera)
-      addSp(baseAndFloors, tex, Math.round(p.x - 16 * z), Math.round(p.y - 8 * z), 32 * z, 16 * z)
+    const nearBuilding = (u: number, v: number) => {
+      if (u >= 9 && u <= 12 && v >= world.buildingRows && v <= world.buildingRows + 2) return true
+      for (let dv = -1; dv <= 1; dv++) for (let du = -1; du <= 1; du++) if (tileMap.has(`${u + du},${v + dv}`)) return true
+      return false
+    }
+    for (let v = -1; v <= world.buildingRows + 2; v++) for (let u = -1; u <= world.buildingCols + 1; u++) {
+      const id = tileMap.get(`${u},${v}`) ?? (nearBuilding(u, v) ? 'stone_tile' : null), tex = id ? getTex(id, images) : null
+      if (tex) { const p = worldIsoToScreen(u + 0.5, v + 0.5, world, camera); addSp(baseAndFloors, tex, Math.round(p.x - 16 * z), Math.round(p.y - 8 * z), 32 * z, 16 * z) }
     }
     for (const br of world.corridorBranches ?? []) {
       if (!br.hasRunner) continue
@@ -165,15 +169,16 @@ export function mountPixiDioramaStage(
       aoShadows.ellipse(Math.round(p.x + 2 * z), Math.round(p.y + 2 * z), 9 * z, 4 * z).fill({ color: 0x1a1412, alpha: 0.35 })
     }
 
+    for (const child of ySortedEntities.removeChildren()) if (child instanceof Graphics) child.destroy()
     cutawayWalls.removeChildren(); wallGfx.clear(); cutawayWalls.addChild(wallGfx)
     const sortedWalls = [...(world.wallSegments ?? [])].sort((a, b) => (a.from.u + a.from.v + a.to.u + a.to.v) - (b.from.u + b.from.v + b.to.u + b.to.v))
     for (const seg of sortedWalls) {
-      drawWallSeg3D(wallGfx, seg, world, camera)
+      if (seg.tier === 'back') { drawWallSeg3D(wallGfx, seg, world, camera); continue }
+      const fg = new Graphics(); drawWallSeg3D(fg, seg, world, camera)
+      const p1 = worldIsoToScreen(seg.from.u, seg.from.v, world, camera), p2 = worldIsoToScreen(seg.to.u, seg.to.v, world, camera)
+      fg.zIndex = Math.round((p1.y + p2.y) / 2); ySortedEntities.addChild(fg)
       const fwin = seg.hasWindow ? getTex('facade_window', images) : null
-      if (fwin) {
-        const wp = worldIsoToScreen((seg.from.u + seg.to.u) / 2, (seg.from.v + seg.to.v) / 2, world, camera)
-        addSp(cutawayWalls, fwin, Math.round(wp.x - 28 * z), Math.round(wp.y - 30 * z), 56 * z, 26 * z, true)
-      }
+      if (fwin) { const wp = worldIsoToScreen(seg.from.u + 1, seg.from.v, world, camera); addSp(ySortedEntities, fwin, Math.round(wp.x - 28 * z), Math.round(wp.y - 30 * z), 56 * z, 26 * z, true, fg.zIndex + 1) }
     }
     const drawMount = (m: RoomWallMount, bu: number, bv: number) => {
       const meta = WORLD_ASSET_CATALOG[m.assetId], tex = getTex(m.assetId, images); if (!meta || !tex) return
@@ -187,19 +192,17 @@ export function mountPixiDioramaStage(
       const dpTex = w.kind === 'studio' && w.workspaceId ? getTex('doorplate', images) : null
       if (dpTex) {
         const dp = worldIsoToScreen(w.rect.u === 0 ? w.doorway.u + 0.8 : w.doorway.u + 0.2, w.doorway.v - 0.8, world, camera)
-        addSp(cutawayWalls, dpTex, Math.round(dp.x - 12 * z), Math.round(dp.y - 34 * z), 24 * z, 16 * z)
+        addSp(ySortedEntities, dpTex, Math.round(dp.x - 12 * z), Math.round(dp.y - 38 * z), 24 * z, 16 * z, false, Math.round(dp.y) + 2)
       }
     }
     const doorWood = getTex('door_wood', images)
     if (doorWood) for (const d of world.interiorDoors ?? []) {
-      const dp = worldIsoToScreen(d.u, d.v + 1, world, camera)
-      addSp(cutawayWalls, doorWood, Math.round(dp.x - 19 * z), Math.round(dp.y - 50 * z), 38 * z, 52 * z, d.axis === 'v')
+      const dp = worldIsoToScreen(d.axis === 'u' ? d.u : d.u + 1, d.axis === 'u' ? d.v + 1 : d.v, world, camera)
+      addSp(ySortedEntities, doorWood, Math.round(dp.x - 19 * z), Math.round(dp.y - 50 * z), 38 * z, 52 * z, d.axis === 'v', Math.round(dp.y) + 1)
     }
     const dglass = getTex('door_glass', images), sconce = getTex('wall_sconce', images)
-    if (dglass) { const dp = worldIsoToScreen(11, world.buildingRows, world, camera); addSp(cutawayWalls, dglass, Math.round(dp.x - 38 * z), Math.round(dp.y - 49 * z), 76 * z, 50 * z, true) }
-    if (sconce) for (const ls of world.lightSources ?? []) if (ls.kind === 'sconce') { const sp = worldIsoToScreen(ls.u, ls.v, world, camera); addSp(cutawayWalls, sconce, Math.round(sp.x - 9 * z), Math.round(sp.y - 38 * z), 18 * z, 28 * z) }
-
-    ySortedEntities.removeChildren()
+    if (dglass) { const dp = worldIsoToScreen(11, world.buildingRows, world, camera); addSp(ySortedEntities, dglass, Math.round(dp.x - 38 * z), Math.round(dp.y - 49 * z), 76 * z, 50 * z, true, Math.round(dp.y) + 2) }
+    if (sconce) for (const ls of world.lightSources ?? []) if (ls.kind === 'sconce') { const sp = worldIsoToScreen(ls.u, ls.v, world, camera); addSp(ySortedEntities, sconce, Math.round(sp.x - 9 * z), Math.round(sp.y - 42 * z), 18 * z, 28 * z, false, Math.round(sp.y) + 2) }
     for (const e of allEntities) {
       const meta = WORLD_ASSET_CATALOG[e.assetId], tex = getTex(e.assetId, images); if (!meta || !tex) continue
       const p = worldIsoToScreen(e.anchor.u + e.size[0] / 2, e.anchor.v + e.size[1] / 2, world, camera)
