@@ -1,39 +1,71 @@
-# dsh-superagent
+# dsh-secretary
 
-> **Research prototype for reference only, not an official DeepSeek product.** This code grew out of our team's day-to-day development work, with much of the engineering done by coding agents. Treat it as research code, not production-ready software. It may still contain bugs, and its coding style and engineering practices may be inconsistent. Review and adapt it before using it in your own environment.
->
-> We have adapted it for publication, so it is not identical to our internal version or the implementation described in *Exploring Super-agent Design: Towards a More Autonomous Agent System*. Some designs discussed in the article are directions for future development and are not implemented in this prototype.
+**Governance-first autonomous coding agent harness** — append-only `M0–M6` memory spine, three-state pre-execution gates, physically zero-execution secretary orchestration, and a 2:1 isometric PixiJS v8 agent office.
 
-dsh-superagent is a proactive coding agent for one GitHub repository, packaged as a bundle for [DeepSeek Harness](https://www.deepseek.com/en/harness/). It listens to GitHub and, optionally, Feishu. When someone allowed asks the agent for work, it opens a work item, works on it in its own agent session and directory, and answers in the original conversation, for example with a pull request. A web panel shows what needs a person.
+> Built on the MIT-licensed [DeepSeek Harness (DSH)](https://www.deepseek.com/en/harness/) bundle interface (`dsh-superagent` origin) and substantially re-architected with an independent governance, verification, memory, and visual-telemetry stack (`224` TypeScript modules, `90` Vitest test suites).
 
-It is also a way of working with an agent: **take as little human attention as possible, and give as much value as possible.** An agent that can act for a whole team can also waste a whole team's attention, so it acts only when asked or when a rule the team wrote allows it, and speaks only when someone must act or can use a result. [docs/000-philosophy.md](docs/000-philosophy.md) explains the principle and what it asks of the operator.
+---
 
-## Setup
+## Why This Architecture
 
-Setup has many steps, so an agent does it with you. Ask your coding agent:
+Long-running coding agents typically break down in three structural ways:
+1. **Unverified self-reports** — workers claim "all tests passed" while leaving unrecorded side effects, stale baselines, or silent fallbacks.
+2. **State & UI drift** — SQLite caches, dashboards, or prompts mutate independently of what actually occurred in git and tool sessions.
+3. **Over-privileged coordinators** — an orchestrator session holding shell/write tools eventually bypasses isolation and executes ad-hoc mutations directly.
 
-> Read SETUP.md in this repository and set up dsh-superagent with me.
+`dsh-secretary` enforces hard architectural boundaries against all three:
 
-It asks one short question at a time, shows the full plan once, and then installs and configures everything. [SETUP.md](SETUP.md) is what it follows.
+```mermaid
+flowchart LR
+  Sources["GitHub / Feishu / Operator"] --> Secretary["Zero-Exec Secretary (allow: [])"]
+  Secretary -->|"Delegate isolated task"| Worktree["Git Worktree Sub-Sessions"]
+  Worktree -->|"Pre-execute hook"| Gates["3-State Gate Registry (allow | deny | unmeasured)"]
+  Gates -->|"Append-only"| Spine["Event Spine (M0) + Git Entity Pages (M1-M6)"]
+  Spine -->|"Read-only projection"| SQLite["SQLite FTS5 & Ruling Queue"]
+  Spine -->|"Read-only projection"| Office["2:1 Isometric Pixel Office (PixiJS v8)"]
+```
 
-## Documentation
+## Core Engineering Decisions
 
-Read the numbered documents in order; each builds only on the ones before it.
+- **Two Sources of Truth & Read-Only Projection Law** (`src/spine/`, `src/memory/`, `src/projection/`)
+  - Definition truth lives in a single gate registry; occurrence truth lives in append-only session logs + the `M0` event spine and git-backed `M1–M6` entity pages linked by `source_ref` sequence IDs.
+  - SQLite FTS indexes, governance boards, balances, and the pixel office frontend are **strictly read-only projections** that can be deleted and deterministically rebuilt from the spine.
+- **Three-State Pre-Execution Gates** (`src/judgement/`, `src/executor/pre-execute-gates.ts`, `src/executor/git-workspace-snapshot.ts`)
+  - Unregistered gates do not exist. Mounted via extensible `scope.stage` points and evaluated before risky actions.
+  - Every gate returns `allow | deny(blockers) | unmeasured`. Missing inputs, shell blind spots, timeouts, or parse failures **must return `unmeasured` and are never coerced to `allow`**.
+  - Each gate ships with paired red/green fixtures and disable-mutation checks to prevent decorative gates.
+- **Physically Zero-Execution Secretary** (`src/app/tools/`, `src/workspaces/worktree.ts`)
+  - Coordinator sessions register only routing, ruling, and read-only query tools, then invoke `tools.restrict({ allow: [] })` to block all global execution tools. Code inspection and edits run strictly inside isolated git worktree sub-sessions.
+- **2:1 Isometric Pixel Diorama Office** (`src/office-app/`, `src/pixel-office/`)
+  - Procedural room blueprints (`room-blueprints.ts`, `roguelike-pcg.ts`), layered PixiJS v8 lighting/occlusion rendering (`pixi-diorama.ts`, `world-renderer.ts`), and a bitmap HUD projecting live agent states, rulings, and token telemetry.
 
-- [000 Philosophy](docs/000-philosophy.md)
-- [001 Domain model](docs/001-domain.md)
-- [002 Authorization](docs/002-authorization.md)
-- [003 Execution](docs/003-execution.md)
-- [004 Prompts](docs/004-prompts.md)
-- [005 Panel](docs/005-panel.md)
-- [006 Deployment](docs/006-deployment.md): manual setup, configuration, upgrades and troubleshooting
-- [007 Architecture](docs/007-architecture.md)
-- [008 Cookbook](docs/008-cookbook.md): adding a Source
+## Repository Map
 
-## Development
+| Directory | Responsibility |
+| :--- | :--- |
+| `src/spine/` | Append-only event spine (`M0`), redaction before persistence/clipping |
+| `src/memory/` | Git-backed `M1–M6` entity pages, resident budget enforcement, FTS5 read-only index |
+| `src/judgement/` | Gate registry, three-state verdict engine, changed-paths & ledger verification |
+| `src/executor/` | Pre-execute completion guards, git workspace snapshot & digest auditing |
+| `src/app/` | Zero-exec secretary runtime, ruling queue, standing-order governance patrol |
+| `src/workspaces/` | Serialized git worktree provisioning, CoW dependency copy with secret stripping |
+| `src/office-app/` | PixiJS v8 2:1 isometric pixel office renderer, procedural room layouts & HUD |
+| `src/rsi/` | Online friction collector & trace-to-SOP mining |
+| `tests/` | `90` Vitest suites covering gates, redaction, worktrees, memory invariants & UI |
+| `docs/` | Architecture docs (`000-philosophy.md` – `008-cookbook.md`, `STANDARDS.md`) |
 
-`pnpm check` runs the typecheck, the tests and the build.
+## Verification & Development
 
-## License
+All tests run against an isolated temporary `DSH_HOME` without touching user production state:
 
-[MIT](LICENSE)
+```bash
+npx tsc --noEmit                                          # Strict TypeScript check
+DSH_HOME=$(mktemp -d) npx vitest run                      # Full test suite (isolated)
+pnpm check                                                # Typecheck + tests + build
+```
+
+For bundle installation and manual setup, see [SETUP.md](SETUP.md) and [docs/006-deployment.md](docs/006-deployment.md).
+
+## License & Attribution
+
+[MIT](LICENSE) — originally derived from DeepSeek Harness's MIT-licensed `dsh-superagent` prototype; governance, memory spine, pre-execute gate engine, and pixel office modules are independent extensions.
