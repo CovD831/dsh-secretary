@@ -176,8 +176,8 @@ function renderL0AndL1(ctx: CanvasRenderingContext2D, state: WorldSceneState, sp
     const p = worldIsoToScreen(w.rugRect.u + w.rugRect.w / 2, w.rugRect.v + w.rugRect.h / 2, world, cam); ctx.drawImage(sprites.images.rug_woven, Math.round(p.x - 64 * z), Math.round(p.y - 32 * z), 128 * z, 64 * z)
   }
   const leftC = worldIsoToScreen(0, world.buildingRows, world, cam), rightC = worldIsoToScreen(world.buildingCols, 0, world, cam)
-  for (let s = 0; s < world.buildingCols * 8; s++) { ctx.fillStyle = s / 8 >= 14 && s / 8 <= 17 ? '#7A8288' : '#4A3428'; ctx.fillRect(Math.round(leftC.x + s * 2 * z), Math.round(leftC.y + s * z), 2 * z, 5 * z) }
-  ctx.fillStyle = '#3B2A22'; for (let s = 0; s < world.buildingRows * 8; s++) ctx.fillRect(Math.round(rightC.x - (s + 1) * 2 * z), Math.round(rightC.y + s * z), 2 * z, 5 * z)
+  for (let s = 0; s < world.buildingCols * 8; s++) { ctx.fillStyle = s / 8 >= 14 && s / 8 <= 17 ? '#8C8478' : '#4A3428'; ctx.fillRect(Math.round(leftC.x + s * 2 * z), Math.round(leftC.y + s * z), 2 * z, 5 * z) }
+  ctx.fillStyle = '#3B2A22'; for (let s = 0; s < world.buildingRows * 8; s++) ctx.fillRect(Math.round(rightC.x - (step => step + 1)(s) * 2 * z), Math.round(rightC.y + s * z), 2 * z, 5 * z)
   const wallImg = sprites.images.wall_segment
   if (wallImg) {
     for (let u = 0; u < world.buildingCols; u += 2) if (!world.wings.some((w) => w.kind === 'courtyard' && w.rect.v === 0 && u >= w.rect.u && u < w.rect.u + w.rect.w)) {
@@ -187,12 +187,16 @@ function renderL0AndL1(ctx: CanvasRenderingContext2D, state: WorldSceneState, sp
       const p = worldIsoToScreen(0, v + 1, world, cam); ctx.drawImage(wallImg, Math.round(p.x - 16 * z), Math.round(p.y - 72 * z), 32 * z, 80 * z)
     }
   }
-  ctx.fillStyle = '#4A3428'
   for (const pw of world.partitionWalls) {
     const p1 = pw.axis === 'u' ? worldIsoToScreen(pw.fixed, pw.start, world, cam) : worldIsoToScreen(pw.start, pw.fixed, world, cam)
     const p2 = pw.axis === 'u' ? worldIsoToScreen(pw.fixed, pw.end, world, cam) : worldIsoToScreen(pw.end, pw.fixed, world, cam)
     const steps = Math.max(1, Math.round((pw.end - pw.start) * 4))
-    for (let i = 0; i <= steps; i++) ctx.fillRect(Math.round(p1.x + (p2.x - p1.x) * (i / steps) - 2 * z), Math.round(p1.y + (p2.y - p1.y) * (i / steps) - 12 * z), 4 * z, 12 * z)
+    for (let i = 0; i <= steps; i++) {
+      const wx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - 2 * z), wy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - 18 * z)
+      ctx.fillStyle = '#1A1412'; ctx.fillRect(wx - z, wy - z, 6 * z, 19 * z)
+      ctx.fillStyle = '#BFA48C'; ctx.fillRect(wx, wy + 3 * z, 4 * z, 8 * z)
+      ctx.fillStyle = '#4A3428'; ctx.fillRect(wx, wy, 4 * z, 3 * z); ctx.fillRect(wx, wy + 11 * z, 4 * z, 6 * z)
+    }
   }
   if (sprites.images.door_glass) { const dp = worldIsoToScreen(15.5, world.buildingRows, world, cam); ctx.drawImage(sprites.images.door_glass, Math.round(dp.x - 40 * z), Math.round(dp.y - 52 * z), 80 * z, 56 * z) }
   for (const m of [...world.lobby.wallMounts, ...world.wings.flatMap((w) => w.wallMounts.filter((wm) => wm.propKind !== 'doorplate'))]) {

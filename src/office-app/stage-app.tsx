@@ -34,17 +34,23 @@ function resolveRoomId(ticket: TicketItem, settings: SettingsView | null): strin
 }
 
 function syncWorldActors(prev: OfficeActor[], tickets: readonly TicketItem[], world: OfficeWorldPlan, settings: SettingsView | null): OfficeActor[] {
+  const residents = createInitialWorldActors(world)
+  const residentIds = new Set(residents.map(r => r.id))
   const openIds = new Set(tickets.map(t => t.id))
-  const kept = prev.filter(a => a.role !== 'worker' || a.lifecycle !== 'removed').map(a =>
-    a.role === 'worker' && a.ticketId && !openIds.has(a.ticketId) && a.lifecycle !== 'leaving' ? { ...a, lifecycle: 'leaving' as const } : a)
-  const usedSuites = new Set(kept.filter(a => a.role === 'worker' && a.lifecycle !== 'leaving').map(a => a.assignedSuiteId))
-  const activeIds = new Set(kept.filter(a => a.role === 'worker' && a.lifecycle !== 'leaving').map(a => a.ticketId))
-  const next = [...kept]
+  const keptWorkers = prev.filter(a => a.role === 'worker' && a.lifecycle !== 'removed').map(a =>
+    a.ticketId && !openIds.has(a.ticketId) && a.lifecycle !== 'leaving' ? { ...a, lifecycle: 'leaving' as const } : a)
+  const mergedResidents = residents.map(r => {
+    const existing = prev.find(p => p.id === r.id && residentIds.has(p.id))
+    return existing ? { ...r, animMs: existing.animMs } : r
+  })
+  const usedSuites = new Set(keptWorkers.filter(a => a.lifecycle !== 'leaving').map(a => a.assignedSuiteId))
+  const activeIds = new Set(keptWorkers.filter(a => a.lifecycle !== 'leaving').map(a => a.ticketId))
+  const next: OfficeActor[] = [...mergedResidents, ...keptWorkers]
   for (const ticket of tickets) {
     if (activeIds.has(ticket.id)) continue
     const roomId = resolveRoomId(ticket, settings)
     const wing = world.wings.find(w => w.workspaceId === roomId) ?? world.wings[0]
-    const suites = wing && wing.suites.length > 0 ? wing.suites.map(s => s.id) : [`ws-${roomId}-1`, `ws-${roomId}-2`, `ws-${roomId}-3`]
+    const suites = wing ? wing.suites.filter(s => s.suiteKind === 'workstation').map(s => s.id) : [`ws-${roomId}-1`, `ws-${roomId}-2`, `ws-${roomId}-3`]
     const suite = suites.find(s => !usedSuites.has(s))
     if (!suite) continue
     usedSuites.add(suite)
@@ -147,8 +153,13 @@ export function StageApp() {
   }, [refreshAll])
 
   const screenStates = useMemo(() => {
-    const out: Record<string, StatusKind | 'off'> = {
-      executive: activeRuling ? 'needsDecision' : tickets.some(t => t.stage === 'working') ? 'working' : 'off',
+    const out: Record<string, StatusKind | 'off'> = {}
+    for (const wing of world.wings) {
+      if (!wing.workspaceId) continue
+      const roomList = tickets.filter(t => resolveRoomId(t, settings) === wing.workspaceId)
+      out[`exec-${wing.workspaceId}`] = activeRuling && wing.workspaceId === workspaceId
+        ? 'needsDecision'
+        : roomList.some(t => t.stage === 'working') ? 'working' : 'off'
     }
     for (const actor of actorsRef.current) {
       if (actor.role !== 'worker' || !actor.assignedSuiteId || actor.lifecycle === 'leaving') continue
@@ -156,7 +167,7 @@ export function StageApp() {
       out[actor.assignedSuiteId] = !ticket ? 'off' : ticket.stage === 'person' ? 'needsDecision' : ticket.stage === 'working' ? 'working' : 'done'
     }
     return out
-  }, [activeRuling, tickets])
+  }, [activeRuling, tickets, world, settings, workspaceId])
 
   const gateBlocked = gateUntil > Date.now()
   const latestSayId = useMemo(() => [...feed].reverse().find(e => e.role === 'secretary')?.id, [feed])
