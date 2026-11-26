@@ -110,6 +110,24 @@
       "outOfPaletteCount": 0,
       "semiTransparentCount": 0
     },
+    "mugshot_lead": {
+      "file": "mugshot_lead.png",
+      "width": 32,
+      "height": 32,
+      "opaquePixels": 545,
+      "uniqueColors": 22,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "mugshot_worker": {
+      "file": "mugshot_worker.png",
+      "width": 32,
+      "height": 32,
+      "opaquePixels": 518,
+      "uniqueColors": 22,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
     "ui_btn_active": {
       "file": "ui_btn_active.png",
       "width": 48,

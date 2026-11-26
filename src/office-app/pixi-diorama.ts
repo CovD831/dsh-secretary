@@ -82,6 +82,7 @@ export function mountPixiDioramaStage(canvas: HTMLCanvasElement, getState: () =>
 
   const stageVignette = new Graphics()
   const baseAndFloors = new Container()
+  const runnerGfx = new Graphics()
   const aoShadows = new Graphics(); aoShadows.blendMode = 'multiply'
   const cutawayWalls = new Container()
   const wallGfx = new Graphics()
@@ -90,11 +91,9 @@ export function mountPixiDioramaStage(canvas: HTMLCanvasElement, getState: () =>
   const lightGfx = new Graphics()
 
   const addSp = (parent: Container, tex: Texture, x: number, y: number, w: number, h: number, mirrorX = false, zIndex = 0) => {
-    const sp = new Sprite(tex)
-    sp.width = w; sp.height = h; sp.x = mirrorX ? x + w : x; sp.y = y
+    const sp = new Sprite(tex); sp.width = w; sp.height = h; sp.x = mirrorX ? x + w : x; sp.y = y
     if (mirrorX) sp.scale.x = -Math.abs(sp.scale.x)
-    sp.zIndex = zIndex
-    parent.addChild(sp)
+    sp.zIndex = zIndex; parent.addChild(sp)
   }
 
   const drawFrame = () => {
@@ -105,23 +104,36 @@ export function mountPixiDioramaStage(canvas: HTMLCanvasElement, getState: () =>
 
     stageVignette.clear()
     stageVignette.rect(0, 0, cw, ch).fill(0x201a18)
-    stageVignette.ellipse(Math.round(cw * 0.52), Math.round(ch * 0.50), Math.round(cw * 0.44), Math.round(ch * 0.42)).fill({ color: 0x302722, alpha: 0.72 })
+    stageVignette.ellipse(Math.round(cw * 0.52), Math.round(ch * 0.48), Math.round(cw * 0.46), Math.round(ch * 0.44)).fill({ color: 0x302722, alpha: 0.72 })
 
-    baseAndFloors.removeChildren()
+    baseAndFloors.removeChildren(); runnerGfx.clear()
     for (let v = -1; v <= world.buildingRows + 2; v++) for (let u = -1; u <= world.buildingCols; u++) {
       const id = tileAt(u, v, world), tex = id ? getTex(id, images) : null; if (!tex) continue
       const p = worldIsoToScreen(u + 0.5, v + 0.5, world, camera)
       addSp(baseAndFloors, tex, Math.round(p.x - 16 * z), Math.round(p.y - 8 * z), 32 * z, 16 * z)
     }
-    const runner = getTex('runner_navy', images) ?? getTex('corridor_runner', images)
-    if (runner) for (let v = 2; v < world.buildingRows - 1; v += 2) {
-      const p = worldIsoToScreen(11, v + 1, world, camera); addSp(baseAndFloors, runner, Math.round(p.x - 32 * z), Math.round(p.y - 16 * z), 64 * z, 32 * z)
+    // Seamless continuous navy-and-gold woven hallway runner
+    const r0 = worldIsoToScreen(10.35, 7.2, world, camera), r1 = worldIsoToScreen(11.65, 7.2, world, camera)
+    const r2 = worldIsoToScreen(11.65, world.buildingRows - 0.8, world, camera), r3 = worldIsoToScreen(10.35, world.buildingRows - 0.8, world, camera)
+    runnerGfx.poly([r0.x, r0.y, r1.x, r1.y, r2.x, r2.y, r3.x, r3.y]).fill(0x3f5a78).stroke({ color: 0x1a1412, width: z })
+    const i0 = worldIsoToScreen(10.5, 7.45, world, camera), i1 = worldIsoToScreen(11.5, 7.45, world, camera)
+    const i2 = worldIsoToScreen(11.5, world.buildingRows - 1.05, world, camera), i3 = worldIsoToScreen(10.5, world.buildingRows - 1.05, world, camera)
+    runnerGfx.poly([i0.x, i0.y, i1.x, i1.y, i2.x, i2.y, i3.x, i3.y]).stroke({ color: 0xc9a46a, width: z })
+    for (let mv = 9; mv < world.buildingRows - 2; mv += 3) {
+      const mp = worldIsoToScreen(11, mv + 0.5, world, camera)
+      runnerGfx.poly([mp.x, mp.y - 3 * z, mp.x + 6 * z, mp.y, mp.x, mp.y + 3 * z, mp.x - 6 * z, mp.y]).fill(0xc9a46a)
     }
+    baseAndFloors.addChild(runnerGfx)
+
     const wmat = getTex('welcome_mat', images)
     if (wmat) { const p = worldIsoToScreen(11, world.buildingRows + 1, world, camera); addSp(baseAndFloors, wmat, Math.round(p.x - 32 * z), Math.round(p.y - 16 * z), 64 * z, 32 * z) }
     for (const w of world.wings) if (w.kind === 'studio' && w.rugRect) {
       const rug = getTex(`rug_${w.rugStyle ?? 'woven'}`, images) ?? getTex('rug_woven', images)
-      if (rug) { const p = worldIsoToScreen(w.rugRect.u + w.rugRect.w / 2, w.rugRect.v + w.rugRect.h / 2, world, camera); addSp(baseAndFloors, rug, Math.round(p.x - 64 * z), Math.round(p.y - 32 * z), 128 * z, 64 * z) }
+      if (rug) {
+        const rw = Math.round(Math.max(4, (w.rugRect.w + w.rugRect.h) / 2) * 32 * z), rh = Math.round(rw / 2)
+        const p = worldIsoToScreen(w.rugRect.u + w.rugRect.w / 2, w.rugRect.v + w.rugRect.h / 2, world, camera)
+        addSp(baseAndFloors, rug, Math.round(p.x - rw / 2), Math.round(p.y - rh / 2), rw, rh)
+      }
     }
 
     aoShadows.clear()
@@ -222,8 +234,10 @@ export function mountPixiDioramaStage(canvas: HTMLCanvasElement, getState: () =>
 
     warmLighting.removeChildren(); lightGfx.clear(); warmLighting.addChild(lightGfx)
     for (const ls of world.lightSources ?? []) {
-      const p = worldIsoToScreen(ls.u, ls.v, world, camera)
-      lightGfx.ellipse(p.x, p.y, ls.radiusTiles * 14 * z, ls.radiusTiles * 8 * z).fill({ color: ls.kind === 'window' ? 0xe8dccb : 0xf2a93b, alpha: ls.intensity * 0.75 })
+      const p = worldIsoToScreen(ls.u, ls.v, world, camera), col = ls.kind === 'window' ? 0xe8dccb : 0xf2a93b
+      for (const [k, a] of [[1.0, 0.035], [0.72, 0.045], [0.46, 0.055], [0.24, 0.065]] as const) {
+        lightGfx.ellipse(p.x, p.y, ls.radiusTiles * 14 * z * k, ls.radiusTiles * 8 * z * k).fill({ color: col, alpha: a })
+      }
     }
     for (const suite of suites) {
       const meta = WORLD_ASSET_CATALOG[suite.assetId], st = screenStates[suite.id]
@@ -235,12 +249,15 @@ export function mountPixiDioramaStage(canvas: HTMLCanvasElement, getState: () =>
         lightGfx.rect(Math.round(gx - 5 * z), Math.round(gy - 3 * z), 10 * z, 6 * z).fill(hexNum(STATUS_GLOW_COLORS[st].bright))
       }
     }
-    for (const w of world.wings) {
-      const pos = worldIsoToScreen(w.rect.u + w.rect.w / 2, w.rect.v + Math.min(4.2, w.rect.h / 2), world, camera)
-      const bw = Math.max(72, w.title.length * 10 + 14) * z, bh = 16 * z, bx = Math.round(pos.x - bw / 2), by = Math.round(pos.y - bh)
-      lightGfx.rect(bx, by, bw, bh).fill({ color: 0x201a18, alpha: 0.88 }).stroke({ color: hexNum(w.workspaceId && w.workspaceId === scene.activeWorkspaceId ? HIGHLIGHT_GOLD : '#6B4A32'), width: z })
-      const label = new Text({ text: w.title, style: new TextStyle({ fontFamily: 'monospace', fontSize: 10 * z, fill: 0xe8dccb }) })
-      label.x = bx + 6 * z; label.y = by + 2 * z; warmLighting.addChild(label)
+    if (z === 1 || hoverTarget?.type === 'wing') {
+      for (const w of world.wings) {
+        if (z > 1 && hoverTarget?.type === 'wing' && hoverTarget.wingId !== w.id) continue
+        const pos = worldIsoToScreen(w.rect.u + w.rect.w / 2, w.rect.v + Math.min(4.2, w.rect.h / 2), world, camera)
+        const bw = Math.max(72, w.title.length * 10 + 14) * z, bh = 14 * z, bx = Math.round(pos.x - bw / 2), by = Math.round(pos.y - bh)
+        lightGfx.rect(bx, by, bw, bh).fill({ color: 0x201a18, alpha: 0.88 }).stroke({ color: hexNum(w.workspaceId && w.workspaceId === scene.activeWorkspaceId ? HIGHLIGHT_GOLD : '#6B4A32'), width: z })
+        const label = new Text({ text: w.title, style: new TextStyle({ fontFamily: 'monospace', fontSize: 9 * z, fill: 0xe8dccb }) })
+        label.x = bx + 6 * z; label.y = by + 2 * z; warmLighting.addChild(label)
+      }
     }
     if (gateIntercept) {
       const t = actors.find((a) => a.id === gateIntercept.targetActorId)

@@ -22,7 +22,7 @@ import type { OfficeCamera, OfficeWorldPlan, WorkspaceWingSpec, WorldPickResult,
 
 type TicketItem = TicketListView['items'][number]
 const WORLD_CENTER = { u: 11, v: 9 } as const
-const defaultZoomFor = (w: number): 1 | 2 => (w >= 1100 ? 2 : 1)
+const defaultZoomFor = (w: number): 1 | 2 => (w >= 1320 ? 2 : 1)
 
 const getInitialViewport = () => typeof window === 'undefined'
   ? { w: CANVAS_W, h: CANVAS_H }
@@ -182,8 +182,13 @@ export function StageApp() {
     return () => clearTimeout(timer)
   }, [pendingBoss, activeRuling, latestSayId])
   useEffect(() => { if (!secretaryThinking) return; const fast = setInterval(() => { void refreshAll() }, 1200); return () => clearInterval(fast) }, [secretaryThinking, refreshAll])
+  const pixiHandleRef = useRef<{ resize: (w: number, h: number) => void; destroy: () => void } | null>(null)
   useEffect(() => {
-    const onResize = () => { const vp = getInitialViewport(); setViewport(vp); setCamera(c => cameraForGridPoint(WORLD_CENTER, world, c.zoom, vp.w, vp.h)) }
+    const onResize = () => {
+      const vp = getInitialViewport()
+      setViewport(vp); pixiHandleRef.current?.resize(vp.w, vp.h)
+      setCamera(cameraForGridPoint(WORLD_CENTER, world, defaultZoomFor(vp.w), vp.w, vp.h))
+    }
     window.addEventListener('resize', onResize); return () => window.removeEventListener('resize', onResize)
   }, [world])
 
@@ -212,7 +217,9 @@ export function StageApp() {
       const now = performance.now(), dt = Math.min(100, Math.max(0, now - last)); last = now; elapsed += dt
       return buildFrameState(dt, elapsed)
     })
-    return () => handle.destroy()
+    pixiHandleRef.current = handle
+    handle.resize(liveRef.current.viewport.w, liveRef.current.viewport.h)
+    return () => { pixiHandleRef.current = null; handle.destroy() }
   }, [usePixiWebGL])
 
   useEffect(() => {
@@ -229,40 +236,25 @@ export function StageApp() {
   }, [usePixiWebGL])
 
   const toCanvasCoords = (clientX: number, clientY: number) => {
-    const rect = canvasRef.current?.getBoundingClientRect()
-    const scaleX = rect?.width ? viewport.w / rect.width : 1
-    const scaleY = rect?.height ? viewport.h / rect.height : 1
-    return { x: (clientX - (rect?.left ?? 0)) * scaleX, y: (clientY - (rect?.top ?? 0)) * scaleY, scaleX, scaleY }
+    const r = canvasRef.current?.getBoundingClientRect(), sx = r?.width ? viewport.w / r.width : 1, sy = r?.height ? viewport.h / r.height : 1
+    return { x: (clientX - (r?.left ?? 0)) * sx, y: (clientY - (r?.top ?? 0)) * sy, scaleX: sx, scaleY: sy }
   }
-  const focusWing = (wing: WorldWingPlan) => {
-    if (wing.workspaceId) setWorkspaceId(wing.workspaceId)
-    setCamera(c => cameraForGridPoint(wing.focusPoint, world, c.zoom, viewport.w, viewport.h))
-  }
+  const focusWing = (wing: WorldWingPlan) => { if (wing.workspaceId) setWorkspaceId(wing.workspaceId); setCamera(c => cameraForGridPoint(wing.focusPoint, world, c.zoom, viewport.w, viewport.h)) }
   const handleCanvasClick = (clientX: number, clientY: number) => {
     const { x, y } = toCanvasCoords(clientX, clientY)
     const hit = pickWorldTarget(x, y, { world, actors: actorsRef.current, screenStates, activeWorkspaceId: workspaceId, elapsedMs: 0 }, camera)
     if (!hit) return
-    if (hit.type === 'prop') {
-      if (hit.workspaceId) setWorkspaceId(hit.workspaceId)
-      if (hit.prop === 'doorplate') setDrawerMode('doorplate'); else setActiveProp(hit.prop)
-    } else if (hit.type === 'wing') {
-      const wing = world.wings.find(w => w.id === hit.wingId)
-      if (wing) focusWing(wing); else if (hit.workspaceId) setWorkspaceId(hit.workspaceId)
-    } else if (hit.role === 'secretary') {
-      setDialogCollapsed(false); setTimeout(() => inputRef.current?.focus(), 0)
-    } else if (hit.workspaceId && hit.workspaceId !== workspaceId) {
-      const wing = world.wings.find(w => w.workspaceId === hit.workspaceId)
-      if (wing) focusWing(wing); else setWorkspaceId(hit.workspaceId)
-    } else { setSelectedTicketId(hit.ticketId ?? roomTickets[0]?.id ?? null); setDrawerMode('worker') }
+    if (hit.type === 'prop') { if (hit.workspaceId) setWorkspaceId(hit.workspaceId); if (hit.prop === 'doorplate') setDrawerMode('doorplate'); else setActiveProp(hit.prop) }
+    else if (hit.type === 'wing') { const w = world.wings.find(x => x.id === hit.wingId); if (w) focusWing(w); else if (hit.workspaceId) setWorkspaceId(hit.workspaceId) }
+    else if (hit.role === 'secretary') { setDialogCollapsed(false); setTimeout(() => inputRef.current?.focus(), 0) }
+    else if (hit.workspaceId && hit.workspaceId !== workspaceId) { const w = world.wings.find(x => x.workspaceId === hit.workspaceId); if (w) focusWing(w); else setWorkspaceId(hit.workspaceId) }
+    else { setSelectedTicketId(hit.ticketId ?? roomTickets[0]?.id ?? null); setDrawerMode('worker') }
   }
   const handleMouseMove = (e: MouseEvent<HTMLCanvasElement>) => {
     const { x, y, scaleX, scaleY } = toCanvasCoords(e.clientX, e.clientY)
     if (dragRef.current) {
       const dx = e.clientX - dragRef.current.startX, dy = e.clientY - dragRef.current.startY
-      if (!dragRef.current.moved && Math.hypot(dx, dy) >= 5) {
-        dragRef.current.moved = true
-        if (!activeRuling && !gateBlocked && !secretaryThinking) setDialogCollapsed(true)
-      }
+      if (!dragRef.current.moved && Math.hypot(dx, dy) >= 5) { dragRef.current.moved = true; if (!activeRuling && !gateBlocked && !secretaryThinking) setDialogCollapsed(true) }
       if (dragRef.current.moved) setCamera(c => ({ ...c, panX: Math.round(dragRef.current!.panX + dx * scaleX), panY: Math.round(dragRef.current!.panY + dy * scaleY) }))
       return
     }
@@ -270,13 +262,10 @@ export function StageApp() {
   }
   const handleSendMessage = async (text: string) => {
     setDialogCollapsed(false); setPendingBoss({ text, sentAt: Date.now(), baseSayId: latestSayId })
-    try { await officeCall('POST secretary/messages', { body: { text } }); await refreshAll() }
-    catch (err) { setPendingBoss(null); throw err }
+    try { await officeCall('POST secretary/messages', { body: { text } }); await refreshAll() } catch (err) { setPendingBoss(null); throw err }
   }
   const handleDecideRuling = async (input: { id: string; decision: RulingDecision; optionId?: string; attribution?: FourWayAttribution; note?: string; captureAsRule?: boolean }) => {
-    const { id, ...body } = input
-    await officeCall('POST rulings/:id/decide', { id, body })
-    await refreshAll()
+    const { id, ...body } = input; await officeCall('POST rulings/:id/decide', { id, body }); await refreshAll()
   }
 
   const resetCam = () => setCamera(cameraForGridPoint(WORLD_CENTER, world, defaultZoomFor(viewport.w), viewport.w, viewport.h))
@@ -293,7 +282,7 @@ export function StageApp() {
           onFocusLobby={() => { setCamera(c => cameraForGridPoint(world.lobby.focusPoint, world, c.zoom, viewport.w, viewport.h)); setDialogCollapsed(false) }}
           onSelectWing={focusWing}
           onOpenRoomDrawer={roomId => { setWorkspaceId(roomId); setSelectedTicketId(tickets.find(t => resolveRoomId(t, settings) === roomId)?.id ?? null); setDrawerMode('worker') }} />
-        <canvas ref={canvasRef} width={viewport.w} height={viewport.h} aria-label="像素办公室主舞台"
+        <canvas ref={canvasRef} width={usePixiWebGL ? undefined : viewport.w} height={usePixiWebGL ? undefined : viewport.h} aria-label="像素办公室主舞台"
           onMouseDown={e => { dragRef.current = { startX: e.clientX, startY: e.clientY, panX: camera.panX, panY: camera.panY, moved: false } }}
           onMouseMove={handleMouseMove}
           onMouseUp={() => { if (dragRef.current?.moved) suppressClickRef.current = true; dragRef.current = null }}

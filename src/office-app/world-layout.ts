@@ -34,14 +34,13 @@ function buildLobby(buildingRows: number): WorldWingPlan {
     suites: [makeEntity('lobby-reception', 'reception_desk', 'reception', 10, 4, 'SE', { u: 9, v: 5 })],
     shared: [
       makeEntity('lobby-bookshelf', 'bookshelf', 'shared', 9, 0, 'SE', undefined, 'back'),
-      makeEntity('lobby-cabinet', 'file_cabinet', 'shared', 11, 0, 'SE', undefined, 'back'),
+      makeEntity('lobby-cabinet', 'file_cabinet', 'shared', 9, 2, 'SE', undefined, 'left'),
       makeEntity('lobby-plant-1', 'plant_pot', 'shared', 9, 9, 'SW'),
-      makeEntity('lobby-plant-2', 'plant_pot', 'shared', 12, 13, 'SW'),
+      makeEntity('lobby-plant-2', 'plant_pot', 'shared', 12, 14, 'SW'),
     ],
     wallMounts: [
-      { id: 'lobby-clock', assetId: 'clock_wall', wall: 'back', at: 9.6, h: 30, span: 1 },
-      { id: 'lobby-corkboard', assetId: 'corkboard', wall: 'back', at: 11.4, h: 8, span: 2, propKind: 'corkboard' },
-      { id: 'lobby-sconce-back', assetId: 'wall_sconce', wall: 'back', at: 10.4, h: 20, span: 1 },
+      { id: 'lobby-clock', assetId: 'clock_wall', wall: 'back', at: 10.2, h: 48, span: 1 },
+      { id: 'lobby-corkboard', assetId: 'corkboard', wall: 'back', at: 11.7, h: 14, span: 2, propKind: 'corkboard' },
     ],
   }
 }
@@ -110,12 +109,12 @@ function buildLowerRightWing(ws?: WorkspaceWingSpec): WorldWingPlan {
   const shared = ws
     ? [makeEntity(`bookshelf-${ws.id}`, 'bookshelf', 'shared', 18, 9, 'SE', undefined, 'back'), makeEntity(`plant-${ws.id}`, 'plant_pot', 'shared', 14, 16, 'SW')]
     : [
-        makeEntity('lounge-desk', 'exec_desk', 'shared', 18, 11, 'SW'),
-        makeEntity('lounge-armchair', 'armchair_green', 'shared', 15, 14, 'SE'),
+        makeEntity('lounge-desk', 'exec_desk', 'shared', 17, 10, 'SW'),
+        makeEntity('lounge-armchair', 'armchair_green', 'shared', 14, 14, 'SE'),
         makeEntity('lounge-lamp-1', 'lamp_table', 'shared', 20, 10, 'SW'),
-        makeEntity('lounge-lamp-2', 'lamp_table', 'shared', 19, 15, 'SW'),
-        makeEntity('lounge-bookshelf', 'bookshelf', 'shared', 17, 9, 'SE', undefined, 'back'),
-        makeEntity('lounge-plant', 'plant_pot', 'shared', 14, 16, 'SW'),
+        makeEntity('lounge-lamp-2', 'lamp_table', 'shared', 18, 15, 'SW'),
+        makeEntity('lounge-bookshelf', 'bookshelf', 'shared', 15, 9, 'SE', undefined, 'back'),
+        makeEntity('lounge-plant', 'plant_pot', 'shared', 14, 11, 'SW'),
       ]
   const wallMounts: RoomWallMount[] = []
   if (ws) wallMounts.push({ id: `doorplate-${ws.id}`, assetId: 'doorplate', wall: 'back', at: 13.5, h: 24, span: 1, propKind: 'doorplate' })
@@ -133,10 +132,9 @@ function buildCourtyardSlot(): WorldWingPlan {
     rect: { u: 0, v: 15, w: 9, h: 3 }, focusPoint: { u: 4.5, v: 16.5 }, doorway: { u: 8, v: 16 },
     floorStyle: 'courtyard', themeHex: '#4A6A50', suites: [], wallMounts: [],
     shared: [
-      makeEntity('cy-tree-a', 'courtyard_tree', 'shared', 1, 15, 'SE'),
-      makeEntity('cy-tree-b', 'courtyard_tree', 'shared', 6, 15, 'SW'),
-      makeEntity('cy-armchair', 'armchair_green', 'shared', 3, 15, 'SE'),
-      makeEntity('cy-plant', 'plant_pot', 'shared', 8, 17, 'SW'),
+      makeEntity('cy-tree-a', 'tree_shrub', 'shared', 1, 15, 'SE'),
+      makeEntity('cy-tree-b', 'tree_shrub', 'shared', 5, 15, 'SW'),
+      makeEntity('cy-plant', 'plant_pot', 'shared', 8, 16, 'SW'),
     ],
   }
 }

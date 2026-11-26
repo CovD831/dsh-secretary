@@ -128,7 +128,7 @@ export function GameHud({
           return (
             <div key={wing.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: '100%' }}>
               <MugshotSlot
-                src="/assets/office/char_lead.png"
+                src={UI_SKIN_URLS.mugshotLead}
                 alt={`房间-${roomId}`}
                 status={stat.status}
                 active={active}

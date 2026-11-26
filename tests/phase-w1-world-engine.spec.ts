@@ -87,7 +87,7 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
   it('audits all 18 office-diorama and 16 office-ui PNGs for strict palette & binary alpha', () => {
     const groups = [
       ['office-diorama', 18],
-      ['office-ui', 16],
+      ['office-ui', 18],
     ] as const
     for (const [dirName, expectedCount] of groups) {
       const dir = join(ROOT, 'assets', dirName)

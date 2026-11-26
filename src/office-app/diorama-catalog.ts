@@ -203,4 +203,6 @@ export const UI_SKIN_URLS = {
   zoom: '/assets/office-ui/icon_zoom.png',
   compassN: '/assets/office-ui/icon_compass_n.png',
   compassStar: '/assets/office-ui/icon_compass_star.png',
+  mugshotLead: '/assets/office-ui/mugshot_lead.png',
+  mugshotWorker: '/assets/office-ui/mugshot_worker.png',
 } as const
