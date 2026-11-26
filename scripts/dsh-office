@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -14,6 +15,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent.parent
 SUPERAGENT_SCRIPT = ROOT / 'scripts' / 'dsh-superagent'
 DEFAULT_OFFICE_PORT = 4320
+MACOS_DSH_APP_BIN = Path('/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh')
 
 
 def resolve_dsh_home():
@@ -24,19 +26,28 @@ def resolve_dsh_home():
 
 
 def ensure_office_port(profile, port):
-    """Ensure the target DSH profile's cordis.patch.yml sets `officePort: <port>` for dsh-superagent."""
+    """Ensure the target DSH profile's cordis.patch.yml sets `officePort: <port>` and return detected webserver URL."""
     patch_file = resolve_dsh_home() / 'profiles' / profile / 'cordis.patch.yml'
     if not patch_file.exists():
-        return
+        return None
     text = patch_file.read_text(encoding='utf-8')
     if re.search(r'^\s*officePort:\s*\d+', text, flags=re.MULTILINE):
         updated = re.sub(r'^(\s*officePort:\s*)\d+', rf'\g<1>{port}', text, flags=re.MULTILINE)
+    elif re.search(r'-\s+id:\s*dsh-superagent\s*\n\s+config:\s*\n', text):
+        updated = re.sub(
+            r'(-\s+id:\s*dsh-superagent\s*\n\s+config:\s*\n)',
+            rf'\1    officePort: {port}\n',
+            text,
+            count=1,
+        )
     elif 'dsh-superagent:' in text:
         updated = re.sub(r'(dsh-superagent:[^\n]*\n)', rf'\1    officePort: {port}\n', text, count=1)
     else:
-        return
+        updated = text
     if updated != text:
         patch_file.write_text(updated, encoding='utf-8')
+    web_match = re.search(r'-\s+id:\s*webserver\s*\n(?:[ \t]+.*\n)*?[ \t]+port:\s*(\d+)', updated)
+    return f'http://127.0.0.1:{web_match.group(1)}' if web_match else None
 
 
 def office_state(url):
@@ -57,10 +68,18 @@ def main():
     args = parser.parse_args()
 
     office_url = f'http://127.0.0.1:{args.port}'
+    detected_web_url = None
     if args.action in ('start', 'restart'):
-        ensure_office_port(args.profile, args.port)
+        detected_web_url = ensure_office_port(args.profile, args.port)
 
-    proc = subprocess.run([sys.executable, str(SUPERAGENT_SCRIPT), args.action, '--profile', args.profile], check=False)
+    env = dict(os.environ)
+    if not env.get('DSH_BIN') and not shutil.which('dsh') and MACOS_DSH_APP_BIN.is_file():
+        env['DSH_BIN'] = str(MACOS_DSH_APP_BIN)
+    cmd = [sys.executable, str(SUPERAGENT_SCRIPT), args.action, '--profile', args.profile]
+    if not env.get('DSH_SUPERAGENT_URL') and detected_web_url:
+        cmd.extend(['--url', detected_web_url])
+
+    proc = subprocess.run(cmd, env=env, check=False)
     if args.action in ('start', 'restart') and proc.returncode in (0, 2, 3):
         deadline = time.monotonic() + args.timeout
         while time.monotonic() < deadline:
