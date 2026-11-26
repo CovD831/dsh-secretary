@@ -9,13 +9,14 @@
   - Right lower wing: executive / secondary workspace (`11×11` tiles) with chamfered front-right corner wall, Persian rug, lounge armchair, bookshelf, and warm desk lamp.
   - Additional workspaces (`N > 3`): expand organically along L/T corridor branches (`H = E - V + 1 >= 1` when `N >= 4`), never degenerating into a long 1D strip.
 
-## 2. 3D Thick Cutaway Wall Anatomy
-- **Top Cut Plane (`6–8px` display)**: dark walnut `#3A2E28` / `#4A3428` with `1px` `#1A1412` outer outline and `1px` `#7A6150` inner bevel so every sliced wall reads as solid timber-framed architecture, never paper-thin cardboard.
-- **Directional Plaster Shading**:
-  - `SE`-facing interior wall (`back` wall along `u`): warm cream `#D9C4A8` / `#BFA48C` over walnut wainscot `#6B4A32`.
-  - `SW`-facing interior wall (`left` wall along `v`): 1-step cooler/darker `#BFA48C` / `#9C8069` over `#4A3428` to establish directional light from upper-left/window side.
-- **Front Cutaway Facade**: `28–36px` tall exterior brick/wood wainscot along the front perimeter (including `45°` chamfered corner segments and low sill windows) so the building has a grounded architectural front rather than raw floor tiles hanging in void.
-- **Doors**: Every room doorway renders a recessed walnut doorframe + open/closed paneled wood door leaf + brass knob, never an empty gap in a wall line.
+## 2. 3D Thick Cutaway Wall Anatomy & Strict 3-Tier Height Law
+- **Never Draw Low Knee-Walls Next to Full-Height Doors (`Anti-Pattern`)**: Interior partition walls must NEVER be shorter than the doors (`54–64px`) or wall props mounted on them.
+- **Strict 3-Tier Architectural Height Hierarchy (`1x` base units)**:
+  1. **Back Exterior Walls (`tier = 'back'`, `64px`)**: Full height on `NW`/`NE` back perimeter edges with `#4A3428` walnut cap rail (`5px`), two-tone directional plaster (`#D9C4A8` sunlit `SE`-facing vs `#BFA48C` shaded `SW`-facing, `41px`), and dark walnut wainscoting (`#6B4A32` / `#4A3428`, `18px`).
+  2. **Interior Room-Dividing Walls (`tier = 'partition'`, `56px → 38px` stepped cutaway)**: `56px` architectural height along interior room/corridor boundaries so `door_wood` (`54px`), `wall_sconce`, `wall_painting`, and `doorplate` sit *inside* the wall below the walnut cap rail; taper smoothly (`56px → 38px`) only on the final `1–2` tiles meeting a front cutaway wall.
+  3. **Front Cutaway Facade & Entrance Portal (`tier = 'cutaway'`, `34px`; `tier = 'portal'`, `54px`)**: `34px` front cutaway height (`facade_window` fits inside below the cap rail without occluding desks/actors behind it), stepping up to a `54px` timber portal around `door_glass` at `mainEntrance`.
+- **Procedural Roguelike Room & Corridor Law**:
+  - Compose worlds from **seeded (`mulberry32`) non-rectangular prefab room shapes** (`l-alcove`, `stepped-zigzag`, `bay-window`, `chamfer-octagon`, `t-studio`, `courtyard-nook`) + **modular furniture combo templates**, connected via **Prim MST + cyclomatic loop (`H = E - V + 1 >= 1`) L-shaped Manhattan corridors** with **asymmetric doorway offsets**.
 
 ## 3. Dual Lighting & Shadow Specification
 1. **Wall-Base AO (`L2`, `blendMode = 'multiply'`, alpha `0.28–0.38`)**:

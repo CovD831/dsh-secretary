@@ -1,6 +1,7 @@
 /** 独立像素办公室前端共用同源 API 调用器、SSE 实时流订阅器与 46 色冻结色板器物模态框壳。 */
 import { type CSSProperties, type ReactNode, useEffect } from 'react'
 import type { Api, ApiRequest, ApiResponse } from '../app/api.ts'
+import { UI_SKIN_URLS } from './diorama-catalog.ts'
 
 export const OFFICE_THEME = {
   bgDeep: '#201A18',
@@ -65,10 +66,16 @@ export function subscribeOfficeStream(onMessage: (msg: OfficeRealtimeMessage) =>
   return () => { es.close() }
 }
 
-const FRAME_STYLE: Record<'walnut' | 'parchment' | 'cork', CSSProperties> = {
-  walnut: { background: OFFICE_THEME.bgPanel, color: OFFICE_THEME.inkCream, border: `2px solid ${OFFICE_THEME.borderWood}`, boxShadow: `inset 0 0 0 1px ${OFFICE_THEME.borderGold}` },
-  parchment: { background: OFFICE_THEME.parchment, color: OFFICE_THEME.inkDark, border: `2px solid ${OFFICE_THEME.woodDark}`, boxShadow: `inset 0 0 0 1px ${OFFICE_THEME.woodMid}` },
-  cork: { background: '#7C5A3E', color: OFFICE_THEME.inkCream, border: `3px solid ${OFFICE_THEME.woodDark}`, boxShadow: `inset 0 0 0 1px ${OFFICE_THEME.borderGold}` },
+const BODY_STYLE: Record<'walnut' | 'parchment' | 'cork', CSSProperties> = {
+  walnut: { background: OFFICE_THEME.bgPanel, color: OFFICE_THEME.inkCream },
+  parchment: { background: OFFICE_THEME.parchment, color: OFFICE_THEME.inkDark, border: `2px solid ${OFFICE_THEME.woodMid}` },
+  cork: { background: '#7C5A3E', color: OFFICE_THEME.inkCream, border: `2px solid ${OFFICE_THEME.woodDark}` },
+}
+
+const MODAL_ICON: Record<'walnut' | 'parchment' | 'cork', string> = {
+  walnut: UI_SKIN_URLS.gear,
+  parchment: UI_SKIN_URLS.checklist,
+  cork: UI_SKIN_URLS.chart,
 }
 
 export function DiegeticModal({
@@ -85,27 +92,32 @@ export function DiegeticModal({
   if (!open) return null
   return (
     <div role="dialog" aria-label={title} onClick={onClose} style={{
-      position: 'fixed', inset: 0, zIndex: 40, background: 'rgba(26,20,18,0.72)',
+      position: 'fixed', inset: 0, zIndex: 40, background: 'rgba(26, 20, 18, 0.76)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
     }}>
       <div onClick={e => e.stopPropagation()} style={{
-        ...FRAME_STYLE[variant], width: '100%', maxWidth: width, maxHeight: '84vh',
-        borderRadius: 4, display: 'flex', flexDirection: 'column', overflow: 'hidden', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        borderStyle: 'solid', borderWidth: 14, borderImageSource: `url(${UI_SKIN_URLS.panel9Slice})`,
+        borderImageSlice: '20 fill', borderImageRepeat: 'stretch', backgroundColor: OFFICE_THEME.bgPanel,
+        color: OFFICE_THEME.inkCream, imageRendering: 'pixelated', boxSizing: 'border-box',
+        width: '100%', maxWidth: width, maxHeight: '86vh',
+        display: 'flex', flexDirection: 'column', overflow: 'hidden', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
       }}>
         <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px',
-          borderBottom: `1px solid ${variant === 'parchment' ? OFFICE_THEME.woodMid : OFFICE_THEME.borderGold}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 12px 10px',
+          borderBottom: `2px solid ${OFFICE_THEME.borderGold}`, background: OFFICE_THEME.bgDeep,
         }}>
-          <div>
-            <strong style={{ fontSize: 16, letterSpacing: 0.5 }}>{title}</strong>
-            {subtitle && <span style={{ marginLeft: 10, fontSize: 12, opacity: 0.82 }}>{subtitle}</span>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <img src={MODAL_ICON[variant]} alt="" width={20} height={20} style={{ display: 'block', imageRendering: 'pixelated' }} />
+            <strong style={{ fontSize: 16, letterSpacing: 0.5, color: OFFICE_THEME.borderGold }}>{title}</strong>
+            {subtitle && <span style={{ marginLeft: 4, fontSize: 12, color: OFFICE_THEME.parchmentSoft }}>{subtitle}</span>}
           </div>
           <button type="button" aria-label="关闭器物面板" onClick={onClose} style={{
-            background: OFFICE_THEME.woodDark, color: OFFICE_THEME.inkCream, border: `1px solid ${OFFICE_THEME.borderGold}`,
-            borderRadius: 3, padding: '4px 10px', cursor: 'pointer', fontSize: 12,
+            borderStyle: 'solid', borderWidth: 6, borderImageSource: `url(${UI_SKIN_URLS.btnIdle9Slice})`,
+            borderImageSlice: '14 fill', borderImageRepeat: 'stretch', background: OFFICE_THEME.woodDark,
+            color: OFFICE_THEME.inkCream, imageRendering: 'pixelated', padding: '2px 8px', cursor: 'pointer', fontSize: 12,
           }}>收起 [ESC]</button>
         </div>
-        <div style={{ padding: 16, overflowY: 'auto', flex: 1 }}>{children}</div>
+        <div style={{ ...BODY_STYLE[variant], padding: 14, overflowY: 'auto', flex: 1 }}>{children}</div>
       </div>
     </div>
   )

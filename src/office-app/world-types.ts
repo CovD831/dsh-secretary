@@ -12,6 +12,32 @@ export interface WorkspaceWingSpec {
 export type WingKind = 'lobby' | 'studio' | 'courtyard'
 export type WingFloorStyle = 'honey_oak' | 'warm_parquet' | 'dark_walnut' | 'courtyard'
 export type WingRugStyle = 'sage' | 'indigo' | 'persian' | 'woven'
+export type PrefabShapeKind = 'l-alcove' | 'stepped-zigzag' | 'bay-window' | 'chamfer-octagon' | 't-studio' | 'courtyard-nook'
+export type FurnitureComboKind = 'paired-dev-pod' | 'war-room-collab' | 'exec-library-lounge' | 'atelier-split' | 'agile-scrum-bay'
+export type WallTier = 'back' | 'partition' | 'cutaway' | 'portal'
+
+export interface WallSegment3D {
+  readonly from: GridPoint
+  readonly to: GridPoint
+  readonly startH: number
+  readonly endH: number
+  readonly tier: WallTier
+  readonly shade: 'sunlit' | 'shaded' | 'exterior'
+  readonly hasWindow?: boolean
+}
+
+export interface CorridorBranchSpec {
+  readonly from: GridPoint
+  readonly to: GridPoint
+  readonly width: number
+  readonly hasRunner?: boolean
+}
+
+export interface CorridorNetworkMetrics {
+  readonly roomCount: number
+  readonly edgeCount: number
+  readonly loopCount: number
+}
 
 export interface InteriorDoorSpec {
   readonly id: string
@@ -55,6 +81,9 @@ export interface WorldWingPlan {
   readonly rugStyle?: WingRugStyle
   readonly chamferSE?: number
   readonly themeHex?: string
+  readonly cells?: readonly GridPoint[]
+  readonly shapeKind?: PrefabShapeKind
+  readonly comboKind?: FurnitureComboKind
 }
 
 export interface OfficeCamera {
@@ -84,6 +113,10 @@ export interface OfficeWorldPlan {
   readonly interiorDoors?: InteriorDoorSpec[]
   readonly frontFacade?: FacadeSegmentSpec[]
   readonly lightSources?: LightSourceSpec[]
+  readonly corridorCells?: readonly GridPoint[]
+  readonly corridorBranches?: readonly CorridorBranchSpec[]
+  readonly wallSegments?: readonly WallSegment3D[]
+  readonly networkMetrics?: CorridorNetworkMetrics
 }
 
 export type WorldPickResult =

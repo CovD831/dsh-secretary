@@ -29,6 +29,44 @@ export const NINE_SLICE_SLOT: CSSProperties = {
   imageRendering: 'pixelated',
 }
 
+export const DIEGETIC_PARCHMENT_CARD: CSSProperties = {
+  ...NINE_SLICE_SLOT,
+  borderWidth: 6,
+  backgroundColor: OFFICE_THEME.inkCream,
+  color: OFFICE_THEME.inkDark,
+  padding: '8px 10px',
+}
+
+export const DIEGETIC_WALNUT_CARD: CSSProperties = {
+  ...NINE_SLICE_SLOT,
+  borderWidth: 6,
+  backgroundColor: OFFICE_THEME.bgDeep,
+  color: OFFICE_THEME.inkCream,
+  padding: '8px 10px',
+}
+
+export const DIEGETIC_LIGHT_INPUT: CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  padding: '4px 7px',
+  backgroundColor: OFFICE_THEME.inkCream,
+  color: OFFICE_THEME.inkDark,
+  border: `2px solid ${OFFICE_THEME.woodMid}`,
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+  fontSize: 12,
+}
+
+export const DIEGETIC_DARK_INPUT: CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  padding: '4px 7px',
+  backgroundColor: OFFICE_THEME.bgDeep,
+  color: OFFICE_THEME.inkCream,
+  border: `2px solid ${OFFICE_THEME.borderWood}`,
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+  fontSize: 12,
+}
+
 export function statusPipColor(status: StatusKind | 'idle'): string {
   if (status === 'needsDecision') return OFFICE_THEME.needsDecision
   if (status === 'stuck') return OFFICE_THEME.stuck
