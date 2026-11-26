@@ -19,7 +19,7 @@ import { createInitialWorldActors, pickWorldTarget, renderWorldFrame, spawnWorld
 import type { OfficeCamera, OfficeWorldPlan, WorkspaceWingSpec, WorldPickResult, WorldWingPlan } from './world-types.ts'
 
 type TicketItem = TicketListView['items'][number]
-const WORLD_CENTER = { u: 16, v: 13 } as const
+const WORLD_CENTER = { u: 16, v: 12 } as const
 
 const getInitialViewport = () => typeof window === 'undefined'
   ? { w: CANVAS_W, h: CANVAS_H }

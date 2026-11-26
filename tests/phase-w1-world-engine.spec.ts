@@ -82,7 +82,7 @@ describe('Phase W1: Multi-Room World Floorplan & 4-Layer Iso Renderer', () => {
     expect(world.buildingCols).toBe(WORLD_BUILDING_COLS)
     expect(world.buildingRows).toBe(WORLD_BUILDING_ROWS)
     expect(world.baseOrigin).toEqual(WORLD_BASE_ORIGIN)
-    expect(world.mainEntrance).toEqual({ u: 15, v: 25 })
+    expect(world.mainEntrance).toEqual({ u: 15, v: 23 })
     expect(world.lobby.suites.map((s) => s.id)).toEqual(['lobby-reception'])
     expect(world.wings).toHaveLength(4)
     expect(world.wings[0]).toMatchObject({ workspaceId: 'default', kind: 'studio' })
@@ -97,7 +97,7 @@ describe('Phase W1: Multi-Room World Floorplan & 4-Layer Iso Renderer', () => {
       { id: 'a', title: 'a' }, { id: 'b', title: 'b' }, { id: 'c', title: 'c' }, { id: 'd', title: 'd' },
     ])
     expect(large.wings).toHaveLength(6)
-    expect(large.buildingRows).toBe(40)
+    expect(large.buildingRows).toBe(36)
   })
 
   it('round-trips worldIsoToScreen and screenToWorldIso at 1x and 2x zoom with pan', () => {
@@ -119,7 +119,7 @@ describe('Phase W1: Multi-Room World Floorplan & 4-Layer Iso Renderer', () => {
 
     const worker = spawnWorldWorker(world, 'worker-1', 'demo-repo', 'T-42', 'ws-demo-repo-1')
     expect(worker.u).toBe(15)
-    expect(worker.v).toBe(25)
+    expect(worker.v).toBe(23)
     expect(worker.path.some((p) => p.u === 19 && p.v === 6)).toBe(true)
 
     actors = [...actors, worker]
@@ -203,7 +203,7 @@ describe('Phase W1: Multi-Room World Floorplan & 4-Layer Iso Renderer', () => {
       workspaceId: 'demo-repo',
     })
 
-    const signPos = worldIsoToScreen(demoWing.rect.u + demoWing.rect.w / 2, demoWing.rect.v + 2.2, world, cam)
+    const signPos = worldIsoToScreen(demoWing.rect.u + demoWing.rect.w / 2, demoWing.rect.v + 5.6, world, cam)
     expect(pickWorldTarget(signPos.x, signPos.y - 16, state, cam)).toMatchObject({
       type: 'wing',
       wingId: 'wing-demo-repo',

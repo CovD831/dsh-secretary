@@ -21,7 +21,7 @@ import type {
 } from './world-types.ts'
 
 export const WORLD_BUILDING_COLS = 32
-export const WORLD_BUILDING_ROWS = 26
+export const WORLD_BUILDING_ROWS = 24
 export const WORLD_BASE_ORIGIN = { x: 740, y: 120 } as const
 
 function rectFootprint(u: number, v: number, w: number, h: number): GridPoint[] {
@@ -99,7 +99,7 @@ function buildLobby(buildingRows: number): WorldWingPlan {
 }
 
 function buildStudioWing(ws: WorkspaceWingSpec, rowIdx: number, isLeft: boolean): WorldWingPlan {
-  const rowV = rowIdx * 14
+  const rowV = rowIdx * 12
   const rect = { u: isLeft ? 0 : 19, v: rowV, w: 13, h: 12 }
   const wallMounts: RoomWallMount[] = [
     { id: `doorplate-${ws.id}`, assetId: 'doorplate', wall: isLeft ? 'left' : 'back', at: isLeft ? rowV + 5.2 : rect.u + 1.2, h: 24, span: 1, propKind: 'doorplate' },
@@ -136,7 +136,7 @@ function buildStudioWing(ws: WorkspaceWingSpec, rowIdx: number, isLeft: boolean)
 }
 
 function buildLoungeOrReserveWing(slotIdx: number, rowIdx: number, isLeft: boolean): WorldWingPlan {
-  const rowV = rowIdx * 14
+  const rowV = rowIdx * 12
   const rect = { u: isLeft ? 0 : 19, v: rowV, w: 13, h: 12 }
   const isReserve = slotIdx === 1
   const wallMounts: RoomWallMount[] = []
@@ -174,7 +174,7 @@ function buildLoungeOrReserveWing(slotIdx: number, rowIdx: number, isLeft: boole
 }
 
 function buildCourtyardWing(slotIdx: number, rowIdx: number, isLeft: boolean): WorldWingPlan {
-  const rowV = rowIdx * 14
+  const rowV = rowIdx * 12
   const rect = { u: isLeft ? 0 : 19, v: rowV, w: 13, h: 12 }
   return {
     id: `courtyard-${slotIdx}`,
@@ -197,7 +197,7 @@ function buildCourtyardWing(slotIdx: number, rowIdx: number, isLeft: boolean): W
 function buildPartitionWalls(rowCount: number): PartitionWallSegment[] {
   const walls: PartitionWallSegment[] = []
   for (let r = 0; r < rowCount; r++) {
-    const rowV = r * 14
+    const rowV = r * 12
     walls.push({ axis: 'u', fixed: 13, start: rowV, end: rowV + 5 })
     walls.push({ axis: 'u', fixed: 13, start: rowV + 7, end: rowV + 12 })
     walls.push({ axis: 'u', fixed: 19, start: rowV, end: rowV + 5 })
@@ -237,7 +237,7 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
   const list = normalizeWorkspaces(workspaces)
   const slotCount = Math.max(4, Math.ceil(list.length / 2) * 2)
   const rowCount = slotCount / 2
-  const buildingRows = rowCount * 14 - 2
+  const buildingRows = rowCount * 12
   const wings: WorldWingPlan[] = []
   for (let i = 0; i < slotCount; i++) {
     const rowIdx = Math.floor(i / 2)

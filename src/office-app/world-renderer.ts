@@ -125,7 +125,7 @@ function getDoorplateBox(wing: WorldWingPlan, world: OfficeWorldPlan, cam: Offic
 }
 
 function getWingSignBox(wing: WorldWingPlan, world: OfficeWorldPlan, cam: OfficeCamera): Box {
-  const pos = worldIsoToScreen(wing.rect.u + wing.rect.w / 2, wing.rect.v + 2.2, world, cam)
+  const pos = worldIsoToScreen(wing.rect.u + wing.rect.w / 2, wing.rect.v + 5.6, world, cam)
   const w = Math.max(76, wing.title.length * 10 + 16) * cam.zoom
   return { x: Math.round(pos.x - w / 2), y: Math.round(pos.y - 16 * cam.zoom), w, h: 16 * cam.zoom }
 }
@@ -209,16 +209,18 @@ function renderL0AndL1(ctx: CanvasRenderingContext2D, state: WorldSceneState, sp
     else ctx.drawImage(img, b.x, b.y, b.w, b.h)
   }
   for (const w of world.wings) {
-    const sb = getWingSignBox(w, world, cam)
-    ctx.fillStyle = '#201A18'; ctx.fillRect(sb.x, sb.y, sb.w, sb.h)
-    ctx.strokeStyle = w.workspaceId && w.workspaceId === state.activeWorkspaceId ? HIGHLIGHT_GOLD : '#6B4A32'; ctx.lineWidth = z; ctx.strokeRect(sb.x, sb.y, sb.w, sb.h)
-    ctx.fillStyle = '#E8DCCB'; ctx.font = `${10 * z}px monospace`; ctx.fillText(w.title, sb.x + 6 * z, sb.y + 12 * z)
     if (w.kind === 'studio' && w.workspaceId && sprites.images.doorplate) { const db = getDoorplateBox(w, world, cam); ctx.drawImage(sprites.images.doorplate, db.x, db.y, db.w, db.h) }
   }
 }
 
 function renderL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, cam: OfficeCamera): void {
   const { world, actors, screenStates, gateIntercept, hoverTarget, elapsedMs } = state, z = cam.zoom
+  for (const w of world.wings) {
+    const sb = getWingSignBox(w, world, cam)
+    ctx.fillStyle = '#201A18'; ctx.fillRect(sb.x, sb.y, sb.w, sb.h)
+    ctx.strokeStyle = w.workspaceId && w.workspaceId === state.activeWorkspaceId ? HIGHLIGHT_GOLD : '#6B4A32'; ctx.lineWidth = z; ctx.strokeRect(sb.x, sb.y, sb.w, sb.h)
+    ctx.fillStyle = '#E8DCCB'; ctx.font = `${10 * z}px monospace`; ctx.fillText(w.title, sb.x + 6 * z, sb.y + 12 * z)
+  }
   for (const suite of allSuites(world)) {
     const meta = OFFICE_CATALOG[suite.assetId], st = screenStates[suite.id]
     if (!meta?.screenGlowAnchors || !st || st === 'off') continue
