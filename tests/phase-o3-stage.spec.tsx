@@ -87,7 +87,7 @@ describe('Phase O3 Pixel Office Stage', () => {
             { id: 'f1', at: '2026-11-26T08:00:00Z', role: 'secretary', kind: 'say', text: '早安，老板。', expression: 'happy' },
             {
               id: 'f2', at: '2026-11-26T08:05:00Z', role: 'secretary', kind: 'handover', text: '已整理交接公文。',
-              handover: { conclusion: '已完成 PR #42 预检', reason: '单测全绿且无密钥泄漏', impact: '可安全合并主干', evidenceRefs: ['m0:seq:108'] },
+              handover: { conclusion: '已完成 PR #42 预检', reason: '单测全绿且无密钥泄漏', impact: '可安全合并主干', evidenceRefs: ['seq:2', 'dom:ticket.ended:real', 'issue-1', 'seq:99'] },
             },
           ],
           activeRuling, pendingCount,
@@ -138,7 +138,12 @@ describe('Phase O3 Pixel Office Stage', () => {
         }), { status: 200 })
       }
       if (path === 'projection/spine') {
-        return new Response(JSON.stringify({ items: spineItems, totalMatched: spineItems.length, headSeq: 9, nextSinceSeq: null, hasMore: false }), { status: 200 })
+        const items = [
+          { seq: 2, id: 'ev-2', type: 'ticket.updated', taint: 'clean', at: '2026-11-26T08:01:00Z' },
+          { seq: 3, id: 'dom:ticket.ended:real', type: 'ticket.ended', taint: 'clean', at: '2026-11-26T08:02:00Z' },
+          ...spineItems,
+        ]
+        return new Response(JSON.stringify({ items, totalMatched: items.length, headSeq: 9, nextSinceSeq: null, hasMore: false }), { status: 200 })
       }
       if (path === 'secretary/messages') return new Response(JSON.stringify({ triggerId: 'trig-1', received: 'stored' }), { status: 200 })
       if (path === 'rulings/r-1/decide') { activeRuling = null; pendingCount = 0; return new Response(JSON.stringify({ ok: true }), { status: 200 }) }
@@ -207,7 +212,22 @@ describe('Phase O3 Pixel Office Stage', () => {
 
     await act(async () => { handoverBtn.click() })
     expect(byText('已完成 PR #42 预检')).toBeTruthy()
-    expect(byText('m0:seq:108')).toBeTruthy()
+    await act(async () => { byText('seq:2')!.click() })
+    await waitText('M0 原始信封核验：')
+    expect(document.body.textContent).toContain('seq=2 / id=ev-2')
+
+    await act(async () => { byText('dom:ticket.ended:real')!.click() })
+    await vi.waitFor(() => { expect(document.body.textContent).toContain('id=dom:ticket.ended:real') })
+
+    await act(async () => { byText('issue-1')!.click() })
+    await vi.waitFor(() => { expect(document.body.textContent).toContain('unmeasured') })
+    expect(document.body.textContent).not.toContain('M0 原始信封核验：')
+    expect(document.body.textContent).not.toContain('ev-2')
+
+    await act(async () => { byText('seq:99')!.click() })
+    await vi.waitFor(() => { expect(document.body.textContent).toContain('unmeasured') })
+    expect(document.body.textContent).not.toContain('M0 原始信封核验：')
+    expect(document.body.textContent).not.toContain('ev-2')
     await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="关闭器物面板"]')!.click() })
 
     const canvas = document.querySelector<HTMLCanvasElement>('canvas[aria-label="像素办公室主舞台"]')!

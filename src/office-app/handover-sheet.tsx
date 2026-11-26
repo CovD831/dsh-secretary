@@ -10,7 +10,7 @@ export interface HandoverSheetProps {
 }
 
 function parseRefSeq(ref: string): number | null {
-  const m = /(\d+)$/.exec(ref.trim())
+  const m = /^(?:(?:m0:|seq:)?#?)(\d+)$/i.exec(ref.trim())
   const seq = m ? Number(m[1]) : NaN
   return Number.isInteger(seq) && seq > 0 ? seq : null
 }
@@ -29,14 +29,20 @@ export function HandoverSheet({ entry, onClose }: HandoverSheetProps) {
   if (!entry || !handover) return null
 
   const inspectRef = async (ref: string) => {
+    const trimmed = ref.trim()
     setSelectedRef(ref); setVerified(null); setVerifyError(null)
-    const seq = parseRefSeq(ref)
-    if (!seq) { setVerifyError('无法从印章提取数字 seq'); return }
+    const seq = parseRefSeq(trimmed)
     setVerifying(true)
     try {
-      const res = await officeCall('GET projection/spine', { query: { sinceSeq: seq - 1, limit: 1 } })
-      const ev = res.items.find(item => item.seq === seq) ?? res.items[0] ?? null
-      if (!ev) setVerifyError(`M0 事件脊未命中 seq=${seq}`)
+      let ev: SpineEnvelope | null = null
+      if (seq !== null) {
+        const res = await officeCall('GET projection/spine', { query: { sinceSeq: seq - 1, limit: 1 } })
+        ev = res.items.find(item => item.seq === seq) ?? null
+      } else {
+        const res = await officeCall('GET projection/spine', { query: { limit: 200, tail: '1' } })
+        ev = res.items.find(item => item.id === trimmed) ?? null
+      }
+      if (!ev) setVerifyError(`未核验 (unmeasured)：M0 事件脊未命中精确信封 "${trimmed}"`)
       else setVerified(ev)
     } catch (err) {
       setVerifyError(err instanceof Error ? err.message : String(err))

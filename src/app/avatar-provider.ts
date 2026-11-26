@@ -80,11 +80,9 @@ function remixLocalPortraits(prompt: string, seed: number): Record<SecretaryMood
 /** 按运行时凭据调度远程生图或本地确定性色板重混，并经 46 色核验入库。 */
 export async function generateAvatarPackViaProvider(input: GenerateAvatarInput): Promise<AvatarPackSummary> {
   const seed = input.seed ?? 20261126
-  const apiKey = input.apiKey ?? (process.env.DSH_AVATAR_IMAGE_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim())
-  const base = process.env.OPENAI_BASE_URL?.trim()
+  const apiKey = input.apiKey ?? process.env.DSH_AVATAR_IMAGE_API_KEY?.trim()
   const endpoint = input.endpoint ?? (
-    process.env.DSH_AVATAR_IMAGE_URL?.trim()
-    || (base ? `${base.replace(/\/+$/, '')}/images/generations` : 'https://api.openai.com/v1/images/generations')
+    process.env.DSH_AVATAR_IMAGE_URL?.trim() || 'https://api.openai.com/v1/images/generations'
   )
   let model = input.model ?? (process.env.DSH_AVATAR_IMAGE_MODEL?.trim() || 'gpt-image-1')
   let provider: AvatarProviderKind = 'remote-ai'
@@ -97,6 +95,7 @@ export async function generateAvatarPackViaProvider(input: GenerateAvatarInput):
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(30_000),
         body: JSON.stringify({
           model,
           prompt: `${input.prompt}, pixel art bust portrait, ${mood} expression, flat white background`,

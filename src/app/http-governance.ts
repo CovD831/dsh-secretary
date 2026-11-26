@@ -45,7 +45,7 @@ const SpineQuery = z.object({
   limit: limit(50, 200),
   ticketId: z.string().max(128).optional(),
   type: z.string().max(128).optional(),
-  tail: z.enum(['1', 'true']).optional().transform(v => v === '1' || v === 'true'),
+  tail: z.enum(['0', '1', 'true', 'false']).optional().transform(v => v === '1' || v === 'true'),
 })
 
 const DecideRulingBody = z.object({
