@@ -110,12 +110,15 @@ export function populateWingFurniture(
   const suites: RoomEntity[] = [], shared: RoomEntity[] = []
   const maxU = slot === 'left' ? rect.u + rect.w - 2 : rect.u + rect.w - 1
   const maxV = slot === 'topRight' ? rect.v + rect.h - 2 : rect.v + rect.h - 1
-  const centerU = rect.u + rect.w * 0.34, centerV = rect.v + rect.h * 0.45
+  const centerU = rect.u + rect.w * 0.32, centerV = rect.v + rect.h * 0.42
   const orderedCells = [...cells].sort((a, b) => (Math.abs(a.u - centerU) + Math.abs(a.v - centerV)) - (Math.abs(b.u - centerU) + Math.abs(b.v - centerV)))
 
-  const canPlace = (u: number, v: number, w: number, h: number, seatOff: readonly [number, number] | null, strictAisle: boolean): boolean => {
-    if (strictAisle && (u + w > maxU || v + h > maxV || (slot === 'left' && v < doorway.v + 2 && u + w > maxU - 1))) return false
-    for (let dv = 0; dv < h; dv++) for (let du = 0; du < w; du++) { const k = cellKey(u + du, v + dv); if (!valid.has(k) || occupied.has(k)) return false }
+  const canPlace = (u: number, v: number, w: number, h: number, seatOff: readonly [number, number] | null, fgPad: number): boolean => {
+    if (fgPad > 0 && ((slot === 'left' && v < doorway.v + 2 && u + w > rect.u + rect.w - 3) || (slot === 'topRight' && u < rect.u + 6 && v + h > rect.v + rect.h - 3))) return false
+    for (let dv = 0; dv < h + fgPad; dv++) for (let du = 0; du < w + fgPad; du++) {
+      const k = cellKey(u + du, v + dv)
+      if (!valid.has(k) || (dv < h && du < w && occupied.has(k))) return false
+    }
     if (!seatOff) return true
     const sk = cellKey(u + seatOff[0], v + seatOff[1]); return valid.has(sk) && !occupied.has(sk)
   }
@@ -138,12 +141,12 @@ export function populateWingFurniture(
     if (!wsId && suiteKind !== 'shared' && !asSharedConsole) return
     const effKind: SuiteKind = asSharedConsole ? 'shared' : suiteKind, effSeat = asSharedConsole ? null : seatOffset
     const [mw, mh] = WORLD_ASSET_CATALOG[assetId]!.footprint
-    const prefU = rect.u + Math.min(du, Math.max(0, (slot === 'left' ? rect.w - 2 : rect.w) - mw))
-    const prefV = rect.v + Math.min(dv, Math.max(0, (slot === 'topRight' ? rect.h - 2 : rect.h) - mh))
-    const passes = effKind === 'shared' ? [true, false] : [true]
-    for (const strict of passes) {
+    const prefU = rect.u + Math.min(du, Math.max(0, rect.w - 2 - mw))
+    const prefV = rect.v + Math.min(dv, Math.max(0, rect.h - 2 - mh))
+    const pads = effKind === 'shared' ? [2, 1, 0] : [2]
+    for (const pad of pads) {
       for (const cand of [{ u: prefU, v: prefV }, ...orderedCells]) {
-        if (!canPlace(cand.u, cand.v, mw, mh, effSeat, strict)) continue
+        if (!canPlace(cand.u, cand.v, mw, mh, effSeat, pad)) continue
         const added: string[] = []
         for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) { const k = cellKey(cand.u + x, cand.v + y); occupied.add(k); added.push(k) }
         const seat = effSeat ? { u: cand.u + effSeat[0], v: cand.v + effSeat[1] } : undefined

@@ -212,7 +212,7 @@ export function GameHud({
             )}
             <span style={{
               position: 'absolute', transform: 'translateX(-50%)', width: 0, height: 0,
-              left: `${((world.corridorRect.u + world.corridorRect.w / 2) / world.buildingCols) * 100}%`,
+              left: `${((world.mainEntrance.u + 0.5) / world.buildingCols) * 100}%`,
               top: `${((world.corridorRect.v + world.corridorRect.h) / world.buildingRows) * 100}%`,
               marginTop: -6, borderLeft: '4px solid transparent', borderRight: '4px solid transparent',
               borderBottom: `5px solid ${OFFICE_THEME.borderGold}`, pointerEvents: 'none',

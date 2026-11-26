@@ -223,7 +223,7 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
       }
     }
 
-    const base = solveWorldFloorplan(multiWs, 1), cam1 = { panX: 0, panY: 0, zoom: 1 as const }
+    const cam1 = { panX: 0, panY: 0, zoom: 1 as const }
     const inPoly = (px: number, py: number, pts: readonly { x: number; y: number }[]) => {
       let c = false
       for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
@@ -232,20 +232,18 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
       }
       return c
     }
-    for (const ent of [...base.lobby.suites, ...base.wings.flatMap((w) => w.suites)]) {
-      const m = WORLD_ASSET_CATALOG[ent.assetId]!, cp = worldIsoToScreen(ent.anchor.u + ent.size[0] / 2, ent.anchor.v + ent.size[1] / 2, base, cam1)
-      const footY = worldIsoToScreen(ent.anchor.u + ent.size[0], ent.anchor.v + ent.size[1], base, cam1).y
+    const checkBoxOcc = (w: ReturnType<typeof solveWorldFloorplan>, label: string, x0: number, y0: number, bw: number, bh: number, footY: number) => {
       let hit = 0, tot = 0
-      for (let yy = 0; yy < m.nativeSize[1]; yy += 4) for (let xx = 0; xx < m.nativeSize[0]; xx += 4) {
-        tot++; const px = cp.x - m.anchor[0] + xx, py = cp.y - m.anchor[1] + yy
+      for (let yy = 0; yy < bh; yy += 4) for (let xx = 0; xx < bw; xx += 4) {
+        tot++; const px = x0 + xx, py = y0 + yy
         let covered = false
-        for (const s of base.wallSegments!) {
+        for (const s of w.wallSegments!) {
           if (s.tier === 'back') continue
           const n = Math.max(1, Math.round(Math.max(Math.abs(s.to.u - s.from.u), Math.abs(s.to.v - s.from.v))))
           for (let i = 0; i < n; i++) {
             const t0 = i / n, t1 = (i + 1) / n
-            const a = worldIsoToScreen(s.from.u + (s.to.u - s.from.u) * t0, s.from.v + (s.to.v - s.from.v) * t0, base, cam1)
-            const b = worldIsoToScreen(s.from.u + (s.to.u - s.from.u) * t1, s.from.v + (s.to.v - s.from.v) * t1, base, cam1)
+            const a = worldIsoToScreen(s.from.u + (s.to.u - s.from.u) * t0, s.from.v + (s.to.v - s.from.v) * t0, w, cam1)
+            const b = worldIsoToScreen(s.from.u + (s.to.u - s.from.u) * t1, s.from.v + (s.to.v - s.from.v) * t1, w, cam1)
             if ((a.y + b.y) / 2 <= footY) continue
             const h0 = s.startH + (s.endH - s.startH) * t0, h1 = s.startH + (s.endH - s.startH) * t1
             if (inPoly(px, py, [a, b, { x: b.x, y: b.y - h1 }, { x: a.x, y: a.y - h0 }])) { covered = true; break }
@@ -253,7 +251,22 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
           if (covered) { hit++; break }
         }
       }
-      expect(hit / tot, `${ent.id} foreground solid wall occlusion`).toBeLessThan(0.1)
+      expect(hit / tot, `${label} foreground solid wall occlusion`).toBeLessThan(0.1)
+    }
+    for (let seed = 1; seed <= 20; seed++) {
+      const w = solveWorldFloorplan(multiWs, seed)
+      const cab = w.lobby.shared.find((e) => e.id === 'lobby-cabinet')!
+      for (const ent of [...w.lobby.suites, cab, ...w.wings.flatMap((wg) => wg.suites)]) {
+        const m = WORLD_ASSET_CATALOG[ent.assetId]!, cp = worldIsoToScreen(ent.anchor.u + ent.size[0] / 2, ent.anchor.v + ent.size[1] / 2, w, cam1)
+        const footY = worldIsoToScreen(ent.anchor.u + ent.size[0], ent.anchor.v + ent.size[1], w, cam1).y
+        checkBoxOcc(w, `seed=${seed}:${ent.id}`, cp.x - m.anchor[0], cp.y - m.anchor[1], m.nativeSize[0], m.nativeSize[1], footY)
+      }
+      for (const a of createInitialWorldActors(w)) {
+        const p = worldIsoToScreen(a.u + 0.5, a.v + 0.5, w, cam1)
+        const s = a.assignedSuiteId ? [...w.lobby.suites, ...w.wings.flatMap((wg) => wg.suites)].find((x) => x.id === a.assignedSuiteId) : undefined
+        const zY = s ? worldIsoToScreen(s.anchor.u + s.size[0], s.anchor.v + s.size[1], w, cam1).y - 3 : p.y + 1
+        checkBoxOcc(w, `seed=${seed}:actor:${a.id}`, p.x - 16, p.y - 44, 32, 48, zY)
+      }
     }
   })
 

@@ -175,9 +175,9 @@ export function mountPixiDioramaStage(
           endH: seg.startH + (seg.endH - seg.startH) * t1,
         }
         const fg = fgPool[fgIdx] ?? (fgPool[fgIdx] = new Graphics()); fgIdx++; fg.clear()
-        drawWallSeg3D(fg, sub, world, camera, i === 0 && seg.startH === seg.endH, i === steps - 1)
-        const p1 = worldIsoToScreen(sub.from.u, sub.from.v, world, camera), p2 = worldIsoToScreen(sub.to.u, sub.to.v, world, camera)
-        fg.zIndex = Math.round((p1.y + p2.y) / 2); ySortedEntities.addChild(fg)
+        const touchEnd = (u: number, v: number, atFrom: boolean) => sortedWalls.some((o) => o !== seg && (atFrom ? o.to.u === u && o.to.v === v : o.from.u === u && o.from.v === v) && (o.to.u - o.from.u) * (seg.to.v - seg.from.v) === (o.to.v - o.from.v) * (seg.to.u - seg.from.u))
+        drawWallSeg3D(fg, sub, world, camera, i === 0 && !touchEnd(seg.from.u, seg.from.v, true), i === steps - 1 && !touchEnd(seg.to.u, seg.to.v, false))
+        const p1 = worldIsoToScreen(sub.from.u, sub.from.v, world, camera), p2 = worldIsoToScreen(sub.to.u, sub.to.v, world, camera); fg.zIndex = Math.round((p1.y + p2.y) / 2); ySortedEntities.addChild(fg)
       }
       const fwin = seg.hasWindow ? getTex('facade_window', images) : null
       if (fwin) {
@@ -198,8 +198,8 @@ export function mountPixiDioramaStage(
       for (const m of w.wallMounts.filter((wm) => wm.propKind !== 'doorplate')) drawMount(m, w.rect.u, w.rect.v)
       const dpTex = w.kind === 'studio' && w.workspaceId ? getTex('doorplate', images) : null
       if (dpTex) {
-        const dp = worldIsoToScreen(w.rect.u === 0 ? w.doorway.u + 0.8 : w.doorway.u + 0.2, w.doorway.v - 0.8, world, camera)
-        addSp(ySortedEntities, dpTex, Math.round(dp.x - 12 * z), Math.round(dp.y - 34 * z), 24 * z, 16 * z, false, Math.round(dp.y) + 4)
+        const dp = worldIsoToScreen(w.rect.u === 0 ? w.doorway.u + 1.0 : w.doorway.u + 0.2, w.doorway.v - 0.6, world, camera)
+        addSp(ySortedEntities, dpTex, Math.round(dp.x - 10 * z), Math.round(dp.y - 32 * z), 20 * z, 14 * z, w.rect.u === 0, Math.round(dp.y) + 4)
       }
     }
     const activeDoors = (world.interiorDoors ?? []).map((d) => {

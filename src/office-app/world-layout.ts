@@ -27,9 +27,9 @@ import type {
   WorldWingPlan,
 } from './world-types.ts'
 
-export const WORLD_BUILDING_COLS = 24
+export const WORLD_BUILDING_COLS = 25
 export const WORLD_BUILDING_ROWS = 18
-export const WORLD_BASE_ORIGIN = { x: 640, y: 168 } as const
+export const WORLD_BASE_ORIGIN = { x: 636, y: 168 } as const
 
 function normalizeWorkspaces(workspaces: readonly WorkspaceWingSpec[]): WorkspaceWingSpec[] {
   const seen = new Set<string>(), deduped: WorkspaceWingSpec[] = []
@@ -57,15 +57,15 @@ function buildLobby(buildingRows: number, lobbyTopV: number): WorldWingPlan {
     floorStyle: 'warm_parquet', themeHex: '#6B4A32',
     suites: [makeWorldEntity('lobby-reception', 'reception_desk', 'reception', 10, 11, 'SE', { u: 9, v: 12 })],
     shared: [
-      makeWorldEntity('lobby-bookshelf', 'bookshelf', 'shared', 9, lobbyTopV, 'SE', undefined, 'back'),
-      makeWorldEntity('lobby-cabinet', 'file_cabinet', 'shared', 14, 9, 'SW', undefined, 'back'),
+      makeWorldEntity('lobby-cabinet', 'file_cabinet', 'shared', 9, lobbyTopV, 'SE', undefined, 'left'),
+      makeWorldEntity('lobby-bookshelf', 'bookshelf', 'shared', 9, lobbyTopV + 3, 'SE', undefined, 'left'),
       makeWorldEntity('lobby-lamp', 'lamp_table', 'shared', 9, 14, 'SE'),
       makeWorldEntity('lobby-plant-1', 'plant_pot', 'shared', 9, 9, 'SW'),
       makeWorldEntity('lobby-plant-2', 'plant_pot', 'shared', 15, buildingRows - 3, 'SW'),
     ],
     wallMounts: [
-      { id: 'lobby-clock', assetId: 'clock_wall', wall: 'back', at: 10.2, h: 18, span: 1 },
-      { id: 'lobby-corkboard', assetId: 'corkboard', wall: 'back', at: 11.8, h: 5, span: 2, propKind: 'corkboard' },
+      { id: 'lobby-clock', assetId: 'clock_wall', wall: 'back', at: 10.6, h: 18, span: 1 },
+      { id: 'lobby-corkboard', assetId: 'corkboard', wall: 'back', at: 12.1, h: 6, span: 2, propKind: 'corkboard' },
     ],
   }
 }
@@ -157,27 +157,31 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
   const upperDoorV = isBaseSeed ? 5 : (leftDoorV === 5 ? 4 : 5)
   const lowerDoorV = isBaseSeed ? 10 : 10 + Math.floor(rng() * 2)
 
+  const c0: FurnitureComboKind = isBaseSeed ? 'paired-dev-pod' : pick(FURNITURE_COMBO_KINDS)
+  const c1: FurnitureComboKind = isBaseSeed ? 'war-room-collab' : pick(FURNITURE_COMBO_KINDS.filter((c) => c !== c0))
+  const c2: FurnitureComboKind = isBaseSeed ? 'exec-library-lounge' : pick(FURNITURE_COMBO_KINDS.filter((c) => c !== c0 && c !== c1))
+
   const wings: WorldWingPlan[] = [
     buildProceduralStudio({
       ws: list[0]!, id: `wing-${list[0]!.id}`, title: list[0]!.title,
       rect: { u: 0, v: sk.leftV, w: 9, h: sk.leftH }, doorway: { u: 8, v: leftDoorV }, slot: 'left',
       floorStyle: isBaseSeed ? 'honey_oak' : pick(floors), rugStyle: isBaseSeed ? 'sage' : pick(rugs), themeHex: '#4A6A50',
       shapeKind: isBaseSeed ? 'l-alcove' : pick(PREFAB_SHAPE_KINDS),
-      comboKind: isBaseSeed ? 'paired-dev-pod' : pick(FURNITURE_COMBO_KINDS), seedIdx: seed,
+      comboKind: c0, seedIdx: seed,
     }),
     buildProceduralStudio({
       ws: list[1], id: list[1] ? `wing-${list[1].id}` : 'wing-reserve', title: list[1]?.title ?? '预备研发工坊',
-      rect: { u: 14, v: sk.rightTopV, w: 10, h: 9 - sk.rightTopV }, doorway: { u: 14, v: upperDoorV }, slot: 'topRight',
+      rect: { u: 14, v: sk.rightTopV, w: 11, h: 9 - sk.rightTopV }, doorway: { u: 14, v: upperDoorV }, slot: 'topRight',
       floorStyle: isBaseSeed ? 'warm_parquet' : pick(floors), rugStyle: isBaseSeed ? 'indigo' : pick(rugs), themeHex: '#3F5A78',
       shapeKind: isBaseSeed ? 'bay-window' : pick(PREFAB_SHAPE_KINDS),
-      comboKind: isBaseSeed ? 'war-room-collab' : pick(FURNITURE_COMBO_KINDS), seedIdx: seed + 1,
+      comboKind: c1, seedIdx: seed + 1,
     }),
     buildProceduralStudio({
       ws: list[2], id: list[2] ? `wing-${list[2].id}` : 'wing-lounge', title: list[2]?.title ?? '茶歇与阅览室',
-      rect: { u: 16, v: 9, w: 8, h: 9 }, doorway: { u: 16, v: lowerDoorV }, slot: 'bottomRight',
+      rect: { u: 16, v: 9, w: 9, h: 9 }, doorway: { u: 16, v: lowerDoorV }, slot: 'bottomRight',
       floorStyle: isBaseSeed ? 'honey_oak' : pick(floors), rugStyle: isBaseSeed ? 'persian' : pick(rugs), themeHex: '#8A6242',
       shapeKind: isBaseSeed ? 'chamfer-octagon' : pick(PREFAB_SHAPE_KINDS),
-      comboKind: isBaseSeed ? 'exec-library-lounge' : pick(FURNITURE_COMBO_KINDS), seedIdx: seed + 2, chamferSE: 2,
+      comboKind: c2, seedIdx: seed + 2, chamferSE: 2,
     }),
     buildCourtyardSlot(),
   ]
@@ -186,7 +190,7 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
     const idx = i - 3, isLeft = idx % 2 === 0, rowV = 18 + Math.floor(idx / 2) * 10
     wings.push(buildProceduralStudio({
       ws: list[i]!, id: `wing-${list[i]!.id}`, title: list[i]!.title,
-      rect: { u: isLeft ? 0 : 16, v: rowV, w: isLeft ? 9 : 8, h: 10 }, doorway: { u: isLeft ? 8 : 16, v: rowV + 3 }, slot: isLeft ? 'left' : 'bottomRight',
+      rect: { u: isLeft ? 0 : 16, v: rowV, w: 9, h: 10 }, doorway: { u: isLeft ? 8 : 16, v: rowV + 3 }, slot: isLeft ? 'left' : 'bottomRight',
       floorStyle: isLeft ? 'honey_oak' : 'warm_parquet', rugStyle: pick(rugs), themeHex: isLeft ? '#4A6A50' : '#3F5A78',
       shapeKind: pick(PREFAB_SHAPE_KINDS), comboKind: pick(FURNITURE_COMBO_KINDS), seedIdx: seed + i + 1,
     }))
@@ -235,13 +239,13 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
     makeWorldEntity('ext-tree-2', 'courtyard_tree', 'shared', 8, buildingRows + 1, 'SW'),
     makeWorldEntity('ext-pot-l', 'plant_pot', 'shared', 10, buildingRows + 1, 'SW'),
     makeWorldEntity('ext-pot-r', 'plant_pot', 'shared', 15, buildingRows + 1, 'SW'),
-    makeWorldEntity('ext-shrub-3', 'tree_shrub', 'shared', 17, buildingRows + 1, 'SW'),
-    makeWorldEntity('ext-shrub-4', 'tree_shrub', 'shared', 20, buildingRows + 1, 'SW'),
-    makeWorldEntity('ext-shrub-5', 'tree_shrub', 'shared', 23, 9, 'SW'),
+    makeWorldEntity('ext-shrub-3', 'tree_shrub', 'shared', 16, buildingRows + 1, 'SW'),
+    makeWorldEntity('ext-shrub-4', 'tree_shrub', 'shared', 21, buildingRows + 1, 'SW'),
+    makeWorldEntity('ext-shrub-5', 'tree_shrub', 'shared', 25, 9, 'SW'),
   ]
   return {
     seed, buildingCols: WORLD_BUILDING_COLS, buildingRows, baseOrigin: { ...WORLD_BASE_ORIGIN },
-    mainEntrance, corridorRect: { u: 10, v: sk.lobbyTopV, w: 7, h: buildingRows - sk.lobbyTopV },
+    mainEntrance, corridorRect: { u: 9, v: sk.lobbyTopV, w: 7, h: buildingRows - sk.lobbyTopV },
     corridorCells, corridorBranches, wallSegments, networkMetrics,
     lobby, wings, partitionWalls, exteriorProps, interiorDoors, frontFacade, lightSources,
   }
