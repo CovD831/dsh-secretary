@@ -448,6 +448,9 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     return { triggerId: 'desk-1', received: 'stored' }
   } },
   'GET deposits/ledger': { answer: () => server.depositsLedger ?? ({ records: [], markdown: '# Deposits Ledger' }) },
+  'GET deposits/drafts': { query: ['includeOnlineCandidates'], answer: () => [] },
+  'POST deposits/drafts/adopt': { body: true, answer: () => ({ ok: false, reason: 'mock-panel-server' }) },
+  'POST governance/patrol': { answer: () => ({ checkedTickets: 0, evaluated: 0, reminded: 0 }) },
   'POST deposits/:id/stage': { body: true, answer: ({ params, body }) => {
     if (server.depositsLedger) {
       server.depositsLedger = {

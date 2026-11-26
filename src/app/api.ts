@@ -17,9 +17,10 @@ import type {
 import type { DecideRulingInput, RulingItem, RulingStatus } from './ruling-queue.ts'
 import type { SecretaryFeedEntry } from './tools/secretary-core.ts'
 import type {
-  HoldoutEvaluationResult, LeaveOneOutResult, MemoryStudioView, RsiWorkbenchView,
-  TransitionDepositStageResult, UserDirectMemoryResult, WriteResult,
+  AdoptDepositDraftResult, DepositDraftEntry, HoldoutEvaluationResult, LeaveOneOutResult, MemoryStudioView,
+  PatrolRunReport, RsiWorkbenchView, TransitionDepositStageResult, UserDirectMemoryResult, WriteResult,
 } from './http-governance.ts'
+import type { DepositFixtureCase } from '../authoring/index.ts'
 import type { DiscoveredDepositRecord, Stage } from '../judgement/index.ts'
 import type { AvatarPackSummary } from './avatar-pipeline.ts'
 import type { TicketTranscriptView } from './transcript-reader.ts'
@@ -68,7 +69,13 @@ export interface Api {
   'GET secretary/feed': { response: { items: SecretaryFeedEntry[]; activeRuling: RulingItem | null; pendingCount: number } }
   'POST secretary/messages': { body: { text: string; threadId?: string }; response: { triggerId: string; received: string } }
   'GET deposits/ledger': { response: { records: readonly DiscoveredDepositRecord[]; markdown: string } }
+  'GET deposits/drafts': { query?: { includeOnlineCandidates?: boolean | '0' | '1' | 'true' | 'false' }; response: DepositDraftEntry[] }
+  'POST deposits/drafts/adopt': {
+    body: { draftId?: string; draft?: Record<string, unknown>; cases?: readonly DepositFixtureCase[]; overrides?: Record<string, unknown>; installShadow?: boolean; actorId?: string }
+    response: AdoptDepositDraftResult
+  }
   'POST deposits/:id/stage': { body: { toStage: Stage; reason?: string }; response: TransitionDepositStageResult }
+  'POST governance/patrol': { body?: { maxIdleMinutes?: number }; response: PatrolRunReport }
   'GET memory/studio': { response: MemoryStudioView }
   'POST memory/direct': {
     body: {

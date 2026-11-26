@@ -13,6 +13,7 @@ import {
 import { assembleMemoryPrompt, memoryTaintOf, readMemoryPage, resolveMemoryRelPath, type MemoryScope } from '../../memory/index.ts'
 import { runHistoricalReplay, type ReplayCase, type ReplayGateFn } from '../../rsi/index.ts'
 import { redactValue } from '../../spine/redact.ts'
+import { listDepositDrafts } from '../governance-drafts.ts'
 import type { GovernanceRuntime } from '../governance.ts'
 import { tool, type Tool } from './tool.ts'
 
@@ -66,7 +67,8 @@ const DraftSchema = z.object({
 }).strict()
 
 const DepositSchema = z.object({
-  mode: z.enum(['validate', 'replay', 'install_shadow']), draft: DraftSchema,
+  mode: z.enum(['list_drafts', 'validate', 'replay', 'install_shadow']), draft: DraftSchema.optional(),
+  include_online_candidates: z.boolean().optional(),
   cases: z.array(z.object({ id: z.string(), family: z.string(), input: z.unknown(),
     expectedOutcome: z.enum(['defect', 'clean', 'unknown']), tokens: z.number().optional(), durationMs: z.number().optional() }).strict()).optional(),
 }).strict()
@@ -235,6 +237,11 @@ export function secretaryGovernanceTools(gov: GovernanceRuntime): Tool[] {
       description: 'Validate, replay, or shadow-install DepositDraft.',
       schema: DepositSchema,
       execute: async args => {
+        if (args.mode === 'list_drafts') {
+          const drafts = await listDepositDrafts(gov, { includeOnlineCandidates: args.include_online_candidates ?? true })
+          return stripUndefined({ drafts })
+        }
+        if (!args.draft) throw new Error(`${args.mode} mode requires draft`)
         const draft = normalizeDraft(args.draft), nowIso = gov.nowDate().toISOString(), draftId = draft.id.trim() || 'invalid'
         const emit = (ev: Parameters<typeof telemetryToSpineInput>[0]) => gov.appender.append(telemetryToSpineInput(ev))
         if (args.mode === 'validate') {
