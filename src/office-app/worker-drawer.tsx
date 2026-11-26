@@ -127,7 +127,7 @@ export function WorkerDrawer({
       open
       variant="walnut"
       title="工位工牌卡 & 现场终端卷宗"
-      subtitle={activeTicket ? `${activeTicket.id} · ${stageText}` : '暂无活跃工单'}
+      subtitle={activeTicket ? `${workspaceId} · ${activeTicket.id} · ${stageText}` : `${workspaceId} · 暂无活跃工单`}
       width={920}
       onClose={onClose}
     >

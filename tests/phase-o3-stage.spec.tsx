@@ -232,25 +232,16 @@ describe('Phase O3 Pixel Office Stage', () => {
     expect(document.body.textContent).not.toContain('ev-2')
     await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="关闭器物面板"]')!.click() })
 
-    const canvas = document.querySelector<HTMLCanvasElement>('canvas[aria-label="像素办公室主舞台"]')!
-    vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
-      left: 0, top: 0, width: 1440, height: 900, right: 1440, bottom: 900, x: 0, y: 0, toJSON: () => ({}),
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="查看房间卷宗-default"]')!.click()
     })
-    const plan = solveOfficeLayout('default', 1)
-    const lead = createInitialActors(plan).find(a => a.role === 'lead')!
-    const leadPos = isoToScreen(lead.u + 0.5, lead.v + 0.5, plan.origin, 2)
-    for (const [cx, cy] of [[944, 340], [976, 356], [912, 324], [leadPos.x, leadPos.y - 16]]) {
-      await act(async () => {
-        canvas.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: cx, clientY: cy }))
-      })
-      if (document.querySelector('[aria-label="现场终端卷宗"]')) break
-    }
     await waitText('运行 vitest 幂等校验')
     expect(calls.some(c => c.method === 'GET' && c.path === 'tickets/t-101/transcript')).toBe(true)
     await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="关闭器物面板"]')!.click() })
 
     await act(async () => { byText('门牌簿')!.click() })
-    const wsBtn = await waitText('repo-alpha')
+    await vi.waitFor(() => { expect(document.querySelector('[role="dialog"]')).toBeTruthy() })
+    const wsBtn = [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].find(el => el.textContent?.includes('repo-alpha'))!
     await act(async () => { wsBtn.click() })
     await waitText('repo-alpha')
   })
@@ -306,17 +297,9 @@ describe('Phase O3 Pixel Office Stage', () => {
     await act(async () => { root!.render(<StageApp />) })
     await waitText('已整理交接公文。')
 
-    const canvas = document.querySelector<HTMLCanvasElement>('canvas[aria-label="像素办公室主舞台"]')!
-    vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
-      left: 0, top: 0, width: 1440, height: 900, right: 1440, bottom: 900, x: 0, y: 0, toJSON: () => ({}),
-    })
     const openWorker = async (wsId: string) => {
-      const plan = solveOfficeLayout(wsId, 1)
-      const lead = createInitialActors(plan).find(a => a.role === 'lead')!
-      const pos = isoToScreen(lead.u + 0.5, lead.v + 0.5, plan.origin, 2)
-      await act(async () => {
-        canvas.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: pos.x, clientY: pos.y - 16 }))
-      })
+      const btn = document.querySelector<HTMLButtonElement>(`button[aria-label="查看房间卷宗-${wsId}"]`)!
+      await act(async () => { btn.click() })
     }
 
     await openWorker('default')
@@ -325,7 +308,9 @@ describe('Phase O3 Pixel Office Stage', () => {
     await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="关闭器物面板"]')!.click() })
 
     await act(async () => { byText('门牌簿')!.click() })
-    await act(async () => { (await waitText('demo-repo')).click() })
+    await vi.waitFor(() => { expect(document.querySelector('[role="dialog"]')).toBeTruthy() })
+    const demoBtn = [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].find(el => el.textContent?.includes('demo-repo'))!
+    await act(async () => { demoBtn.click() })
     await waitText('demo-repo')
 
     await openWorker('demo-repo')
@@ -334,9 +319,36 @@ describe('Phase O3 Pixel Office Stage', () => {
     await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="关闭器物面板"]')!.click() })
 
     await act(async () => { byText('门牌簿')!.click() })
-    await act(async () => { (await waitText('empty-repo')).click() })
+    await vi.waitFor(() => { expect(document.querySelector('[role="dialog"]')).toBeTruthy() })
+    const emptyBtn = [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].find(el => el.textContent?.includes('empty-repo'))!
+    await act(async () => { emptyBtn.click() })
     await waitText('empty-repo')
     await openWorker('empty-repo')
     await waitText('当前工作区暂无工单。')
+  })
+
+  it('renders HUD minimap and multi-room roster in patrol mode, toggles 384x480 portrait and integer zoom', async () => {
+    await act(async () => { root!.render(<StageApp />) })
+    await waitText('已整理交接公文。')
+
+    expect(document.querySelector('[aria-label="楼层小地图"]')).toBeTruthy()
+    expect(document.querySelector('button[aria-label="查看房间卷宗-default"]')).toBeTruthy()
+    expect(document.querySelector('button[aria-label="查看房间卷宗-repo-alpha"]')).toBeTruthy()
+    expect(document.querySelector('img[width="384"]')).toBeNull()
+
+    await act(async () => { byText('展开立绘')!.click() })
+    expect(document.querySelector('img[width="384"]')).toBeTruthy()
+    expect(document.querySelector('[aria-label="楼层小地图"]')).toBeNull()
+
+    await act(async () => { byText('收起巡视')!.click() })
+    expect(document.querySelector('img[width="384"]')).toBeNull()
+    expect(document.querySelector('[aria-label="楼层小地图"]')).toBeTruthy()
+
+    const zoom2Btn = document.querySelector<HTMLButtonElement>('button[aria-label="近景视角"]')!
+    const zoom1Btn = document.querySelector<HTMLButtonElement>('button[aria-label="全楼视角"]')!
+    await act(async () => { zoom2Btn.click() })
+    expect(zoom2Btn.style.background).not.toBe(zoom1Btn.style.background)
+    await act(async () => { zoom1Btn.click() })
+    expect(zoom1Btn.style.background).not.toBe(zoom2Btn.style.background)
   })
 })

@@ -14,6 +14,7 @@ export interface NpcDialogProps {
   readonly gateBlocked: boolean
   readonly secretaryThinking?: boolean
   readonly pendingBossText?: string | null
+  readonly collapsed?: boolean
   readonly inputRef?: RefObject<HTMLInputElement>
   readonly onSendMessage: (text: string) => Promise<void>
   readonly onDecideRuling: (input: {
@@ -25,6 +26,8 @@ export interface NpcDialogProps {
     captureAsRule?: boolean
   }) => Promise<void>
   readonly onOpenHandover: (entry: SecretaryFeedEntry) => void
+  readonly onExpand?: () => void
+  readonly onCollapse?: () => void
 }
 
 const ORIGIN_LABELS: Record<RulingOrigin, string> = {
@@ -58,8 +61,8 @@ export function resolveSecretaryMood(
 
 export function NpcDialog({
   feed, activeRuling, pendingCount, avatar, hasWorkingTickets, gateBlocked,
-  secretaryThinking = false, pendingBossText = null, inputRef,
-  onSendMessage, onDecideRuling, onOpenHandover,
+  secretaryThinking = false, pendingBossText = null, collapsed = false, inputRef,
+  onSendMessage, onDecideRuling, onOpenHandover, onExpand, onCollapse,
 }: NpcDialogProps) {
   const [draft, setDraft] = useState('')
   const [selectedOption, setSelectedOption] = useState<string | undefined>(undefined)
@@ -94,6 +97,8 @@ export function NpcDialog({
   const repliedBossText = latestSayIdx > 0 && feed[latestSayIdx - 1]?.role === 'boss' ? feed[latestSayIdx - 1]!.text : null
   const latestHandover = useMemo(() => [...feed].reverse().find(e => e.kind === 'handover' && e.handover), [feed])
   const effectiveOption = selectedOption ?? activeRuling?.options.find(o => o.recommended)?.id ?? activeRuling?.options[0]?.id
+  const isCollapsed = Boolean(collapsed) && !activeRuling && !gateBlocked && !secretaryThinking
+  const latestText = latestSay?.text ?? '老板好，办公室已就绪。点按场景器物可查阅卷宗，或直接在此吩咐任务。'
 
   const handleSend = async () => {
     const text = draft.trim()
@@ -125,8 +130,18 @@ export function NpcDialog({
     } finally { setBusy(false) }
   }
 
+  const panelBox = {
+    boxSizing: 'border-box' as const, background: OFFICE_THEME.bgPanel, color: OFFICE_THEME.inkCream,
+    border: `2px solid ${OFFICE_THEME.borderWood}`, boxShadow: `inset 0 0 0 1px ${OFFICE_THEME.borderGold}`,
+    borderRadius: 4, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', display: 'flex',
+  }
+  const inputBox = {
+    flex: 1, background: OFFICE_THEME.bgDeep, color: OFFICE_THEME.inkCream,
+    border: `1px solid ${OFFICE_THEME.borderGold}`, borderRadius: 3,
+  }
+
   return (
-    <div style={{ position: 'relative', width: '100%', zIndex: 15 }}>
+    <div style={isCollapsed ? { position: 'absolute', left: 228, right: 12, bottom: 12, zIndex: 20 } : { position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 20 }}>
       {historyOpen && (
         <div role="region" aria-label="对话历史" style={{
           position: 'absolute', right: 24, bottom: '100%', marginBottom: 8, width: 520, maxHeight: 280,
@@ -158,16 +173,25 @@ export function NpcDialog({
         </div>
       )}
 
-      <img
-        src={portraitSrc} alt={`秘书立绘 (${mood})`} data-mood={mood} width={384} height={480}
-        style={{ position: 'absolute', left: 24, bottom: 16, width: 384, height: 480, imageRendering: 'pixelated', pointerEvents: 'none', zIndex: 20 }}
-      />
-      <div style={{
-        boxSizing: 'border-box', background: OFFICE_THEME.bgPanel, color: OFFICE_THEME.inkCream,
-        border: `2px solid ${OFFICE_THEME.borderWood}`, boxShadow: `inset 0 0 0 1px ${OFFICE_THEME.borderGold}`,
-        borderRadius: 4, minHeight: 220, padding: '16px 24px 16px 432px',
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', display: 'flex', flexDirection: 'column', gap: 10,
-      }}>
+      {isCollapsed ? (
+        <div style={{ ...panelBox, minHeight: 60, padding: '8px 12px', alignItems: 'center', gap: 10 }}>
+          <button type="button" aria-label="展开秘书立绘" onClick={onExpand} style={{ padding: 0, background: OFFICE_THEME.bgDeep, border: `1px solid ${OFFICE_THEME.borderGold}`, borderRadius: 3, cursor: 'pointer', flexShrink: 0 }}>
+            <img src={portraitSrc} alt={`秘书立绘缩略 (${mood})`} data-mood={mood} width={44} height={44} style={{ display: 'block', imageRendering: 'pixelated' }} />
+          </button>
+          <div style={{ flex: '0 1 280px', minWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>{latestText}</div>
+          <input ref={inputRef} type="text" aria-label="向秘书发话" placeholder="直接吩咐秘书调度或询问进度…" value={draft}
+            onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void handleSend() }}
+            style={{ ...inputBox, minWidth: 160, padding: '6px 10px', fontSize: 13 }} />
+          <button type="button" disabled={busy || !draft.trim()} onClick={() => void handleSend()} style={{ background: OFFICE_THEME.borderGold, color: OFFICE_THEME.inkDark, border: 'none', borderRadius: 3, padding: '6px 14px', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>发送</button>
+          {latestHandover && <button type="button" onClick={() => onOpenHandover(latestHandover)} style={{ background: OFFICE_THEME.parchment, color: OFFICE_THEME.inkDark, border: `1px solid ${OFFICE_THEME.woodDark}`, borderRadius: 3, padding: '6px 10px', fontWeight: 700, cursor: 'pointer', fontSize: 12 }}>展开三段式公文纸</button>}
+          <button type="button" onClick={() => setHistoryOpen(v => !v)} style={{ background: OFFICE_THEME.woodDark, color: OFFICE_THEME.inkCream, border: `1px solid ${OFFICE_THEME.borderGold}`, borderRadius: 3, padding: '6px 10px', cursor: 'pointer', fontSize: 12 }}>历史回看 ({feed.length})</button>
+          <button type="button" onClick={onExpand} style={{ background: OFFICE_THEME.woodMid, color: OFFICE_THEME.inkCream, border: `1px solid ${OFFICE_THEME.borderGold}`, borderRadius: 3, padding: '6px 10px', cursor: 'pointer', fontSize: 12 }}>展开立绘</button>
+        </div>
+      ) : (
+        <>
+          <img src={portraitSrc} alt={`秘书立绘 (${mood})`} data-mood={mood} width={384} height={480}
+            style={{ position: 'absolute', left: 24, bottom: 16, width: 384, height: 480, imageRendering: 'pixelated', pointerEvents: 'none', zIndex: 20 }} />
+          <div style={{ ...panelBox, minHeight: 220, padding: '16px 24px 16px 432px', flexDirection: 'column', gap: 10 }}>
         {activeRuling ? (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -243,7 +267,7 @@ export function NpcDialog({
               </div>
             )}
             <div style={{ fontSize: 18, lineHeight: 1.5, minHeight: 46, opacity: secretaryThinking ? 0.72 : 1 }}>
-              {latestSay?.text ?? '老板好，办公室已就绪。点按场景器物可查阅卷宗，或直接在此吩咐任务。'}
+              {latestText}
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 'auto' }}>
               <input ref={inputRef} type="text" aria-label="向秘书发话" placeholder="直接吩咐秘书调度或询问进度…" value={draft}
@@ -254,11 +278,16 @@ export function NpcDialog({
                 <button type="button" onClick={() => onOpenHandover(latestHandover)} style={{ background: OFFICE_THEME.parchment, color: OFFICE_THEME.inkDark, border: `1px solid ${OFFICE_THEME.woodDark}`, borderRadius: 3, padding: '8px 12px', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>展开三段式公文纸</button>
               )}
               <button type="button" onClick={() => setHistoryOpen(v => !v)} style={{ background: OFFICE_THEME.woodDark, color: OFFICE_THEME.inkCream, border: `1px solid ${OFFICE_THEME.borderGold}`, borderRadius: 3, padding: '8px 12px', cursor: 'pointer', fontSize: 13 }}>历史回看 ({feed.length})</button>
+              {onCollapse && (
+                <button type="button" onClick={onCollapse} style={{ background: OFFICE_THEME.woodMid, color: OFFICE_THEME.inkCream, border: `1px solid ${OFFICE_THEME.borderGold}`, borderRadius: 3, padding: '8px 12px', cursor: 'pointer', fontSize: 13 }}>收起巡视</button>
+              )}
             </div>
           </>
         )}
         {error && <div style={{ color: OFFICE_THEME.needsDecision, fontSize: 12 }}>{error}</div>}
-      </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }
