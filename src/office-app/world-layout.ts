@@ -1,4 +1,4 @@
-/** V2.5 肉鸽异形沙盘平面布局求解器（纯浏览器端无服务端依赖）。 */
+/** V2.6 规整建筑级肉鸽沙盘平面布局求解器（纯浏览器端无服务端依赖）。 */
 import { CANVAS_H, CANVAS_W, TILE_H, TILE_W, type GridPoint, type RoomWallMount } from './layout-solver.ts'
 import {
   FURNITURE_COMBO_KINDS,
@@ -43,17 +43,18 @@ function rectCells(u0: number, v0: number, w: number, h: number): GridPoint[] {
   return out
 }
 
-function buildLobby(buildingRows: number): WorldWingPlan {
-  const rect = { u: 9, v: 0, w: 4, h: buildingRows }
+function buildLobby(buildingRows: number, lobbyTopV: number): WorldWingPlan {
+  const rect = { u: 9, v: lobbyTopV, w: 4, h: buildingRows - lobbyTopV }
+  const recV = Math.max(lobbyTopV + 2, 4)
   return {
     id: 'lobby', title: '中央迎宾前厅', kind: 'lobby', rect,
     cells: rectCells(rect.u, rect.v, rect.w, rect.h),
-    focusPoint: { u: 11, v: 8 }, doorway: { u: 11, v: buildingRows - 1 },
+    focusPoint: { u: 11, v: Math.max(lobbyTopV + 4, 8) }, doorway: { u: 11, v: buildingRows - 1 },
     floorStyle: 'warm_parquet', themeHex: '#6B4A32',
-    suites: [makeWorldEntity('lobby-reception', 'reception_desk', 'reception', 10, 4, 'SE', { u: 9, v: 5 })],
+    suites: [makeWorldEntity('lobby-reception', 'reception_desk', 'reception', 10, recV, 'SE', { u: 9, v: recV + 1 })],
     shared: [
-      makeWorldEntity('lobby-bookshelf', 'bookshelf', 'shared', 11, 0, 'SE', undefined, 'back'),
-      makeWorldEntity('lobby-cabinet', 'file_cabinet', 'shared', 9, 0, 'SE', undefined, 'left'),
+      makeWorldEntity('lobby-bookshelf', 'bookshelf', 'shared', 11, lobbyTopV, 'SE', undefined, 'back'),
+      makeWorldEntity('lobby-cabinet', 'file_cabinet', 'shared', 9, lobbyTopV, 'SE', undefined, 'left'),
       makeWorldEntity('lobby-lamp', 'lamp_table', 'shared', 9, 11, 'SE'),
       makeWorldEntity('lobby-plant-1', 'plant_pot', 'shared', 9, 8, 'SW'),
       makeWorldEntity('lobby-plant-2', 'plant_pot', 'shared', 12, buildingRows - 3, 'SW'),
@@ -114,6 +115,13 @@ export function cameraForGridPoint(pt: GridPoint, world: OfficeWorldPlan, zoom: 
   return { panX: Math.round(canvasW / 2 - (world.baseOrigin.x + sx)), panY: Math.round(canvasH / 2 - (world.baseOrigin.y + sy)), zoom }
 }
 
+const BUILDING_SKELETONS = [
+  { lobbyTopV: 2, leftV: 1, leftH: 14, rightTopV: 0, rightTopW: 8, rightBotW: 9 },
+  { lobbyTopV: 1, leftV: 0, leftH: 15, rightTopV: 2, rightTopW: 9, rightBotW: 8 },
+  { lobbyTopV: 0, leftV: 2, leftH: 13, rightTopV: 0, rightTopW: 9, rightBotW: 9 },
+  { lobbyTopV: 2, leftV: 0, leftH: 14, rightTopV: 1, rightTopW: 8, rightBotW: 9 },
+] as const
+
 export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], seed = 1): OfficeWorldPlan {
   const rng = mulberry32(seed)
   const list = normalizeWorkspaces(workspaces)
@@ -123,31 +131,30 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
   const rugs: readonly WingRugStyle[] = ['sage', 'indigo', 'persian', 'woven']
   const floors: readonly WingFloorStyle[] = ['honey_oak', 'warm_parquet']
   const isBaseSeed = seed === 1
+  const sk = BUILDING_SKELETONS[Math.abs(seed - 1) % BUILDING_SKELETONS.length]!
 
-  const topL = isBaseSeed ? 1 : (seed % 3)
-  const leftDoorV = isBaseSeed ? 6 : Math.max(topL + 2, 3 + Math.floor(rng() * 7))
-  const upperW = isBaseSeed ? 8 : 8 + (seed % 2)
-  const upperDoorV = isBaseSeed ? 5 : (leftDoorV === 4 ? 3 : 4)
+  const leftDoorV = isBaseSeed ? 6 : Math.max(sk.leftV + 3, 4 + Math.floor(rng() * 6))
+  const upperDoorV = isBaseSeed ? 5 : (leftDoorV === 5 ? 4 : 5)
   const lowerDoorV = isBaseSeed ? 13 : 12 + Math.floor(rng() * 3)
 
   const wings: WorldWingPlan[] = [
     buildProceduralStudio({
       ws: list[0]!, id: `wing-${list[0]!.id}`, title: list[0]!.title,
-      rect: { u: 0, v: topL, w: 9, h: 15 - topL }, doorway: { u: 8, v: leftDoorV }, isLeft: true,
+      rect: { u: 0, v: sk.leftV, w: 9, h: sk.leftH }, doorway: { u: 8, v: leftDoorV }, isLeft: true,
       floorStyle: isBaseSeed ? 'honey_oak' : pick(floors), rugStyle: isBaseSeed ? 'sage' : pick(rugs), themeHex: '#4A6A50',
       shapeKind: isBaseSeed ? 'l-alcove' : pick(PREFAB_SHAPE_KINDS),
       comboKind: isBaseSeed ? 'paired-dev-pod' : pick(FURNITURE_COMBO_KINDS), seedIdx: seed,
     }),
     buildProceduralStudio({
       ws: list[1], id: list[1] ? `wing-${list[1].id}` : 'wing-reserve', title: list[1]?.title ?? '预备研发工坊',
-      rect: { u: 13, v: 0, w: upperW, h: 8 }, doorway: { u: 13, v: upperDoorV }, isLeft: false,
+      rect: { u: 13, v: sk.rightTopV, w: sk.rightTopW, h: 9 - sk.rightTopV }, doorway: { u: 13, v: upperDoorV }, isLeft: false,
       floorStyle: isBaseSeed ? 'warm_parquet' : pick(floors), rugStyle: isBaseSeed ? 'indigo' : pick(rugs), themeHex: '#3F5A78',
       shapeKind: isBaseSeed ? 'bay-window' : pick(PREFAB_SHAPE_KINDS),
       comboKind: isBaseSeed ? 'war-room-collab' : pick(FURNITURE_COMBO_KINDS), seedIdx: seed + 1,
     }),
     buildProceduralStudio({
       ws: list[2], id: list[2] ? `wing-${list[2].id}` : 'wing-lounge', title: list[2]?.title ?? '茶歇与阅览室',
-      rect: { u: 13, v: 10, w: 9, h: 8 }, doorway: { u: 13, v: lowerDoorV }, isLeft: false,
+      rect: { u: 13, v: 9, w: sk.rightBotW, h: 9 }, doorway: { u: 13, v: lowerDoorV }, isLeft: false,
       floorStyle: isBaseSeed ? 'honey_oak' : pick(floors), rugStyle: isBaseSeed ? 'persian' : pick(rugs), themeHex: '#8A6242',
       shapeKind: isBaseSeed ? 'chamfer-octagon' : pick(PREFAB_SHAPE_KINDS),
       comboKind: isBaseSeed ? 'exec-library-lounge' : pick(FURNITURE_COMBO_KINDS), seedIdx: seed + 2, chamferSE: 2,
@@ -165,18 +172,18 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
     }))
   }
 
-  const lobby = buildLobby(buildingRows)
+  const lobby = buildLobby(buildingRows, sk.lobbyTopV)
   const mainEntrance: GridPoint = { u: 11, v: buildingRows - 1 }
-  const { corridorCells, corridorBranches, networkMetrics } = buildCorridorNetwork(buildingRows, wings, rng)
+  const { corridorCells, corridorBranches, networkMetrics } = buildCorridorNetwork(buildingRows, wings, rng, sk.lobbyTopV)
   const hasWingCell = (w: WorldWingPlan, u: number, v: number) => Boolean(w.cells?.some((c) => c.u === u && c.v === v))
-  const upperLoopU = (isBaseSeed ? [18, 17, 16, 15, 14] : [15, 16, 17, 14, 18]).find((u) => hasWingCell(wings[1]!, u, 7) && hasWingCell(wings[1]!, u + 1, 7)) ?? 14
-  const lowerLoopU = [15, 16, 17, 14, 18].find((u) => hasWingCell(wings[2]!, u, 10) && hasWingCell(wings[2]!, u + 1, 10)) ?? 15
+  const rightLinkU = (isBaseSeed ? [16, 17, 15, 14] : [15, 16, 17, 14]).find(
+    (u) => hasWingCell(wings[1]!, u, 8) && hasWingCell(wings[1]!, u + 1, 8) && hasWingCell(wings[2]!, u, 9) && hasWingCell(wings[2]!, u + 1, 9),
+  ) ?? 15
   const interiorDoors: InteriorDoorSpec[] = [
     ...wings.filter((w) => w.kind === 'studio').map((w) => ({
       id: `door-${w.id}`, u: w.rect.u === 0 ? 9 : 13, v: w.doorway.v, axis: 'u' as const, wingId: w.id,
     })),
-    { id: 'door-loop-upper', u: upperLoopU, v: 8, axis: 'v', wingId: wings[1]!.id },
-    { id: 'door-loop-lower', u: lowerLoopU, v: 10, axis: 'v', wingId: wings[2]!.id },
+    { id: 'door-right-link', u: rightLinkU, v: 9, axis: 'v', wingId: wings[2]!.id },
   ]
   const wallSegments = extractWallSegments3D(lobby, wings, corridorCells, interiorDoors, mainEntrance, buildingRows)
   const partitionWalls: PartitionWallSegment[] = wallSegments
@@ -194,7 +201,7 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
     { id: 'sc-2', kind: 'sconce', u: 13, v: 2.2, radiusTiles: 2.2, intensity: 0.24 },
     { id: 'sc-3', kind: 'sconce', u: 9.6, v: buildingRows, radiusTiles: 2.2, intensity: 0.24 },
     { id: 'sc-4', kind: 'sconce', u: 12.4, v: buildingRows, radiusTiles: 2.2, intensity: 0.24 },
-    { id: 'lp-1', kind: 'lamp', u: 3.2, v: topL + 1.2, radiusTiles: 2.0, intensity: 0.22 },
+    { id: 'lp-1', kind: 'lamp', u: 3.2, v: sk.leftV + 1.2, radiusTiles: 2.0, intensity: 0.22 },
     { id: 'lp-2', kind: 'lamp', u: 19.5, v: 11.5, radiusTiles: 2.0, intensity: 0.22 },
     { id: 'wn-1', kind: 'window', u: 19.8, v: 1.5, radiusTiles: 3.2, intensity: 0.26 },
     { id: 'wn-2', kind: 'window', u: 16.5, v: 11.5, radiusTiles: 3.2, intensity: 0.26 },
@@ -212,7 +219,7 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
   ]
   return {
     seed, buildingCols: WORLD_BUILDING_COLS, buildingRows, baseOrigin: { ...WORLD_BASE_ORIGIN },
-    mainEntrance, corridorRect: { u: 9, v: 0, w: 4, h: buildingRows },
+    mainEntrance, corridorRect: { u: 9, v: sk.lobbyTopV, w: 4, h: buildingRows - sk.lobbyTopV },
     corridorCells, corridorBranches, wallSegments, networkMetrics,
     lobby, wings, partitionWalls, exteriorProps, interiorDoors, frontFacade, lightSources,
   }

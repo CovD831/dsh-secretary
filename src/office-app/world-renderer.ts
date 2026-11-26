@@ -30,9 +30,13 @@ function makeWorldChair(suite: RoomEntity): RoomEntity {
 }
 
 function isWallBlocked(world: OfficeWorldPlan, u1: number, v1: number, u2: number, v2: number): boolean {
+  for (const d of world.interiorDoors ?? []) {
+    if ((d.axis === 'u' && v1 === v2 && Math.max(u1, u2) === d.u && (v1 === d.v || v1 === d.v + 1))
+      || (d.axis === 'v' && u1 === u2 && Math.max(v1, v2) === d.v && (u1 === d.u || u1 === d.u + 1))) return false
+  }
   for (const s of world.wallSegments ?? []) {
-    if (v1 === v2 && s.from.u === s.to.u && s.from.u === Math.max(u1, u2) && v1 >= Math.min(s.from.v, s.to.v) && v1 < Math.max(s.from.v, s.to.v)) return true
-    if (u1 === u2 && s.from.v === s.to.v && s.from.v === Math.max(v1, v2) && u1 >= Math.min(s.from.u, s.to.u) && u1 < Math.max(s.from.u, s.to.u)) return true
+    if ((v1 === v2 && s.from.u === s.to.u && s.from.u === Math.max(u1, u2) && v1 >= Math.min(s.from.v, s.to.v) && v1 < Math.max(s.from.v, s.to.v))
+      || (u1 === u2 && s.from.v === s.to.v && s.from.v === Math.max(v1, v2) && u1 >= Math.min(s.from.u, s.to.u) && u1 < Math.max(s.from.u, s.to.u))) return true
   }
   return false
 }
@@ -195,9 +199,7 @@ function renderL0ToL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, spr
       ctx.fillRect(wx, wy + 5 * z, 4 * z, Math.max(1, h - 15 * z)); ctx.fillStyle = '#6B4A32'; ctx.fillRect(wx, wy + h - 10 * z, 4 * z, 10 * z)
     }
   }
-  for (const seg of sortedWalls) if (seg.hasWindow && sprites.images.facade_window) {
-    const wp = worldIsoToScreen(seg.from.u + 1, seg.from.v, world, cam); ctx.drawImage(sprites.images.facade_window, Math.round(wp.x - 27 * z), Math.round(wp.y - 28 * z), 54 * z, 24 * z)
-  }
+  for (const seg of sortedWalls) if (seg.hasWindow && sprites.images.facade_window) { const wp = worldIsoToScreen(seg.from.u + 1, seg.from.v, world, cam); ctx.drawImage(sprites.images.facade_window, Math.round(wp.x - 27 * z), Math.round(wp.y - 28 * z), 54 * z, 24 * z) }
   for (const d of world.interiorDoors ?? []) if (sprites.images.door_wood) { const dp = worldIsoToScreen(d.axis === 'u' ? d.u : d.u + 1, d.axis === 'u' ? d.v + 1 : d.v, world, cam); ctx.drawImage(sprites.images.door_wood, Math.round(dp.x - 19 * z), Math.round(dp.y - 50 * z), 38 * z, 52 * z) }
   if (sprites.images.door_glass) { const dp = worldIsoToScreen(11, world.buildingRows, world, cam); ctx.drawImage(sprites.images.door_glass, Math.round(dp.x - 38 * z), Math.round(dp.y - 49 * z), 76 * z, 50 * z) }
   const drawMount = (m: RoomWallMount, bu: number, bv: number) => {
@@ -206,7 +208,7 @@ function renderL0ToL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, spr
     if (m.wall === 'back') { ctx.save(); ctx.translate(b.x + b.w, b.y); ctx.scale(-1, 1); ctx.drawImage(img, 0, 0, b.w, b.h); ctx.restore() }
     else ctx.drawImage(img, b.x, b.y, b.w, b.h)
   }
-  for (const m of world.lobby.wallMounts) drawMount(m, 0, 0)
+  for (const m of world.lobby.wallMounts) drawMount(m, world.lobby.rect.u, world.lobby.rect.v)
   for (const w of world.wings) {
     for (const m of w.wallMounts.filter((wm) => wm.propKind !== 'doorplate')) drawMount(m, w.rect.u, w.rect.v)
     if (w.kind === 'studio' && w.workspaceId && sprites.images.doorplate) { const db = getDoorplateBox(w, world, cam); ctx.drawImage(sprites.images.doorplate, db.x, db.y, db.w, db.h) }
@@ -293,7 +295,7 @@ export function pickWorldTarget(px: number, py: number, state: WorldSceneState, 
       if (hitBox(px, py, nb)) return { type: 'prop', prop: 'notebook', label: PROP_LABELS.notebook.zh, bounds: nb }
     } else if (it.entity.propKind && hitBox(px, py, b)) return { type: 'prop', prop: it.entity.propKind, label: PROP_LABELS[it.entity.propKind].zh, workspaceId: wingOf(it.entity.id), bounds: b }
   }
-  for (const m of world.lobby.wallMounts) if (m.propKind) { const b = getMountBox(m, world, camera, 0, 0); if (hitBox(px, py, b)) return { type: 'prop', prop: m.propKind, label: PROP_LABELS[m.propKind].zh, bounds: b } }
+  for (const m of world.lobby.wallMounts) if (m.propKind) { const b = getMountBox(m, world, camera, world.lobby.rect.u, world.lobby.rect.v); if (hitBox(px, py, b)) return { type: 'prop', prop: m.propKind, label: PROP_LABELS[m.propKind].zh, bounds: b } }
   for (const w of world.wings) {
     if (w.kind === 'studio' && w.workspaceId) { const db = getDoorplateBox(w, world, camera); if (hitBox(px, py, db)) return { type: 'prop', prop: 'doorplate', label: PROP_LABELS.doorplate.zh, workspaceId: w.workspaceId, bounds: db } }
     const sb = getWingSignBox(w, world, camera); if (hitBox(px, py, sb)) return { type: 'wing', wingId: w.id, workspaceId: w.workspaceId, kind: w.kind, label: w.title, bounds: sb }

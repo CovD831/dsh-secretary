@@ -151,10 +151,13 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
       expect(world.wings[0]!.doorway.v).not.toBe(world.wings[1]!.doorway.v)
 
       const tiers = new Map(world.wallSegments?.map((s) => [s.tier, s.startH]))
-      expect(tiers.get('back')).toBe(64)
-      expect(tiers.get('partition')).toBe(48)
-      expect(tiers.get('cutaway')).toBe(32)
-      expect(tiers.get('portal')).toBe(50)
+      expect(tiers.get('back')).toBe(68)
+      expect(tiers.get('partition')).toBe(68)
+      expect(tiers.get('cutaway')).toBe(34)
+      expect(tiers.get('portal')).toBe(54)
+      const partSegs = world.wallSegments!.filter((s) => s.tier === 'partition')
+      expect(partSegs.length).toBeLessThanOrEqual(14)
+      expect(world.interiorDoors?.some((d) => d.id === 'door-right-link')).toBe(true)
 
       for (const wing of world.wings.filter((w) => w.kind === 'studio')) {
         expect(wing.cells!.length).toBeLessThan(wing.rect.w * wing.rect.h)
@@ -267,7 +270,7 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
     expect(pickWorldTarget(cabPos.x, cabPos.y - 20, state, cam)).toMatchObject({ type: 'prop', prop: 'cabinet' })
 
     const cb = world.lobby.wallMounts.find((m) => m.id === 'lobby-corkboard')!
-    const cbPos = worldIsoToScreen(cb.at, 0, world, cam)
+    const cbPos = worldIsoToScreen(cb.at, world.lobby.rect.v, world, cam)
     expect(pickWorldTarget(cbPos.x, cbPos.y - cb.h * 2 - 95, state, cam)).toMatchObject({ type: 'prop', prop: 'corkboard' })
 
     const demoWing = world.wings.find((w) => w.workspaceId === 'demo-repo')!
