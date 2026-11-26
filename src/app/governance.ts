@@ -1,7 +1,7 @@
 /** 运行时治理编排中枢：串联 M0 事件脊、判局注册表、FTS5 记忆索引、工作区安全 GC 与发射前上下文胶囊。 */
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
-import type { Assignment, DomainEvent, OutboundMessage, Ticket } from '../core/index.ts'
+import type { Assignment, DomainEvent, OutboundMessage, Ticket, Trigger } from '../core/index.ts'
 import { prepareLaunchCapsule, type PreparedLaunchCapsule } from '../executor/capsule-hook.ts'
 import { adaptiveDispatchGate, verifyChangedPathsGate, verifyRerunGate } from '../judgement/gates/index.ts'
 import { createJudgementRegistry, loadPlaybookCandidates, lockTicketGeneration, type ActionClass, type ExtendedJudgementRegistry, type Verdict } from '../judgement/index.ts'
@@ -23,10 +23,16 @@ import { ingestFeishuCardAction, type FeishuCardIngestResult, type IngestFeishuC
 import { RulingQueue, type RulingItem } from './ruling-queue.ts'
 import type { Store } from './store.ts'
 
-export interface OutboxSendCtx { readonly message: OutboundMessage; readonly ticket?: Ticket }
+export interface OutboxSendCtx {
+  readonly message: OutboundMessage; readonly ticket?: Ticket
+  readonly source: string; readonly kind: OutboundMessage['kind']; readonly body: string; readonly textLength: number
+}
+export interface IntakeReceivedCtx {
+  readonly triggerId: string; readonly source: string; readonly actorId: string
+  readonly human: boolean; readonly text: string; readonly body: string; readonly meta: Record<string, unknown>
+}
 declare module '../judgement/types.ts' {
-  interface ScopeCatalog { outbox: true }
-  interface PointCatalog { 'outbox.send': OutboxSendCtx }
+  interface PointCatalog { 'outbox.send': OutboxSendCtx; 'intake.received': IntakeReceivedCtx }
 }
 
 export interface GovernanceOptions {
@@ -175,8 +181,8 @@ export class GovernanceRuntime {
       const trig = this.store.triggers.get(event.data.triggerId)
       const isLocalTrusted = trig?.source === 'secretary-bus' && trig.meta.localAuthenticated === true
       taint = isLocalTrusted ? 'trusted' : joinTaint('trusted', 'untrusted')
-      if (trig?.source === 'github' && this.registry.list().some(e => e.id === 'intake.bug-quadruple' && e.stage !== 'retired')) {
-        this.trackTask(this.evaluateIssueIntake({ body: trig.text }, trig.id, ticketId).then(() => undefined).catch(err => this.onError(err)))
+      if (trig && this.registry.list().some(e => e.kind === 'gate' && e.point === 'intake.received' && e.stage !== 'retired')) {
+        this.trackTask(this.evaluateTriggerIntake(trig, ticketId).then(() => undefined).catch(err => this.onError(err)))
       }
     }
     const draft = domainEventToSpineDraft(event, {
@@ -187,28 +193,21 @@ export class GovernanceRuntime {
     this.appendEvent({ ...draft, payload: { ...draft.payload, ...(ticketId ? { ticketId } : {}), ...(sessionPtr ? { sessionPtr } : {}) } })
   }
 
-  async evaluateIssueIntake(ctx: Record<string, unknown>, key = 'intake', ticketId?: string): Promise<Verdict> {
-    if (!this.registry.list().some(e => e.id === 'intake.bug-quadruple' && e.stage !== 'retired')) return { kind: 'allow' }
-    const ev = await this.registry.evaluate('intake.bug-quadruple' as never, ctx as never)
-    this.recordGate('intake.bug-quadruple', key, 'governance.intake', ticketId, { verdict: ev.verdict, ran: ev.ran, observed: ev.observed })
+  async evaluateTriggerIntake(trigger: Pick<Trigger, 'id' | 'source' | 'actor' | 'human' | 'text' | 'meta'>, ticketId?: string): Promise<Verdict> {
+    if (!this.registry.list().some(e => e.kind === 'gate' && e.point === 'intake.received' && e.stage !== 'retired')) return { kind: 'allow' }
+    const ctx: IntakeReceivedCtx = { triggerId: trigger.id, source: trigger.source, actorId: trigger.actor.id, human: trigger.human, text: trigger.text, body: trigger.text, meta: trigger.meta }
+    const ev = await this.registry.evaluate('intake.received', ctx)
+    this.recordGate('intake.received', trigger.id, 'governance.intake', ticketId, { verdict: ev.verdict, ran: ev.ran, observed: ev.observed })
     return ev.verdict
   }
 
   async evaluateOutbound(message: OutboundMessage): Promise<Verdict> {
     const ticket = message.ticketId ? this.store.tickets.get(message.ticketId) : undefined
-    const ev = await this.registry.evaluate('outbox.send', { message, ...(ticket ? { ticket } : {}) })
+    const ev = await this.registry.evaluate('outbox.send', { message, ...(ticket ? { ticket } : {}), source: message.channel.source, kind: message.kind, body: message.text, textLength: message.text.length })
     if (ev.registered > 0 || ev.observed.length > 0) {
-      this.recordGate('outbox.send', message.id, 'governance.outbox', ticket?.id, {
-        messageId: message.id, kind: message.kind, verdict: ev.verdict, ran: ev.ran, observed: ev.observed,
-      })
+      this.recordGate('outbox.send', message.id, 'governance.outbox', ticket?.id, { messageId: message.id, kind: message.kind, verdict: ev.verdict, ran: ev.ran, observed: ev.observed })
     }
-    if (!this.registry.list().some(e => e.id === 'outward.reply-desk' && e.stage !== 'retired')) return ev.verdict
-    const messageKind = message.kind === 'acknowledgement' ? 'template_ack' : message.kind === 'notice' ? 'template_needs_info' : 'freeform_reply'
-    const rdEv = await this.registry.evaluate('outward.reply-desk' as never, { messageKind, body: message.text } as never)
-    this.recordGate('outward.reply-desk', message.id, 'governance.outbox', ticket?.id, {
-      messageId: message.id, kind: message.kind, verdict: rdEv.verdict, ran: rdEv.ran, observed: rdEv.observed,
-    })
-    return ev.verdict.kind !== 'allow' ? ev.verdict : rdEv.verdict
+    return ev.verdict
   }
 
   /** 执行器首次发射前加载宿主派生的 M3 避坑经验、提取 1-Hop 切片与自适应派发方案并记入事件脊。 */

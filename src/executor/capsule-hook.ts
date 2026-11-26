@@ -60,17 +60,20 @@ const PATH_CANDIDATE_RE =
 
 let hookSeq = 0
 
-/** 从工单标题、任务说明与触发文本中提取相对文件路径候选，过滤 URL 与目录穿越。 */
+const CN_FILLER_RE =
+  /帮咱们|去项目里|项目里|查一下|跟我说声|能不能|为什么|多少条|咱们|帮我|叫人|顺便|在它|对应的|测试里|加一条|简单的|跑通|搞完了|最多|多少|一下|现在|什么|怎么|可以/g
+
+/** 从工单标题、任务说明与触发文本中提取相对文件路径候选，过滤 URL、代码块、忽略目录与目录穿越。 */
 export function extractCandidatePaths(texts: readonly (string | undefined)[]): string[] {
   const seen = new Set<string>()
   for (const raw of texts) {
     if (!raw) continue
-    const scrubbed = raw.replace(/https?:\/\/\S+/g, ' ')
+    const scrubbed = raw.replace(/```[\s\S]*?```/g, ' ').replace(/https?:\/\/\S+/g, ' ')
     PATH_CANDIDATE_RE.lastIndex = 0
     let match: RegExpExecArray | null
     while ((match = PATH_CANDIDATE_RE.exec(scrubbed)) !== null) {
       const cleaned = match[1]!.replace(/\\/g, '/').replace(/^\.\//, '')
-      if (!cleaned || cleaned.startsWith('/') || cleaned.split('/').includes('..')) continue
+      if (!cleaned || cleaned.startsWith('/') || cleaned.split('/').some(seg => seg === '..' || IGNORE_DIRS.has(seg))) continue
       seen.add(cleaned)
     }
   }
@@ -88,6 +91,7 @@ async function resolveExistingRepoFiles(workspaceDir: string, candidates: readon
   const verified: string[] = []
   const seen = new Set<string>()
   for (const candidate of candidates) {
+    if (candidate.split('/').some(seg => IGNORE_DIRS.has(seg))) continue
     try {
       const abs = resolve(rootReal, candidate)
       const info = await stat(abs)
@@ -95,6 +99,7 @@ async function resolveExistingRepoFiles(workspaceDir: string, candidates: readon
       const real = await realpath(abs)
       const rel = relative(rootReal, real).replace(/\\/g, '/')
       if (!rel || rel.startsWith('..') || isAbsolute(rel) || seen.has(rel)) continue
+      if (rel.split('/').some(seg => IGNORE_DIRS.has(seg))) continue
       seen.add(rel)
       verified.push(rel)
     } catch {
@@ -144,10 +149,18 @@ export function extractSearchKeywords(texts: readonly (string | undefined)[]): s
       if (!STOP_WORDS.has(tok.toLowerCase())) seen.add(tok)
       if (seen.size >= 14) return [...seen]
     }
-    for (const m of scrubbed.matchAll(/[\u4e00-\u9fa5]{2,8}/g)) {
+    const cnScrubbed = scrubbed.replace(CN_FILLER_RE, ' ')
+    for (const m of cnScrubbed.matchAll(/[\u4e00-\u9fa5]{2,12}/g)) {
       const tok = m[0]!
-      if (!STOP_WORDS.has(tok)) seen.add(tok)
+      if (tok.length <= 6 && !STOP_WORDS.has(tok)) seen.add(tok)
       if (seen.size >= 14) return [...seen]
+      if (tok.length > 3) {
+        for (let i = 0; i <= tok.length - 2; i++) {
+          const bi = tok.slice(i, i + 2)
+          if (!STOP_WORDS.has(bi)) seen.add(bi)
+          if (seen.size >= 14) return [...seen]
+        }
+      }
     }
   }
   return [...seen]

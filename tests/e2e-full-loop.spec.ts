@@ -34,7 +34,7 @@ describe('后端全链路真机级集成与灾难恢复闭环', () => {
       g1.appender.append({
         id: 'dr-2', stream: 'ticket:T-1', type: 'gate.evaluated',
         source: { kind: 'system', ref: 'e2e' }, evidence: [], taint: 'trusted',
-        payload: { point: 'intake.bug-quadruple', verdict: { kind: 'allow' }, ran: [{ id: 'intake.bug-quadruple', outcome: 'allow' }] },
+        payload: { point: 'verify.changed-paths', verdict: { kind: 'allow' }, ran: [{ id: 'verify.changed-paths', outcome: 'allow' }] },
       })
     })
     await g1.shutdown()
@@ -60,8 +60,8 @@ describe('后端全链路真机级集成与灾难恢复闭环', () => {
     const spine = await readSpineProjection(s2, stateDir, { limit: 10 })
     const deps = await readDepositsProjection(s2, stateDir)
     expect(spine.items.map(i => i.seq)).toEqual([1, 2, 3])
-    expect(deps.admittedCount).toBe(10)
-    expect(deps.items.find(d => d.id === 'intake.bug-quadruple')?.stats.allow).toBe(1)
+    expect(deps.admittedCount).toBe(7)
+    expect(deps.items.find(d => d.id === 'verify.changed-paths')?.stats.allow).toBe(1)
 
     await g2.shutdown()
     s2.close()

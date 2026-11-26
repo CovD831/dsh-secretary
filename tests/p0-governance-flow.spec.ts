@@ -140,13 +140,25 @@ describe('P0 governance closure & wired rules', () => {
     const second = await gov.tickPatrol(30)
     expect(second).toEqual({ checkedTickets: 1, evaluated: 1, reminded: 0 })
 
-    const outRes = await gov.evaluateOutbound({ id: 'm-1', channel: { source: 'github', target: 'o/r#1' } as never, text: 'hi', kind: 'reply' })
+    const outRes = await gov.evaluateOutbound({ id: 'm-1', channel: { source: 'feishu', target: 'c1' } as never, text: 'hi', kind: 'reply' })
     expect(outRes.kind).toBe('allow')
-    await changeDepositStage(gov, { id: 'outward.reply-desk', toStage: 'enforce', actor: 'boss' })
-    const enforcedOut = await gov.evaluateOutbound({ id: 'm-2', channel: { source: 'github', target: 'o/r#1' } as never, text: 'hi', kind: 'reply' })
-    expect(enforcedOut.kind).toBe('unmeasured')
+    gov.registry.register({
+      kind: 'gate', id: 'custom.outbox-guard', version: 1, point: 'outbox.send',
+      description: 'generic outbox guard', placement: { timing: 'pre', enforce: true }, requires: ['body'],
+      gate: ctx => ctx.body.includes('BLOCK_ME') ? { kind: 'deny', blockers: ['blocked by generic outbox'] } : { kind: 'allow' },
+    }, 'enforce')
+    const enforcedOut = await gov.evaluateOutbound({ id: 'm-2', channel: { source: 'feishu', target: 'c1' } as never, text: 'BLOCK_ME', kind: 'reply' })
+    expect(enforcedOut.kind).toBe('deny')
 
-    await gov.evaluateIssueIntake({ issueType: 'bug', body: 'crash', quadruple: {} }, 'tr-gh-1')
+    gov.registry.register({
+      kind: 'gate', id: 'custom.intake-guard', version: 1, point: 'intake.received',
+      description: 'generic intake guard', placement: { timing: 'pre', enforce: true }, requires: ['body'],
+      gate: ctx => ctx.body.includes('crash') ? { kind: 'allow' } : { kind: 'deny', blockers: ['missing crash'] },
+    }, 'enforce')
+    const intakeRes = await gov.evaluateTriggerIntake({
+      id: 'tr-gen-1', source: 'feishu', actor: { source: 'feishu', id: 'u1' }, human: true, text: 'crash', meta: {},
+    })
+    expect(intakeRes.kind).toBe('allow')
     const appRef = gov.appender.append({
       id: 'cache-probe-1', at: '2026-11-26T10:01:00.000Z', stream: 'test:1', type: 'test.probe',
       source: { kind: 'system', ref: 'test' }, evidence: [], taint: 'trusted', payload: { ok: true },

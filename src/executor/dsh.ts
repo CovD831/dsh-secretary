@@ -283,7 +283,7 @@ export class DshExecutor implements Executor {
     const workspaceId = ticket.execution?.workspace
     const workspace = workspaceId ? createWorkspaceRegistry(() => settings).resolve(ticket) : undefined
     if (workspaceId && !workspace) throw new PrepareFailed(`Unknown workspace "${workspaceId}"`)
-    const command = (workspace?.prepare ?? settings.executor.prepare).trim()
+    const command = (workspace ? (workspace.prepare ?? '') : settings.executor.prepare).trim()
     const env = Object.fromEntries(this.host.environment(ticket).map(variable => [variable.key, variable.value]))
     // Enforce a timeout so a hung prepare command (such as on a credential prompt) fails the ticket instead of holding a worker slot indefinitely.
     const signal = AbortSignal.any([this.host.lifetime, AbortSignal.timeout(PREPARE_TIMEOUT_MS)])
