@@ -59,8 +59,8 @@ function buildLobby(buildingRows: number): WorldWingPlan {
       makeWorldEntity('lobby-plant-2', 'plant_pot', 'shared', 12, buildingRows - 3, 'SW'),
     ],
     wallMounts: [
-      { id: 'lobby-clock', assetId: 'clock_wall', wall: 'back', at: 10.1, h: 26, span: 1 },
-      { id: 'lobby-corkboard', assetId: 'corkboard', wall: 'back', at: 11.6, h: 16, span: 2, propKind: 'corkboard' },
+      { id: 'lobby-clock', assetId: 'clock_wall', wall: 'back', at: 10.1, h: 22, span: 1 },
+      { id: 'lobby-corkboard', assetId: 'corkboard', wall: 'back', at: 11.6, h: 8, span: 2, propKind: 'corkboard' },
     ],
   }
 }
@@ -102,9 +102,9 @@ function buildCourtyardSlot(): WorldWingPlan {
     focusPoint: { u: 5.5, v: 16.5 }, doorway: { u: 8, v: 16 },
     floorStyle: 'courtyard', themeHex: '#4A6A50', suites: [], wallMounts: [],
     shared: [
-      makeWorldEntity('cy-tree-a', 'tree_shrub', 'shared', 2, 15, 'SE'),
-      makeWorldEntity('cy-tree-b', 'tree_shrub', 'shared', 5, 15, 'SW'),
-      makeWorldEntity('cy-plant', 'plant_pot', 'shared', 8, 16, 'SW'),
+      makeWorldEntity('cy-tree-a', 'tree_shrub', 'shared', 2, 16, 'SE'),
+      makeWorldEntity('cy-tree-b', 'tree_shrub', 'shared', 5, 16, 'SW'),
+      makeWorldEntity('cy-plant', 'plant_pot', 'shared', 7, 17, 'SW'),
     ],
   }
 }
@@ -168,12 +168,15 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
   const lobby = buildLobby(buildingRows)
   const mainEntrance: GridPoint = { u: 11, v: buildingRows - 1 }
   const { corridorCells, corridorBranches, networkMetrics } = buildCorridorNetwork(buildingRows, wings, rng)
+  const hasWingCell = (w: WorldWingPlan, u: number, v: number) => Boolean(w.cells?.some((c) => c.u === u && c.v === v))
+  const upperLoopU = (isBaseSeed ? [18, 17, 16, 15, 14] : [15, 16, 17, 14, 18]).find((u) => hasWingCell(wings[1]!, u, 7) && hasWingCell(wings[1]!, u + 1, 7)) ?? 14
+  const lowerLoopU = [15, 16, 17, 14, 18].find((u) => hasWingCell(wings[2]!, u, 10) && hasWingCell(wings[2]!, u + 1, 10)) ?? 15
   const interiorDoors: InteriorDoorSpec[] = [
     ...wings.filter((w) => w.kind === 'studio').map((w) => ({
       id: `door-${w.id}`, u: w.rect.u === 0 ? 9 : 13, v: w.doorway.v, axis: 'u' as const, wingId: w.id,
     })),
-    { id: 'door-loop-upper', u: isBaseSeed ? 18 : 15, v: 8, axis: 'v', wingId: wings[1]!.id },
-    { id: 'door-loop-lower', u: 15, v: 10, axis: 'v', wingId: wings[2]!.id },
+    { id: 'door-loop-upper', u: upperLoopU, v: 8, axis: 'v', wingId: wings[1]!.id },
+    { id: 'door-loop-lower', u: lowerLoopU, v: 10, axis: 'v', wingId: wings[2]!.id },
   ]
   const wallSegments = extractWallSegments3D(lobby, wings, corridorCells, interiorDoors, mainEntrance, buildingRows)
   const partitionWalls: PartitionWallSegment[] = wallSegments
@@ -187,8 +190,8 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
     .map((s) => ({ from: s.from, to: s.to, heightPx: s.startH, hasWindow: s.hasWindow, isEntrance: s.tier === 'portal' }))
 
   const lightSources: LightSourceSpec[] = [
-    { id: 'sc-1', kind: 'sconce', u: 9, v: 4.5, radiusTiles: 2.2, intensity: 0.24 },
-    { id: 'sc-2', kind: 'sconce', u: 13, v: 9.2, radiusTiles: 2.2, intensity: 0.24 },
+    { id: 'sc-1', kind: 'sconce', u: 9, v: 3.5, radiusTiles: 2.2, intensity: 0.24 },
+    { id: 'sc-2', kind: 'sconce', u: 13, v: 2.2, radiusTiles: 2.2, intensity: 0.24 },
     { id: 'sc-3', kind: 'sconce', u: 9.6, v: buildingRows, radiusTiles: 2.2, intensity: 0.24 },
     { id: 'sc-4', kind: 'sconce', u: 12.4, v: buildingRows, radiusTiles: 2.2, intensity: 0.24 },
     { id: 'lp-1', kind: 'lamp', u: 3.2, v: topL + 1.2, radiusTiles: 2.0, intensity: 0.22 },
@@ -197,14 +200,14 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
     { id: 'wn-2', kind: 'window', u: 16.5, v: 11.5, radiusTiles: 3.2, intensity: 0.26 },
   ]
   const exteriorProps = [
-    makeWorldEntity('ext-tree-1', 'courtyard_tree', 'shared', 0, 14, 'SE'),
-    makeWorldEntity('ext-shrub-1', 'tree_shrub', 'shared', 2, buildingRows, 'SE'),
-    makeWorldEntity('ext-shrub-2', 'tree_shrub', 'shared', 5, buildingRows, 'SE'),
-    makeWorldEntity('ext-tree-2', 'courtyard_tree', 'shared', 7, buildingRows, 'SW'),
-    makeWorldEntity('ext-pot-l', 'plant_pot', 'shared', 9, buildingRows, 'SW'),
-    makeWorldEntity('ext-pot-r', 'plant_pot', 'shared', 13, buildingRows, 'SW'),
-    makeWorldEntity('ext-shrub-3', 'tree_shrub', 'shared', 14, buildingRows, 'SW'),
-    makeWorldEntity('ext-shrub-4', 'tree_shrub', 'shared', 17, buildingRows, 'SW'),
+    makeWorldEntity('ext-tree-1', 'courtyard_tree', 'shared', -1, 14, 'SE'),
+    makeWorldEntity('ext-shrub-1', 'tree_shrub', 'shared', 2, buildingRows + 1, 'SE'),
+    makeWorldEntity('ext-shrub-2', 'tree_shrub', 'shared', 5, buildingRows + 1, 'SE'),
+    makeWorldEntity('ext-tree-2', 'courtyard_tree', 'shared', 7, buildingRows + 1, 'SW'),
+    makeWorldEntity('ext-pot-l', 'plant_pot', 'shared', 8, buildingRows + 1, 'SW'),
+    makeWorldEntity('ext-pot-r', 'plant_pot', 'shared', 13, buildingRows + 1, 'SW'),
+    makeWorldEntity('ext-shrub-3', 'tree_shrub', 'shared', 15, buildingRows + 1, 'SW'),
+    makeWorldEntity('ext-shrub-4', 'tree_shrub', 'shared', 18, buildingRows + 1, 'SW'),
     makeWorldEntity('ext-shrub-5', 'tree_shrub', 'shared', 21, 9, 'SW'),
   ]
   return {

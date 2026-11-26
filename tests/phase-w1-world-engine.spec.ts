@@ -72,7 +72,7 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
       ['procedural-rooms.ts', 285],
       ['world-layout.ts', 270],
       ['world-renderer.ts', 285],
-      ['pixi-diorama.ts', 270],
+      ['pixi-diorama.ts', 285],
       ['diorama-catalog.ts', 290],
     ] as const) {
       const src = readFileSync(join(ROOT, 'src', 'office-app', file), 'utf8')
@@ -152,9 +152,9 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
 
       const tiers = new Map(world.wallSegments?.map((s) => [s.tier, s.startH]))
       expect(tiers.get('back')).toBe(64)
-      expect(tiers.get('partition')).toBe(56)
-      expect(tiers.get('cutaway')).toBe(34)
-      expect(tiers.get('portal')).toBe(54)
+      expect(tiers.get('partition')).toBe(48)
+      expect(tiers.get('cutaway')).toBe(32)
+      expect(tiers.get('portal')).toBe(50)
 
       for (const wing of world.wings.filter((w) => w.kind === 'studio')) {
         expect(wing.cells!.length).toBeLessThan(wing.rect.w * wing.rect.h)

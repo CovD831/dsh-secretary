@@ -32,6 +32,7 @@ export const NINE_SLICE_SLOT: CSSProperties = {
 export const DIEGETIC_PARCHMENT_CARD: CSSProperties = {
   ...NINE_SLICE_SLOT,
   borderWidth: 6,
+  borderImageSlice: '14',
   backgroundColor: OFFICE_THEME.inkCream,
   color: OFFICE_THEME.inkDark,
   padding: '8px 10px',

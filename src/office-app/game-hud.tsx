@@ -237,6 +237,7 @@ export function GameHud({
                     height: `${(wing.rect.h / world.buildingRows) * 100}%`,
                     background: hasCells ? 'transparent' : bg,
                     border: hasCells ? 'none' : `${isActive ? 2 : 1}px solid ${stroke}`,
+                    filter: hasCells ? `drop-shadow(0 0 ${isActive ? 2 : 1}px ${stroke})` : undefined,
                   }}
                 >
                   {hasCells && mergeRowRuns(wing.cells!).map((run, idx) => (
@@ -245,8 +246,7 @@ export function GameHud({
                       left: `${((run.u0 - wing.rect.u) / Math.max(1, wing.rect.w)) * 100}%`,
                       top: `${((run.v - wing.rect.v) / Math.max(1, wing.rect.h)) * 100}%`,
                       width: `${((run.u1 - run.u0) / Math.max(1, wing.rect.w)) * 100}%`,
-                      height: `${(1 / Math.max(1, wing.rect.h)) * 100}%`,
-                      boxShadow: `inset 0 0 0 ${isActive ? 2 : 1}px ${stroke}`,
+                      height: `${(1.06 / Math.max(1, wing.rect.h)) * 100}%`,
                     }} />
                   ))}
                   {wing.suites.map((suite, idx) => (

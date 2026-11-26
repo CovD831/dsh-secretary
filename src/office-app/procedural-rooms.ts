@@ -206,11 +206,6 @@ export function buildCorridorNetwork(
   ]
   addRect(12, 8, 9, 2)
   const studios = wings.filter((w) => w.kind === 'studio')
-  for (let i = 3; i < studios.length; i += 2) {
-    const rv = studios[i]!.rect.v
-    branches.push({ from: { u: 12, v: rv }, to: { u: 18, v: rv }, width: 2, hasRunner: true })
-    addRect(12, rv, 6, 2)
-  }
   const roomCount = studios.length + 1
   const mstEdges = Math.max(0, roomCount - 1)
   const extraLoopEdges = 1 + (studios.length >= 4 ? 1 : 0)
@@ -224,7 +219,7 @@ export function buildCorridorNetwork(
 
 export function extractWallSegments3D(
   lobby: WorldWingPlan, wings: readonly WorldWingPlan[], corridorCells: readonly GridPoint[],
-  interiorDoors: readonly InteriorDoorSpec[], mainEntrance: GridPoint, buildingRows: number,
+  interiorDoors: readonly InteriorDoorSpec[], _mainEntrance: GridPoint, buildingRows: number,
 ): WallSegment3D[] {
   const zoneOf = new Map<string, string>()
   for (const c of corridorCells) zoneOf.set(cellKey(c.u, c.v), 'corridor')
@@ -247,22 +242,20 @@ export function extractWallSegments3D(
     if (!nNW) pushEdge({ u, v }, { u, v: v + 1 }, 'back', 'shaded', 64, 64)
     if (!nNE) pushEdge({ u, v }, { u: u + 1, v }, 'back', 'sunlit', 64, 64)
     if (nSE && nSE !== zId && !doorSet.has(`u:${u + 1},${v}`)) {
-      const touchesFront = !zoneOf.has(cellKey(u, v + 1)) || !zoneOf.has(cellKey(u + 1, v + 1))
-      pushEdge({ u: u + 1, v }, { u: u + 1, v: v + 1 }, 'partition', 'shaded', 56, touchesFront ? 38 : 56)
+      pushEdge({ u: u + 1, v }, { u: u + 1, v: v + 1 }, 'partition', 'shaded', 48, 48)
     }
     if (nSW && nSW !== zId && !doorSet.has(`v:${u},${v + 1}`)) {
-      const touchesFront = !zoneOf.has(cellKey(u + 1, v)) || !zoneOf.has(cellKey(u + 1, v + 1))
-      pushEdge({ u, v: v + 1 }, { u: u + 1, v: v + 1 }, 'partition', 'sunlit', 56, touchesFront ? 38 : 56)
+      pushEdge({ u, v: v + 1 }, { u: u + 1, v: v + 1 }, 'partition', 'sunlit', 48, 48)
     }
 
     if (!nSE && !nSW && (zoneOf.has(cellKey(u + 1, v - 1)) || zoneOf.has(cellKey(u - 1, v + 1)))) {
-      pushEdge({ u: u + 1, v }, { u, v: v + 1 }, 'cutaway', 'exterior', 34, 34)
+      pushEdge({ u: u + 1, v }, { u, v: v + 1 }, 'cutaway', 'exterior', 32, 32)
     } else {
-      if (!nSE) pushEdge({ u: u + 1, v }, { u: u + 1, v: v + 1 }, 'cutaway', 'shaded', 34, 34)
+      if (!nSE) pushEdge({ u: u + 1, v }, { u: u + 1, v: v + 1 }, 'cutaway', 'shaded', 32, 32)
       if (!nSW) {
-        const isPortal = v === buildingRows - 1 && Math.abs(u - mainEntrance.u) <= 2
+        const isPortal = v === buildingRows - 1 && u >= 9 && u <= 12
         const hasWin = !isPortal && v === buildingRows - 1 && u === 15
-        pushEdge({ u, v: v + 1 }, { u: u + 1, v: v + 1 }, isPortal ? 'portal' : 'cutaway', 'sunlit', isPortal ? 54 : 34, isPortal ? 54 : 34, hasWin)
+        pushEdge({ u, v: v + 1 }, { u: u + 1, v: v + 1 }, isPortal ? 'portal' : 'cutaway', 'sunlit', isPortal ? 50 : 32, isPortal ? 50 : 32, hasWin)
       }
     }
   }
@@ -297,12 +290,13 @@ export function buildWallMountsForWing(
   doorway: GridPoint, wsId: string | undefined, isLeft: boolean, seedIdx: number,
 ): RoomWallMount[] {
   const cellSet = new Set(cells.map((c) => cellKey(c.u, c.v))), mounts: RoomWallMount[] = []
-  const hasBackAt = (u: number) => cellSet.has(cellKey(u, rect.v)) && !cellSet.has(cellKey(u, rect.v - 1))
-  const hasLeftAt = (v: number) => cellSet.has(cellKey(rect.u, v)) && !cellSet.has(cellKey(rect.u - 1, v))
-  if (hasBackAt(rect.u + 3) && hasBackAt(rect.u + 4)) mounts.push({ id: `art-${wingId}`, assetId: seedIdx % 2 === 0 ? 'wall_painting' : 'idea_board', wall: 'back', at: rect.u + 3.8, h: 10, span: 2 })
-  if (hasBackAt(rect.u + 6) && hasBackAt(rect.u + 7)) mounts.push({ id: `win-${wingId}`, assetId: 'window_wide', wall: 'back', at: rect.u + 6.8, h: 10, span: 3 })
-  if (isLeft && hasLeftAt(rect.v + 4) && hasLeftAt(rect.v + 5)) mounts.push({ id: `wb-${wingId}`, assetId: 'whiteboard_wall', wall: 'left', at: rect.v + 4.8, h: 8, span: 3 })
-  if (isLeft && hasLeftAt(rect.v + 9) && hasLeftAt(rect.v + 10)) mounts.push({ id: `winL-${wingId}`, assetId: 'window_wide', wall: 'left', at: rect.v + 9.8, h: 8, span: 3 })
-  if (wsId) mounts.push({ id: `doorplate-${wsId}`, assetId: 'doorplate', wall: isLeft ? 'left' : 'back', at: isLeft ? doorway.v - 0.8 : doorway.u + 0.5, h: 24, span: 1, propKind: 'doorplate' })
+  const isOuterBack = rect.v <= 2
+  const hasBackAt = (u: number) => isOuterBack && cellSet.has(cellKey(u, rect.v)) && !cellSet.has(cellKey(u, rect.v - 1))
+  const hasLeftAt = (v: number) => isLeft && cellSet.has(cellKey(rect.u, v)) && !cellSet.has(cellKey(rect.u - 1, v))
+  if (hasBackAt(rect.u + 3) && hasBackAt(rect.u + 4)) mounts.push({ id: `art-${wingId}`, assetId: seedIdx % 2 === 0 ? 'wall_painting' : 'idea_board', wall: 'back', at: rect.u + 3.8, h: 6, span: 2 })
+  if (hasBackAt(rect.u + 5) && hasBackAt(rect.u + 6)) mounts.push({ id: `win-${wingId}`, assetId: 'window_wide', wall: 'back', at: rect.u + 6.0, h: 6, span: 3 })
+  if (hasLeftAt(rect.v + 4) && hasLeftAt(rect.v + 5)) mounts.push({ id: `wb-${wingId}`, assetId: 'whiteboard_wall', wall: 'left', at: rect.v + 4.8, h: 6, span: 3 })
+  if (hasLeftAt(rect.v + 9) && hasLeftAt(rect.v + 10)) mounts.push({ id: `winL-${wingId}`, assetId: 'window_wide', wall: 'left', at: rect.v + 9.8, h: 6, span: 3 })
+  if (wsId) mounts.push({ id: `doorplate-${wsId}`, assetId: 'doorplate', wall: isLeft ? 'left' : 'back', at: isLeft ? doorway.v - 0.8 : doorway.u + 0.5, h: 20, span: 1, propKind: 'doorplate' })
   return mounts
 }

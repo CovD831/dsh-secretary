@@ -165,8 +165,10 @@ function renderL0ToL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, spr
   ctx.fillStyle = '#201A18'; ctx.fillRect(0, 0, cw, ch)
   ctx.fillStyle = '#302722'; ctx.fillRect(Math.round(cw * 0.08), Math.round(ch * 0.08), Math.round(cw * 0.84), Math.round(ch * 0.84))
   const tileMap = build2DTileMap(world)
-  for (let v = -1; v <= world.buildingRows + 2; v++) for (let u = -1; u <= world.buildingCols; u++) {
-    const kind = tileMap.get(`${u},${v}`) ?? (u >= -1 && u <= world.buildingCols && v >= -1 && v <= world.buildingRows + 1 ? 'stone_tile' : null)
+  const nearBld = (u: number, v: number) => (u >= 9 && u <= 12 && v >= world.buildingRows && v <= world.buildingRows + 2)
+    || [-1, 0, 1].some((dv) => [-1, 0, 1].some((du) => tileMap.has(`${u + du},${v + dv}`)))
+  for (let v = -1; v <= world.buildingRows + 2; v++) for (let u = -1; u <= world.buildingCols + 1; u++) {
+    const kind = tileMap.get(`${u},${v}`) ?? (nearBld(u, v) ? 'stone_tile' : null)
     const img = kind ? sprites.images[kind] : undefined; if (!img) continue
     const p = worldIsoToScreen(u + 0.5, v + 0.5, world, cam); ctx.drawImage(img, Math.round(p.x - 16 * z), Math.round(p.y - 8 * z), 32 * z, 16 * z)
   }
@@ -192,7 +194,9 @@ function renderL0ToL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, spr
       ctx.fillStyle = '#4A3428'; ctx.fillRect(wx, wy, 4 * z, 5 * z); ctx.fillStyle = seg.tier === 'cutaway' || seg.tier === 'portal' ? '#7A6150' : seg.shade === 'shaded' ? '#BFA48C' : '#D9C4A8'
       ctx.fillRect(wx, wy + 5 * z, 4 * z, Math.max(1, h - 15 * z)); ctx.fillStyle = '#6B4A32'; ctx.fillRect(wx, wy + h - 10 * z, 4 * z, 10 * z)
     }
-    if (seg.hasWindow && sprites.images.facade_window) { const wp = worldIsoToScreen((seg.from.u + seg.to.u) / 2, (seg.from.v + seg.to.v) / 2, world, cam); ctx.drawImage(sprites.images.facade_window, Math.round(wp.x - 28 * z), Math.round(wp.y - 30 * z), 56 * z, 26 * z) }
+  }
+  for (const seg of sortedWalls) if (seg.hasWindow && sprites.images.facade_window) {
+    const wp = worldIsoToScreen(seg.from.u + 1, seg.from.v, world, cam); ctx.drawImage(sprites.images.facade_window, Math.round(wp.x - 27 * z), Math.round(wp.y - 28 * z), 54 * z, 24 * z)
   }
   for (const d of world.interiorDoors ?? []) if (sprites.images.door_wood) { const dp = worldIsoToScreen(d.axis === 'u' ? d.u : d.u + 1, d.axis === 'u' ? d.v + 1 : d.v, world, cam); ctx.drawImage(sprites.images.door_wood, Math.round(dp.x - 19 * z), Math.round(dp.y - 50 * z), 38 * z, 52 * z) }
   if (sprites.images.door_glass) { const dp = worldIsoToScreen(11, world.buildingRows, world, cam); ctx.drawImage(sprites.images.door_glass, Math.round(dp.x - 38 * z), Math.round(dp.y - 49 * z), 76 * z, 50 * z) }
