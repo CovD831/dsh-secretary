@@ -255,6 +255,18 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
     }
     for (let seed = 1; seed <= 20; seed++) {
       const w = solveWorldFloorplan(multiWs, seed)
+      for (const wg of w.wings.filter((x) => x.kind === 'studio' && x.workspaceId)) {
+        expect(wg.suites.some((s) => s.suiteKind === 'executive'), `seed=${seed} ${wg.id} exec`).toBe(true)
+        expect(wg.suites.filter((s) => s.suiteKind === 'workstation').length, `seed=${seed} ${wg.id} workstations`).toBeGreaterThanOrEqual(1)
+      }
+      const doorTiles = new Set<string>()
+      for (const d of w.interiorDoors ?? []) {
+        if (d.axis === 'u') { doorTiles.add(`${d.u - 1},${d.v}`); doorTiles.add(`${d.u},${d.v}`); doorTiles.add(`${d.u - 1},${d.v + 1}`); doorTiles.add(`${d.u},${d.v + 1}`) }
+        else { doorTiles.add(`${d.u},${d.v - 1}`); doorTiles.add(`${d.u},${d.v}`); doorTiles.add(`${d.u + 1},${d.v - 1}`); doorTiles.add(`${d.u + 1},${d.v}`) }
+      }
+      for (const le of [...w.lobby.suites, ...w.lobby.shared]) {
+        for (const fc of le.footprint) expect(doorTiles.has(`${fc.u},${fc.v}`), `seed=${seed} ${le.id} blocks door`).toBe(false)
+      }
       const cab = w.lobby.shared.find((e) => e.id === 'lobby-cabinet')!
       for (const ent of [...w.lobby.suites, cab, ...w.wings.flatMap((wg) => wg.suites)]) {
         const m = WORLD_ASSET_CATALOG[ent.assetId]!, cp = worldIsoToScreen(ent.anchor.u + ent.size[0] / 2, ent.anchor.v + ent.size[1] / 2, w, cam1)

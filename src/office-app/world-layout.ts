@@ -58,14 +58,14 @@ function buildLobby(buildingRows: number, lobbyTopV: number): WorldWingPlan {
     suites: [makeWorldEntity('lobby-reception', 'reception_desk', 'reception', 10, 11, 'SE', { u: 9, v: 12 })],
     shared: [
       makeWorldEntity('lobby-cabinet', 'file_cabinet', 'shared', 9, lobbyTopV, 'SE', undefined, 'left'),
-      makeWorldEntity('lobby-bookshelf', 'bookshelf', 'shared', 9, lobbyTopV + 3, 'SE', undefined, 'left'),
-      makeWorldEntity('lobby-lamp', 'lamp_table', 'shared', 9, 14, 'SE'),
+      makeWorldEntity('lobby-bookshelf', 'bookshelf', 'shared', 9, 15, 'SE', undefined, 'left'),
+      makeWorldEntity('lobby-lamp', 'lamp_table', 'shared', 9, 13, 'SE'),
       makeWorldEntity('lobby-plant-1', 'plant_pot', 'shared', 9, 9, 'SW'),
       makeWorldEntity('lobby-plant-2', 'plant_pot', 'shared', 15, buildingRows - 3, 'SW'),
     ],
     wallMounts: [
-      { id: 'lobby-clock', assetId: 'clock_wall', wall: 'back', at: 10.6, h: 18, span: 1 },
-      { id: 'lobby-corkboard', assetId: 'corkboard', wall: 'back', at: 12.1, h: 6, span: 2, propKind: 'corkboard' },
+      { id: 'lobby-clock', assetId: 'clock_wall', wall: 'back', at: 10.9, h: 20, span: 1 },
+      { id: 'lobby-corkboard', assetId: 'corkboard', wall: 'back', at: 12.3, h: 7, span: 2, propKind: 'corkboard' },
     ],
   }
 }
@@ -139,7 +139,7 @@ const BUILDING_SKELETONS = [
   { lobbyTopV: 2, leftV: 1, leftH: 14, rightTopV: 0 },
   { lobbyTopV: 0, leftV: 0, leftH: 15, rightTopV: 1 },
   { lobbyTopV: 1, leftV: 2, leftH: 13, rightTopV: 0 },
-  { lobbyTopV: 2, leftV: 0, leftH: 15, rightTopV: 2 },
+  { lobbyTopV: 2, leftV: 0, leftH: 15, rightTopV: 0 },
 ] as const
 
 export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], seed = 1): OfficeWorldPlan {
