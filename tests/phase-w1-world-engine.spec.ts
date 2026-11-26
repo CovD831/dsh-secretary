@@ -1,7 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { OFFICE_CATALOG } from '../src/office-app/catalog.ts'
+import { WORLD_ASSET_CATALOG } from '../src/office-app/diorama-catalog.ts'
+import { createDioramaLayerNames } from '../src/office-app/pixi-diorama.ts'
 import {
   WORLD_BASE_ORIGIN,
   WORLD_BUILDING_COLS,
@@ -19,12 +20,14 @@ import {
   worldIsoToScreen,
 } from '../src/office-app/world-renderer.ts'
 import type { WorldSceneState, WorldSprites } from '../src/office-app/world-types.ts'
+import { auditPaletteBuffer } from '../src/pixel-office/palette.ts'
+import { decodePngRgba } from '../src/pixel-office/sprites.ts'
 
 const ROOT = resolve(import.meta.dirname, '..')
 
 function makeMockSprites(): WorldSprites {
   const images: Record<string, CanvasImageSource> = {}
-  for (const [id, meta] of Object.entries(OFFICE_CATALOG)) {
+  for (const [id, meta] of Object.entries(WORLD_ASSET_CATALOG)) {
     images[id] = { width: meta.nativeSize[0], height: meta.nativeSize[1], id } as unknown as CanvasImageSource
   }
   return { images }
@@ -63,17 +66,44 @@ function makePixelTrackingCtx(width: number, height: number) {
   return { ctx, alpha, drawnAssets }
 }
 
-describe('Phase W1: Multi-Room World Floorplan & 4-Layer Iso Renderer', () => {
-  it('keeps world-layout.ts and world-renderer.ts browser-safe and within line limits', () => {
-    for (const [file, maxLines] of [['world-layout.ts', 260], ['world-renderer.ts', 290]] as const) {
+describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Stage', () => {
+  it('keeps V2 world modules browser-safe and within line limits', () => {
+    for (const [file, maxLines] of [
+      ['world-layout.ts', 270],
+      ['world-renderer.ts', 285],
+      ['pixi-diorama.ts', 270],
+      ['diorama-catalog.ts', 290],
+    ] as const) {
       const src = readFileSync(join(ROOT, 'src', 'office-app', file), 'utf8')
-      expect(src).not.toMatch(/['"]node:/)
+      expect(src, `${file} node: import`).not.toMatch(/['"]node:/)
       const nonEmpty = src.split('\n').filter((l) => l.trim().length > 0).length
       expect(nonEmpty, `${file} non-empty lines`).toBeLessThanOrEqual(maxLines)
     }
+    expect(createDioramaLayerNames()).toEqual([
+      'stageVignette', 'baseAndFloors', 'aoShadows', 'cutawayWalls', 'ySortedEntities', 'warmLighting',
+    ])
   })
 
-  it('solves 2 workspaces into 2 studios + 2 courtyards + secretary-only lobby', () => {
+  it('audits all 18 office-diorama and 16 office-ui PNGs for strict palette & binary alpha', () => {
+    const groups = [
+      ['office-diorama', 18],
+      ['office-ui', 16],
+    ] as const
+    for (const [dirName, expectedCount] of groups) {
+      const dir = join(ROOT, 'assets', dirName)
+      const pngs = readdirSync(dir).filter((f) => f.endsWith('.png')).sort()
+      expect(pngs.length, `${dirName} png count`).toBe(expectedCount)
+      for (const file of pngs) {
+        const { width, height, rgba } = decodePngRgba(readFileSync(join(dir, file)))
+        const audit = auditPaletteBuffer(rgba, width, height, new Uint8Array(width * height))
+        expect(audit.outOfPaletteCount, `${dirName}/${file} outOfPaletteCount`).toBe(0)
+        expect(audit.semiTransparentCount, `${dirName}/${file} semiTransparentCount`).toBe(0)
+        expect(audit.totalOpaquePixels, `${dirName}/${file} opaquePixels`).toBeGreaterThan(0)
+      }
+    }
+  })
+
+  it('solves asymmetric interlocking diorama topology with doors, facade, and warm lights', () => {
     const world = solveWorldFloorplan([
       { id: 'demo-repo', title: 'demo-repo' },
       { id: 'default', title: 'default' },
@@ -82,33 +112,35 @@ describe('Phase W1: Multi-Room World Floorplan & 4-Layer Iso Renderer', () => {
     expect(world.buildingCols).toBe(WORLD_BUILDING_COLS)
     expect(world.buildingRows).toBe(WORLD_BUILDING_ROWS)
     expect(world.baseOrigin).toEqual(WORLD_BASE_ORIGIN)
-    expect(world.mainEntrance).toEqual({ u: 15, v: 23 })
+    expect(world.mainEntrance).toEqual({ u: 11, v: 17 })
     expect(world.lobby.suites.map((s) => s.id)).toEqual(['lobby-reception'])
     expect(world.wings).toHaveLength(4)
-    expect(world.wings[0]).toMatchObject({ workspaceId: 'default', kind: 'studio' })
-    expect(world.wings[1]).toMatchObject({ workspaceId: 'demo-repo', kind: 'studio' })
-    expect(world.wings[2]).toMatchObject({ id: 'wing-lounge', kind: 'studio', title: '茶歇与阅览室' })
+    expect(world.wings[0]).toMatchObject({ workspaceId: 'default', kind: 'studio', rugStyle: 'sage' })
+    expect(world.wings[1]).toMatchObject({ workspaceId: 'demo-repo', kind: 'studio', rugStyle: 'indigo' })
+    expect(world.wings[0]!.doorway.v).not.toBe(world.wings[1]!.doorway.v)
+    expect(world.wings[2]).toMatchObject({ id: 'wing-lounge', kind: 'studio', chamferSE: 2, rugStyle: 'persian' })
     expect(world.wings[3]!.kind).toBe('courtyard')
-    expect(world.wings[3]!.suites).toEqual([])
-    expect(world.wings[3]!.shared.filter((e) => e.assetId === 'tree_shrub')).toHaveLength(2)
+    expect(world.interiorDoors?.length).toBeGreaterThanOrEqual(3)
+    expect(world.lightSources?.length).toBeGreaterThanOrEqual(6)
+    expect(world.frontFacade?.length).toBeGreaterThanOrEqual(3)
     expect(world.exteriorProps.length).toBeGreaterThanOrEqual(6)
 
     const large = solveWorldFloorplan([
       { id: 'a', title: 'a' }, { id: 'b', title: 'b' }, { id: 'c', title: 'c' }, { id: 'd', title: 'd' },
     ])
     expect(large.wings).toHaveLength(6)
-    expect(large.buildingRows).toBe(36)
+    expect(large.buildingRows).toBe(28)
   })
 
   it('round-trips worldIsoToScreen and screenToWorldIso at 1x and 2x zoom with pan', () => {
     const world = solveWorldFloorplan([{ id: 'default', title: 'default' }])
     for (const zoom of [1, 2] as const) {
-      const cam = cameraForGridPoint({ u: 19.5, v: 6.5 }, world, zoom, 1280, 800)
+      const cam = cameraForGridPoint({ u: 11.5, v: 6.5 }, world, zoom, 1280, 800)
       expect(cam.zoom).toBe(zoom)
-      const pt = worldIsoToScreen(19.5, 6.5, world, cam)
+      const pt = worldIsoToScreen(11.5, 6.5, world, cam)
       expect(Math.round(pt.x)).toBe(640)
       expect(Math.round(pt.y)).toBe(400)
-      expect(screenToWorldIso(pt.x, pt.y, world, cam)).toEqual({ u: 19, v: 6 })
+      expect(screenToWorldIso(pt.x, pt.y, world, cam)).toEqual({ u: 11, v: 6 })
     }
   })
 
@@ -118,9 +150,9 @@ describe('Phase W1: Multi-Room World Floorplan & 4-Layer Iso Renderer', () => {
     expect(actors.map((a) => a.id)).toEqual(['secretary', 'lead-default', 'lead-demo-repo'])
 
     const worker = spawnWorldWorker(world, 'worker-1', 'demo-repo', 'T-42', 'ws-demo-repo-1')
-    expect(worker.u).toBe(15)
-    expect(worker.v).toBe(23)
-    expect(worker.path.some((p) => p.u === 19 && p.v === 6)).toBe(true)
+    expect(worker.u).toBe(11)
+    expect(worker.v).toBe(17)
+    expect(worker.path.some((p) => p.u === 13 && (p.v === 5 || p.v === 6))).toBe(true)
 
     actors = [...actors, worker]
     for (let i = 0; i < 120; i++) actors = stepWorldActors(actors, world, 250)
@@ -133,7 +165,7 @@ describe('Phase W1: Multi-Room World Floorplan & 4-Layer Iso Renderer', () => {
     expect(actors.find((a) => a.id === 'worker-1')!.lifecycle).toBe('removed')
   })
 
-  it('renders full viewport with zero transparent pixels and draws outdoor + indoor layers', () => {
+  it('renders 7-layer diorama with zero transparent pixels and new V2 suite assets', () => {
     const world = solveWorldFloorplan([{ id: 'default', title: 'default' }, { id: 'demo-repo', title: 'demo-repo' }])
     const actors = createInitialWorldActors(world)
     const sprites = makeMockSprites()
@@ -152,11 +184,14 @@ describe('Phase W1: Multi-Room World Floorplan & 4-Layer Iso Renderer', () => {
       renderWorldFrame(ctx, state, sprites, cam)
       const transparentCount = alpha.reduce((acc, a) => acc + (a === 0 ? 1 : 0), 0)
       expect(transparentCount).toBe(0)
-      expect(drawnAssets).toContain('grass_tile')
       expect(drawnAssets).toContain('stone_tile')
       expect(drawnAssets).toContain('corridor_tile')
       expect(drawnAssets).toContain('floor_wood')
-      expect(drawnAssets).toContain('office_chair')
+      expect(drawnAssets).toContain('runner_navy')
+      expect(drawnAssets).toContain('welcome_mat')
+      expect(drawnAssets).toContain('rug_sage')
+      expect(drawnAssets).toContain('door_wood')
+      expect(drawnAssets).toContain('desk_cluster')
       expect(drawnAssets).toContain('char_secretary')
       expect(drawnAssets).toContain('char_lead')
     }
@@ -177,9 +212,7 @@ describe('Phase W1: Multi-Room World Floorplan & 4-Layer Iso Renderer', () => {
     const sec = actors.find((a) => a.id === 'secretary')!
     const secPos = worldIsoToScreen(sec.u + 0.5, sec.v + 0.5, world, cam)
     expect(pickWorldTarget(secPos.x, secPos.y - 48, state, cam)).toMatchObject({
-      type: 'actor',
-      actorId: 'secretary',
-      role: 'secretary',
+      type: 'actor', actorId: 'secretary', role: 'secretary',
     })
 
     const rec = world.lobby.suites.find((s) => s.id === 'lobby-reception')!
@@ -196,19 +229,14 @@ describe('Phase W1: Multi-Room World Floorplan & 4-Layer Iso Renderer', () => {
     expect(pickWorldTarget(cbPos.x, cbPos.y - cb.h * 2 - 95, state, cam)).toMatchObject({ type: 'prop', prop: 'corkboard' })
 
     const demoWing = world.wings.find((w) => w.workspaceId === 'demo-repo')!
-    const dpPos = worldIsoToScreen(19.2, demoWing.doorway.v - 0.8, world, cam)
+    const dpPos = worldIsoToScreen(demoWing.doorway.u + 0.2, demoWing.doorway.v - 0.8, world, cam)
     expect(pickWorldTarget(dpPos.x, dpPos.y - 48, state, cam)).toMatchObject({
-      type: 'prop',
-      prop: 'doorplate',
-      workspaceId: 'demo-repo',
+      type: 'prop', prop: 'doorplate', workspaceId: 'demo-repo',
     })
 
-    const signPos = worldIsoToScreen(demoWing.rect.u + demoWing.rect.w / 2, demoWing.rect.v + 5.6, world, cam)
+    const signPos = worldIsoToScreen(demoWing.rect.u + demoWing.rect.w / 2, demoWing.rect.v + Math.min(4.2, demoWing.rect.h / 2), world, cam)
     expect(pickWorldTarget(signPos.x, signPos.y - 16, state, cam)).toMatchObject({
-      type: 'wing',
-      wingId: 'wing-demo-repo',
-      workspaceId: 'demo-repo',
-      kind: 'studio',
+      type: 'wing', wingId: 'wing-demo-repo', workspaceId: 'demo-repo', kind: 'studio',
     })
   })
 })
