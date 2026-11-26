@@ -1,9 +1,11 @@
-/** 木金框像素经营游戏 HUD：顶部全局状态与镜头栏、左侧编队栏、左下楼层雷达小地图。 */
+/** 9-Slice 铆钉木金游戏 HUD：顶部双岛栏、左侧窄条半身像轨、左下罗盘小地图与右下 5 图标器物坞。 */
 import type { SecretaryExpression } from '../app/tools/secretary-core.ts'
 import type { StatusKind } from './catalog.ts'
+import { UI_SKIN_URLS } from './diorama-catalog.ts'
 import type { OfficeActor } from './iso-engine.ts'
 import { OFFICE_THEME } from './office-api.tsx'
 import type { GovernancePropKind } from './props-drawer.tsx'
+import { MugshotSlot, NINE_SLICE_PANEL, NineSliceButton } from './ui-skin.tsx'
 import type { OfficeCamera, OfficeWorldPlan, WorldWingPlan } from './world-types.ts'
 
 export interface RoomHudStat {
@@ -31,40 +33,15 @@ export interface GameHudProps {
   readonly onOpenRoomDrawer: (workspaceId: string) => void
 }
 
-const PILL_PROPS: readonly { id: 'doorplate' | GovernancePropKind; label: string }[] = [
-  { id: 'doorplate', label: '门牌簿' },
-  { id: 'ledger', label: '规章册' },
-  { id: 'notebook', label: '备忘手账' },
-  { id: 'corkboard', label: '体检板' },
-  { id: 'cabinet', label: '机要柜' },
+const DOCK_PROPS: readonly { id: 'doorplate' | GovernancePropKind; label: string; icon: string }[] = [
+  { id: 'doorplate', label: '门牌簿', icon: UI_SKIN_URLS.team },
+  { id: 'ledger', label: '规章册', icon: UI_SKIN_URLS.checklist },
+  { id: 'notebook', label: '备忘手账', icon: UI_SKIN_URLS.star },
+  { id: 'corkboard', label: '体检板', icon: UI_SKIN_URLS.chart },
+  { id: 'cabinet', label: '机要柜', icon: UI_SKIN_URLS.sprout },
 ]
 
-const PANEL_STYLE = {
-  background: OFFICE_THEME.bgPanel,
-  border: `2px solid ${OFFICE_THEME.borderWood}`,
-  boxShadow: `inset 0 0 0 1px ${OFFICE_THEME.borderGold}`,
-  borderRadius: 4,
-  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-  fontSize: 12,
-  color: OFFICE_THEME.inkCream,
-} as const
-
-const BTN_STYLE = {
-  background: OFFICE_THEME.woodDark,
-  color: OFFICE_THEME.inkCream,
-  border: `1px solid ${OFFICE_THEME.borderGold}`,
-  borderRadius: 3,
-  padding: '2px 8px',
-  cursor: 'pointer',
-  fontSize: 12,
-} as const
-
-function statusDotColor(status: StatusKind | 'idle'): string {
-  if (status === 'needsDecision') return OFFICE_THEME.needsDecision
-  if (status === 'working') return OFFICE_THEME.working
-  if (status === 'done') return OFFICE_THEME.done
-  return OFFICE_THEME.borderWood
-}
+const DAY_PIPS = [0, 1, 2, 3, 4, 5] as const
 
 export function GameHud({
   online, activeWorkspaceId, world, actors, roomStats, workingCount, camera,
@@ -73,144 +50,184 @@ export function GameHud({
 }: GameHudProps) {
   const studioWings = world.wings.filter(w => w.kind === 'studio')
   const workspaceWings = studioWings.filter(w => Boolean(w.workspaceId))
-  const courtyardWings = world.wings.filter(w => w.kind === 'courtyard')
-  const secColor = gateBlocked
-    ? OFFICE_THEME.needsDecision
-    : secretaryMood === 'working' ? OFFICE_THEME.working : OFFICE_THEME.done
+  const secStatus: StatusKind = gateBlocked
+    ? 'needsDecision'
+    : secretaryMood === 'working' ? 'working' : 'done'
 
   return (
     <>
       <div style={{
-        position: 'absolute', top: 10, left: 12, right: 12, zIndex: 12,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', pointerEvents: 'none',
+        ...NINE_SLICE_PANEL, position: 'absolute', top: 10, left: 12, zIndex: 12,
+        padding: '2px 8px', display: 'flex', alignItems: 'center', gap: 6,
       }}>
-        <div style={{ ...PANEL_STYLE, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 8, pointerEvents: 'auto' }}>
-          <span style={{
-            width: 8, height: 8, borderRadius: '50%', display: 'inline-block',
-            background: online ? OFFICE_THEME.done : OFFICE_THEME.needsDecision,
-          }} title={online ? 'SSE 在线' : '连接中'} />
-          <span style={{ background: OFFICE_THEME.woodDark, color: OFFICE_THEME.borderGold, padding: '1px 6px', borderRadius: 2, fontSize: 11 }}>
-            ☀ 值守中
-          </span>
-          <strong style={{ color: OFFICE_THEME.borderGold }}>{activeWorkspaceId}</strong>
-          <span style={{ opacity: 0.85 }}>
-            房间 {studioWings.length} · 庭院 {courtyardWings.length} · 在岗 {workingCount}
-          </span>
-        </div>
-
-        <div style={{ ...PANEL_STYLE, padding: '5px 8px', display: 'flex', alignItems: 'center', gap: 6, pointerEvents: 'auto' }}>
-          {PILL_PROPS.map(p => (
-            <button key={p.id} type="button" onClick={() => onOpenProp(p.id)} style={BTN_STYLE}>
-              {p.label}
-            </button>
+        <img src={UI_SKIN_URLS.sun} alt="" width={22} height={22} style={{ display: 'block', imageRendering: 'pixelated' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }} aria-label="昼夜进度">
+          {DAY_PIPS.map(i => (
+            <span key={i} style={{
+              width: 6, height: 6, display: 'inline-block',
+              background: i < 4 ? OFFICE_THEME.borderGold : OFFICE_THEME.borderWood,
+              border: `1px solid ${OFFICE_THEME.outline}`,
+            }} />
           ))}
         </div>
+        <span style={{ width: 1, height: 16, background: OFFICE_THEME.borderWood }} />
+        <img src={UI_SKIN_URLS.calendar} alt="" width={18} height={18} style={{ display: 'block', imageRendering: 'pixelated' }} />
+        <strong style={{ color: OFFICE_THEME.borderGold }}>{activeWorkspaceId}</strong>
+      </div>
 
-        <div style={{ ...PANEL_STYLE, padding: '5px 8px', display: 'flex', alignItems: 'center', gap: 6, pointerEvents: 'auto' }}>
-          <button
-            type="button" aria-label="全楼视角" onClick={() => onZoomChange(1)}
-            style={{ ...BTN_STYLE, background: camera.zoom === 1 ? OFFICE_THEME.woodMid : OFFICE_THEME.woodDark }}
-          >1× 全楼</button>
-          <button
-            type="button" aria-label="近景视角" onClick={() => onZoomChange(2)}
-            style={{ ...BTN_STYLE, background: camera.zoom === 2 ? OFFICE_THEME.woodMid : OFFICE_THEME.woodDark }}
-          >2× 近景</button>
-          <button type="button" aria-label="重置镜头" onClick={onResetCamera} style={BTN_STYLE}>居中</button>
+      <div style={{ position: 'absolute', top: 10, right: 12, zIndex: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ ...NINE_SLICE_PANEL, padding: '2px 8px', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <img src={UI_SKIN_URLS.coin} alt="" width={18} height={18} style={{ display: 'block', imageRendering: 'pixelated' }} />
+          <span>{workingCount}/{studioWings.length}房</span>
+          <span
+            title={online ? 'SSE 在线' : '连接中'}
+            style={{
+              width: 8, height: 8, borderRadius: '50%', display: 'inline-block',
+              background: online ? OFFICE_THEME.done : OFFICE_THEME.needsDecision,
+              border: `1px solid ${OFFICE_THEME.outline}`,
+            }}
+          />
         </div>
+
+        <div style={{ ...NINE_SLICE_PANEL, padding: '2px 6px', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <img src={UI_SKIN_URLS.zoom} alt="" width={18} height={18} style={{ display: 'block', imageRendering: 'pixelated' }} />
+          <NineSliceButton ariaLabel="全楼视角" active={camera.zoom === 1} onClick={() => onZoomChange(1)}>1×</NineSliceButton>
+          <NineSliceButton ariaLabel="近景视角" active={camera.zoom === 2} onClick={() => onZoomChange(2)}>2×</NineSliceButton>
+          <NineSliceButton ariaLabel="重置镜头" onClick={onResetCamera}>居中</NineSliceButton>
+        </div>
+
+        <NineSliceButton
+          iconSrc={UI_SKIN_URLS.gear}
+          iconSize={20}
+          ariaLabel="机要设置"
+          title="机要柜与设置"
+          onClick={() => onOpenProp('cabinet')}
+          style={{ padding: '4px 6px' }}
+        />
       </div>
 
       <div style={{
-        position: 'absolute', top: 58, left: 12, zIndex: 12, width: 204,
-        display: 'flex', flexDirection: 'column', gap: 6,
+        ...NINE_SLICE_PANEL, position: 'absolute', top: 72, left: 12, width: 76, zIndex: 12,
+        padding: '4px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
       }}>
-        <button type="button" onClick={onFocusLobby} style={{
-          ...PANEL_STYLE, padding: '6px 8px', display: 'flex', alignItems: 'center', gap: 8,
-          cursor: 'pointer', textAlign: 'left', width: '100%',
-        }}>
-          <img
-            src={secretaryPortraitSrc} alt="秘书头像" width={28} height={28}
-            style={{ imageRendering: 'pixelated', border: `1px solid ${OFFICE_THEME.borderGold}`, flexShrink: 0 }}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+          <MugshotSlot
+            src={secretaryPortraitSrc}
+            alt="秘书头像"
+            status={secStatus}
+            title="秘书总台"
+            onClick={onFocusLobby}
           />
-          <span style={{ flex: 1, fontWeight: 700 }}>秘书总台</span>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: secColor, flexShrink: 0 }} />
-        </button>
+          <span style={{ fontSize: 10, color: OFFICE_THEME.borderGold, fontWeight: 700 }}>总台</span>
+        </div>
 
         {workspaceWings.map(wing => {
           const roomId = wing.workspaceId!
           const active = roomId === activeWorkspaceId
           const stat = roomStats[roomId] ?? { count: 0, status: 'idle' }
           return (
-            <div key={wing.id} style={{
-              ...PANEL_STYLE,
-              background: active ? OFFICE_THEME.woodMid : OFFICE_THEME.bgPanel,
-              boxShadow: `inset 0 0 0 1px ${active ? OFFICE_THEME.borderGold : OFFICE_THEME.borderWood}`,
-              padding: '5px 8px', display: 'flex', alignItems: 'center', gap: 6,
-            }}>
-              <button type="button" onClick={() => onSelectWing(wing)} style={{
-                flex: 1, minWidth: 0, background: 'transparent', border: 'none', color: OFFICE_THEME.inkCream,
-                padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, textAlign: 'left',
+            <div key={wing.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: '100%' }}>
+              <MugshotSlot
+                src="/assets/office/char_lead.png"
+                alt={`房间-${roomId}`}
+                status={stat.status}
+                active={active}
+                title={roomId}
+                badgeCount={stat.count}
+                onClick={() => onSelectWing(wing)}
+              />
+              <span title={roomId} style={{
+                fontSize: 10, maxWidth: 46, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                color: active ? OFFICE_THEME.borderGold : OFFICE_THEME.inkCream, fontWeight: active ? 700 : 400,
               }}>
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: statusDotColor(stat.status), flexShrink: 0 }} />
-                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 700 }}>
-                  {roomId}
-                </span>
-                <span style={{ opacity: 0.8, fontSize: 11, flexShrink: 0 }}>{stat.count} 单</span>
-              </button>
-              <button
-                type="button" aria-label={`查看房间卷宗-${roomId}`}
+                {roomId}
+              </span>
+              <NineSliceButton
+                ariaLabel={`查看房间卷宗-${roomId}`}
                 onClick={() => onOpenRoomDrawer(roomId)}
-                style={{ ...BTN_STYLE, padding: '1px 6px', fontSize: 11, flexShrink: 0 }}
-              >卷宗</button>
+                style={{ padding: '0 4px', fontSize: 10, borderWidth: 4 }}
+              >
+                卷宗
+              </NineSliceButton>
             </div>
           )
         })}
 
-        {courtyardWings.length > 0 && (
-          <button type="button" onClick={() => onOpenProp('cabinet')} style={{
-            ...PANEL_STYLE, padding: '6px 8px', cursor: 'pointer', textAlign: 'center',
-            color: OFFICE_THEME.borderGold, fontWeight: 700,
-          }}>+ 扩建房间</button>
-        )}
+        <NineSliceButton
+          iconSrc={UI_SKIN_URLS.sprout}
+          iconSize={18}
+          title="扩建房间"
+          ariaLabel="扩建房间"
+          onClick={() => onOpenProp('cabinet')}
+          style={{ width: 44, padding: '2px 4px' }}
+        />
       </div>
 
       {dialogCollapsed && (
         <div role="region" aria-label="楼层小地图" style={{
-          ...PANEL_STYLE, position: 'absolute', left: 12, bottom: 12, width: 204, height: 132,
-          zIndex: 12, padding: 6, boxSizing: 'border-box',
+          ...NINE_SLICE_PANEL, position: 'absolute', left: 12, bottom: 12, width: 224, height: 152,
+          zIndex: 12, padding: 2,
         }}>
-          <div style={{
-            position: 'relative', width: '100%', height: '100%',
-            background: OFFICE_THEME.bgDeep, border: `1px solid ${OFFICE_THEME.borderWood}`, overflow: 'hidden',
-          }}>
+          <img
+            src={UI_SKIN_URLS.compassN} alt="" width={20} height={20}
+            style={{ position: 'absolute', top: -10, left: -10, zIndex: 2, imageRendering: 'pixelated', pointerEvents: 'none' }}
+          />
+          <img
+            src={UI_SKIN_URLS.compassStar} alt="" width={20} height={20}
+            style={{ position: 'absolute', right: -10, bottom: -10, zIndex: 2, imageRendering: 'pixelated', pointerEvents: 'none' }}
+          />
+          <div style={{ position: 'relative', width: '100%', height: '100%', background: OFFICE_THEME.bgDeep, overflow: 'hidden' }}>
             <div style={{
               position: 'absolute',
               left: `${(world.corridorRect.u / world.buildingCols) * 100}%`,
               top: `${(world.corridorRect.v / world.buildingRows) * 100}%`,
               width: `${(world.corridorRect.w / world.buildingCols) * 100}%`,
               height: `${(world.corridorRect.h / world.buildingRows) * 100}%`,
-              background: '#7A3A3A',
-            }} />
+              background: OFFICE_THEME.woodDark,
+            }}>
+              <span style={{
+                position: 'absolute', left: '50%', bottom: 1, transform: 'translateX(-50%)',
+                width: 0, height: 0,
+                borderLeft: '4px solid transparent', borderRight: '4px solid transparent',
+                borderBottom: `5px solid ${OFFICE_THEME.borderGold}`,
+              }} />
+            </div>
+
             {world.wings.map(wing => {
               const isStudio = wing.kind === 'studio'
               const isActive = Boolean(wing.workspaceId && wing.workspaceId === activeWorkspaceId)
+              const bg = wing.themeHex ?? (isStudio ? OFFICE_THEME.woodWarm : '#4A6A50')
               return (
                 <button
                   key={wing.id} type="button"
                   aria-label={`小地图-${wing.workspaceId ?? wing.id}`}
                   onClick={() => onSelectWing(wing)}
                   style={{
-                    position: 'absolute', padding: 0, cursor: 'pointer',
+                    position: 'absolute', padding: 0, cursor: 'pointer', boxSizing: 'border-box',
                     left: `${(wing.rect.u / world.buildingCols) * 100}%`,
                     top: `${(wing.rect.v / world.buildingRows) * 100}%`,
                     width: `${(wing.rect.w / world.buildingCols) * 100}%`,
                     height: `${(wing.rect.h / world.buildingRows) * 100}%`,
-                    background: isStudio ? '#8A6242' : '#4A6A50',
+                    background: bg,
                     border: isActive ? `2px solid ${OFFICE_THEME.borderGold}` : `1px solid ${OFFICE_THEME.borderWood}`,
-                    boxSizing: 'border-box',
                   }}
-                />
+                >
+                  {wing.suites.map((suite, idx) => (
+                    <span key={`${wing.id}-s-${idx}`} style={{
+                      position: 'absolute',
+                      left: `${((suite.anchor.u - wing.rect.u) / Math.max(1, wing.rect.w)) * 100}%`,
+                      top: `${((suite.anchor.v - wing.rect.v) / Math.max(1, wing.rect.h)) * 100}%`,
+                      width: 7, height: 5,
+                      background: OFFICE_THEME.woodDark,
+                      border: `1px solid ${OFFICE_THEME.outline}`,
+                      transform: 'translate(-50%, -50%)',
+                      pointerEvents: 'none',
+                    }} />
+                  ))}
+                </button>
               )
             })}
+
             {actors.filter(a => a.lifecycle !== 'removed').map(actor => {
               const color = actor.role === 'secretary'
                 ? OFFICE_THEME.borderGold
@@ -227,6 +244,23 @@ export function GameHud({
           </div>
         </div>
       )}
+
+      <div style={{
+        ...NINE_SLICE_PANEL, position: 'absolute', right: 12, bottom: dialogCollapsed ? 12 : 232,
+        zIndex: 21, padding: '2px 4px', display: 'flex', alignItems: 'center', gap: 4,
+      }}>
+        {DOCK_PROPS.map(p => (
+          <NineSliceButton
+            key={p.id}
+            iconSrc={p.icon}
+            iconSize={22}
+            label={p.label}
+            column
+            onClick={() => onOpenProp(p.id)}
+            style={{ padding: '2px 5px', fontSize: 10 }}
+          />
+        ))}
+      </div>
     </>
   )
 }
