@@ -48,6 +48,7 @@ describe('Phase O3 Pixel Office Stage', () => {
   const calls: RecordedCall[] = []
   let activeRuling: Record<string, unknown> | null = null
   let pendingCount = 0
+  let spineItems: Record<string, unknown>[] = []
   let root: Root | undefined
   let container: HTMLElement | undefined
 
@@ -56,6 +57,7 @@ describe('Phase O3 Pixel Office Stage', () => {
     MockEventSource.instances = []
     activeRuling = null
     pendingCount = 0
+    spineItems = []
     container = document.createElement('div')
     document.body.append(container)
     root = createRoot(container)
@@ -134,7 +136,7 @@ describe('Phase O3 Pixel Office Stage', () => {
         }), { status: 200 })
       }
       if (path === 'projection/spine') {
-        return new Response(JSON.stringify({ items: [], totalMatched: 0, headSeq: 0, nextSinceSeq: null, hasMore: false }), { status: 200 })
+        return new Response(JSON.stringify({ items: spineItems, totalMatched: spineItems.length, headSeq: 9, nextSinceSeq: null, hasMore: false }), { status: 200 })
       }
       if (path === 'secretary/messages') return new Response(JSON.stringify({ triggerId: 'trig-1', received: 'stored' }), { status: 200 })
       if (path === 'rulings/r-1/decide') { activeRuling = null; pendingCount = 0; return new Response(JSON.stringify({ ok: true }), { status: 200 }) }
@@ -183,12 +185,17 @@ describe('Phase O3 Pixel Office Stage', () => {
     await act(async () => { byText('批准')!.click() })
 
     await vi.waitFor(() => {
-      expect(calls.some(c =>
-        c.method === 'POST'
-        && c.path === 'rulings/r-1/decide'
-        && (c.body as Record<string, unknown>)['optionId'] === 'opt-allow'
-        && (c.body as Record<string, unknown>)['attribution'] === 'wrong_rule',
-      )).toBe(true)
+      const decideCall = calls.find(c => c.method === 'POST' && c.path === 'rulings/r-1/decide')
+      expect(decideCall).toBeTruthy()
+      expect(decideCall!.body).not.toHaveProperty('id')
+      expect((decideCall!.body as Record<string, unknown>)['optionId']).toBe('opt-allow')
+      expect((decideCall!.body as Record<string, unknown>)['attribution']).toBe('wrong_rule')
+    })
+
+    spineItems = [{ seq: 9, at: new Date().toISOString(), id: 'sp-9', stream: 'gate', type: 'gate.evaluated', payload: { verdict: { kind: 'deny' } } }]
+    await act(async () => { MockEventSource.instances[0]!.emit('spine', { seq: 9, id: 'sp-9', type: 'gate.evaluated', stream: 'gate' }) })
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLImageElement>('img[alt="秘书立绘 (concerned)"]')).toBeTruthy()
     })
   })
 

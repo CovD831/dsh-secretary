@@ -77,6 +77,7 @@ export function StageApp() {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const lastGateSeqRef = useRef(0)
   const spritesRef = useRef<OfficeSprites>({ images: {} })
   const plan = useMemo(() => solveOfficeLayout(workspaceId, 1), [workspaceId])
   const actorsRef = useRef<OfficeActor[]>(createInitialActors(plan))
@@ -104,11 +105,16 @@ export function StageApp() {
       setTickets(ticketRes.items)
       setSettings(settingsRes)
       setAvatar(avatarRes.items.find(i => i.id === avatarRes.activeId) ?? avatarRes.items[0] ?? null)
-      const recentDeny = spineRes.items.some(ev => {
-        const verdict = (ev.payload as Record<string, unknown> | undefined)?.verdict
-        return (verdict === 'deny' || verdict === 'unmeasured') && Date.now() - Date.parse(ev.at) < 10_000
+      const latestDeny = spineRes.items.find(ev => {
+        if (ev.seq <= lastGateSeqRef.current) return false
+        const v = (ev.payload as Record<string, unknown> | undefined)?.verdict
+        const kind = typeof v === 'string' ? v : (v as { kind?: unknown } | undefined)?.kind
+        return (kind === 'deny' || kind === 'unmeasured') && Date.now() - Date.parse(ev.at) < 15_000
       })
-      if (recentDeny) setGateUntil(Date.now() + 3000)
+      if (latestDeny) {
+        lastGateSeqRef.current = latestDeny.seq
+        setGateUntil(Date.now() + 8_000)
+      }
       setOnline(true)
     } catch { setOnline(false) }
   }, [])
@@ -120,20 +126,16 @@ export function StageApp() {
   }, [])
 
   useEffect(() => {
-    if (avatar?.spriteUrl) {
-      loadSprite(avatar.spriteUrl, img => { spritesRef.current.images.char_secretary = img })
-    }
+    loadSprite(avatar?.spriteUrl || OFFICE_CATALOG.char_secretary!.spriteUrl, img => {
+      spritesRef.current.images.char_secretary = img
+    })
   }, [avatar?.spriteUrl])
 
   useEffect(() => {
     void refreshAll()
-    const unsub = subscribeOfficeStream(msg => {
+    const unsub = subscribeOfficeStream(() => {
       setOnline(true)
       setStreamTick(t => t + 1)
-      if (msg.event === 'spine' && msg.data['type'] === 'gate.evaluated') {
-        const payload = msg.data['payload'] as Record<string, unknown> | undefined
-        if (payload?.['verdict'] === 'deny' || payload?.['verdict'] === 'unmeasured') setGateUntil(Date.now() + 3000)
-      }
       void refreshAll()
     })
     const timer = setInterval(() => { void refreshAll() }, 8000)
@@ -213,7 +215,8 @@ export function StageApp() {
   const handleDecideRuling = async (input: {
     id: string; decision: RulingDecision; optionId?: string; attribution?: FourWayAttribution; note?: string; captureAsRule?: boolean
   }) => {
-    await officeCall('POST rulings/:id/decide', { id: input.id, body: input })
+    const { id, ...body } = input
+    await officeCall('POST rulings/:id/decide', { id, body })
     await refreshAll()
   }
 

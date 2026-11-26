@@ -1,5 +1,5 @@
 /** 左下 384×480 秘书立绘与底部硬角金线唯一对话框：日常对话态与单栈待裁拍板态切换。 */
-import { type RefObject, useMemo, useState } from 'react'
+import { type RefObject, useEffect, useMemo, useState } from 'react'
 import type { AvatarPackSummary } from '../app/avatar-pipeline.ts'
 import type { FourWayAttribution, RulingDecision, RulingItem, RulingOrigin } from '../app/ruling-queue.ts'
 import type { SecretaryExpression, SecretaryFeedEntry } from '../app/tools/secretary-core.ts'
@@ -65,6 +65,13 @@ export function NpcDialog({
   const [historyOpen, setHistoryOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setSelectedOption(undefined)
+    setNote('')
+    setAttribution('missing_rule')
+    setCaptureAsRule(false)
+  }, [activeRuling?.id])
 
   const mood = resolveSecretaryMood(activeRuling, gateBlocked, hasWorkingTickets, feed)
   const portraitSrc = avatar?.portraitUrls[mood] ?? `/assets/f1-proof/portrait_${mood}.png`
