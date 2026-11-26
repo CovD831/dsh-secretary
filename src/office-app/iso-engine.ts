@@ -55,8 +55,8 @@ function findOrthogonalPath(plan: OfficeRoomPlan, from: GridPoint, to: GridPoint
 export function createInitialActors(plan: OfficeRoomPlan): OfficeActor[] {
   const rec = plan.suites.find((s) => s.id === 'reception'), exec = plan.suites.find((s) => s.id === 'executive')
   return [
-    { id: 'secretary', role: 'secretary', u: rec?.seatCell?.u ?? 1, v: rec?.seatCell?.v ?? 6, facing: 'SE', pose: 'sit', lifecycle: 'resident', path: [], animMs: 0 },
-    { id: 'lead', role: 'lead', u: exec?.seatCell?.u ?? 10, v: exec?.seatCell?.v ?? 1, facing: 'SW', pose: 'sit', lifecycle: 'resident', path: [], animMs: 0 },
+    { id: 'secretary', role: 'secretary', u: (rec?.anchor.u ?? 0) + 1.15, v: (rec?.anchor.v ?? 5) + 0.55, facing: 'SW', pose: 'sit', lifecycle: 'resident', assignedSuiteId: 'reception', path: [], animMs: 0 },
+    { id: 'lead', role: 'lead', u: (exec?.anchor.u ?? 8) + 0.25, v: (exec?.anchor.v ?? 0) + 0.55, facing: 'SE', pose: 'sit', lifecycle: 'resident', assignedSuiteId: 'executive', path: [], animMs: 0 },
   ]
 }
 
@@ -98,7 +98,12 @@ export function computeL2RenderList(plan: OfficeRoomPlan, actors: readonly Offic
   }
   for (const actor of actors) {
     if (actor.lifecycle === 'removed') continue
-    const foot = isoToScreen(actor.u + 0.5, actor.v + 0.5, origin, scale)
+    const behindDesk = actor.pose === 'sit' && (actor.assignedSuiteId === 'reception' || actor.assignedSuiteId === 'executive')
+      ? plan.suites.find((s) => s.id === actor.assignedSuiteId)
+      : undefined
+    const foot = behindDesk
+      ? isoToScreen(behindDesk.anchor.u + behindDesk.size[0], behindDesk.anchor.v + behindDesk.size[1], origin, scale)
+      : isoToScreen(actor.u + 0.5, actor.v + 0.5, origin, scale)
     items.push({ id: actor.id, kind: 'actor', footScreenY: Math.round(foot.y) + 1, actor })
   }
   return items.sort((a, b) => a.footScreenY - b.footScreenY || a.id.localeCompare(b.id))
@@ -112,7 +117,8 @@ function getEntityBounds(entity: RoomEntity, origin: { x: number; y: number }, s
 
 function getActorBounds(actor: OfficeActor, origin: { x: number; y: number }, scale: number) {
   const pos = isoToScreen(actor.u + 0.5, actor.v + 0.5, origin, scale)
-  return { x: Math.round(pos.x - 16 * scale), y: Math.round(pos.y - 44 * scale), w: 32 * scale, h: 48 * scale }
+  const cropH = actor.pose === 'sit' && actor.assignedSuiteId === 'reception' ? 30 : actor.pose === 'sit' && actor.assignedSuiteId === 'executive' ? 40 : 48
+  return { x: Math.round(pos.x - 16 * scale), y: Math.round(pos.y - 44 * scale), w: 32 * scale, h: cropH * scale }
 }
 
 function getWallMountBounds(mount: OfficeRoomPlan['wallMounts'][number], origin: { x: number; y: number }, scale: number) {
@@ -220,7 +226,8 @@ export function renderOfficeFrame(ctx: CanvasRenderingContext2D, state: OfficeSc
       const col = item.actor.pose === 'idle' ? 0 : item.actor.pose === 'walkA' ? 1 : item.actor.pose === 'walkB' ? 2 : 3
       const row = item.actor.facing === 'SW' || item.actor.facing === 'NW' ? 1 : 0
       const b = getActorBounds(item.actor, state.plan.origin, scale)
-      ctx.drawImage(img, col * 32, row * 48, 32, 48, b.x, b.y, b.w, b.h)
+      const srcH = item.actor.pose === 'sit' && (item.actor.assignedSuiteId === 'reception' || item.actor.assignedSuiteId === 'executive') ? 28 : 48
+      ctx.drawImage(img, col * 32, row * 48, 32, srcH, b.x, b.y, b.w, srcH * scale)
     }
   }
   renderL3Overlays(ctx, state, scale)
