@@ -164,6 +164,12 @@ export interface SessionTokenSummary {
   readonly reasoningTokens?: number
 }
 
+export type SessionStepPhase = 'locate' | 'edit' | 'verify' | 'report' | 'other'
+export interface SessionStepTrace {
+  readonly stepIndex: number; readonly tool: string; readonly phase: SessionStepPhase
+  readonly skeleton: string; readonly isError: boolean; readonly exitCode?: number
+}
+
 export interface JoinedSessionMetricRow {
   readonly envelopeSeq: number
   readonly envelopeId: string
@@ -180,6 +186,7 @@ export interface JoinedSessionMetricRow {
   readonly failedCommandCount: number | undefined
   readonly durationMs: number | undefined
   readonly tokens: SessionTokenSummary | undefined
+  readonly steps?: readonly SessionStepTrace[]
 }
 
 export interface WindowSample {
@@ -262,7 +269,8 @@ export interface OnlineCollectionResult {
   readonly taskRecords: readonly TaskBehaviorRecord[]; readonly behavioralMetrics: BehavioralMetricsReading
   readonly replayCases: readonly ReplayCase[]; readonly joinedSessionMetrics: readonly JoinedSessionMetricRow[]
   readonly attribution: AttributionSummary; readonly clusters: readonly FrictionCluster[]
-  readonly candidateDrafts: readonly DepositDraft[]; readonly calibratedRecords: readonly CalibratedGateRecord[]
+  readonly candidateDrafts: readonly DepositDraft[]; readonly minedSopDrafts?: readonly DepositDraft[]
+  readonly calibratedRecords: readonly CalibratedGateRecord[]
   readonly effectivenessReading: EvaluationReading; readonly windowComparison: WindowComparison
 }
 

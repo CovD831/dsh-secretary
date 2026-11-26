@@ -3,6 +3,7 @@ import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { isoTime, type DomainEvent } from '../core/index.ts'
 import type { EvidenceRef, SpineDraft, SpineEnvelope, StreamId } from '../spine/types.ts'
+import { extractSessionStepSequence } from './sop-miner.ts'
 import type {
   CommandOutcome,
   DomainEventBridgeMeta,
@@ -184,6 +185,7 @@ function extractMetricsFromEvents(events: readonly SessionEvent[]) {
     failedCommandCount,
     durationMs,
     tokens,
+    steps: extractSessionStepSequence(events),
     metricsState: tokens !== undefined && durationMs !== undefined ? 'measured' as const : 'partial' as const,
   }
 }

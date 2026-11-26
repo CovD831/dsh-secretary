@@ -8,11 +8,11 @@ import { isValidScopeStage } from '../judgement/registry.ts'
 import { BASE_SCOPES } from '../judgement/types.ts'
 import type { SourceRef, SpineEnvelope } from '../spine/types.ts'
 import { compareWindows, computeBehavioralMetrics, toEvaluationReading } from './evaluator.ts'
+import { mineWorkflowSopDrafts } from './sop-miner.ts'
 import { createPersistenceSessionReader, extractSessionPtr, joinNativeSessionMetrics, type SessionEventsReader } from './trace-bridge.ts'
 import type {
-  AttributionSummary, CalibratedGateRecord, FourWayAttribution, FrictionCluster,
-  JoinedSessionMetricRow, LabelledEventRecord, NaturalBackfillLabel,
-  OnlineCollectionResult, ReplayCase, TaskBehaviorRecord, WindowSample,
+  AttributionSummary, CalibratedGateRecord, FourWayAttribution, FrictionCluster, JoinedSessionMetricRow,
+  LabelledEventRecord, NaturalBackfillLabel, OnlineCollectionResult, ReplayCase, TaskBehaviorRecord, WindowSample,
 } from './types.ts'
 
 const SHARD_FILE_RE = /^\d{4}-\d{2}-\d{2}\.jsonl$/
@@ -25,15 +25,9 @@ const ALL_LABELS: readonly NaturalBackfillLabel[] = [
 const isRec = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === 'object' && !Array.isArray(v))
 
 export interface OnlineCollectOptions {
-  readonly events?: readonly SpineEnvelope[]
-  readonly db?: DatabaseSync
-  readonly memoryDir?: string
-  readonly persistence?: Pick<SessionPersistence, 'flush' | 'open'>
-  readonly readSessionEvents?: SessionEventsReader
-  readonly baselineWindow?: WindowSample
-  readonly windowDurationMs?: number
-  readonly minSeen?: number
-  readonly minDistinctDays?: number
+  readonly events?: readonly SpineEnvelope[]; readonly db?: DatabaseSync; readonly memoryDir?: string
+  readonly persistence?: Pick<SessionPersistence, 'flush' | 'open'>; readonly readSessionEvents?: SessionEventsReader
+  readonly baselineWindow?: WindowSample; readonly windowDurationMs?: number; readonly minSeen?: number; readonly minDistinctDays?: number
 }
 
 function parseEnvelope(raw: string): SpineEnvelope | undefined {
@@ -305,11 +299,14 @@ export async function collectOnlineRsiSnapshot(options: OnlineCollectOptions): P
     ? { failures: defectTickets, opportunities: totalTickets, ...(options.windowDurationMs !== undefined ? { durationMs: options.windowDurationMs } : {}) }
     : (half > 0 ? { failures: replayCases.slice(half).filter(c => c.expectedOutcome === 'defect').length, opportunities: replayCases.length - half } : { failures: 0, opportunities: 0 })
 
+  const minedSopDrafts = mineWorkflowSopDrafts({ events, joinedSessionMetrics, replayCases, labelHits })
+  const seenDraftIds = new Set(candidateDrafts.map(d => d.id))
+  for (const d of minedSopDrafts) if (!seenDraftIds.has(d.id)) { seenDraftIds.add(d.id); candidateDrafts.push(d) }
+
   return {
     eventCount: events.length, labelHits, labelCounts, taskRecords,
     behavioralMetrics: computeBehavioralMetrics(taskRecords), replayCases, joinedSessionMetrics,
-    attribution, clusters, candidateDrafts, calibratedRecords,
-    effectivenessReading: toEvaluationReading(cleanTickets, defectTickets + cleanTickets),
-    windowComparison: compareWindows(beforeWin, afterWin),
+    attribution, clusters, candidateDrafts, minedSopDrafts, calibratedRecords,
+    effectivenessReading: toEvaluationReading(cleanTickets, defectTickets + cleanTickets), windowComparison: compareWindows(beforeWin, afterWin),
   }
 }

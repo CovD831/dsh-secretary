@@ -36,6 +36,8 @@ export type {
   ReplayReportCard,
   RuleConflictPair,
   SessionEventPtr,
+  SessionStepPhase,
+  SessionStepTrace,
   SessionTokenSummary,
   SplitBucket,
   SplitRatios,
@@ -87,3 +89,8 @@ export {
   runLeaveOneOutAblation,
   type EvaluateSealedHoldoutOptions,
 } from './calibration.ts'
+export {
+  extractSessionStepSequence,
+  mineWorkflowSopDrafts,
+  type MineWorkflowSopInput,
+} from './sop-miner.ts'
