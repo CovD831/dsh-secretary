@@ -68,16 +68,13 @@ def main():
     args = parser.parse_args()
 
     office_url = f'http://127.0.0.1:{args.port}'
-    detected_web_url = None
     if args.action in ('start', 'restart'):
-        detected_web_url = ensure_office_port(args.profile, args.port)
+        ensure_office_port(args.profile, args.port)
 
     env = dict(os.environ)
     if not env.get('DSH_BIN') and not shutil.which('dsh') and MACOS_DSH_APP_BIN.is_file():
         env['DSH_BIN'] = str(MACOS_DSH_APP_BIN)
-    cmd = [sys.executable, str(SUPERAGENT_SCRIPT), args.action, '--profile', args.profile]
-    if not env.get('DSH_SUPERAGENT_URL') and detected_web_url:
-        cmd.extend(['--url', detected_web_url])
+    cmd = [sys.executable, str(SUPERAGENT_SCRIPT), args.action, '--profile', args.profile, '--url', office_url]
 
     proc = subprocess.run(cmd, env=env, check=False)
     if args.action in ('start', 'restart') and proc.returncode in (0, 2, 3):
