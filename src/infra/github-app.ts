@@ -212,9 +212,12 @@ export async function runGhAppProxy(
     return { code: 0, stdout: out }
   }
   if (args[0] === 'api' && /^\/?repos\/[^/]+\/[^/]+$/.test(args[1] ?? '') && args[2] === '--jq' && args[3] === '{name: .full_name, push: .permissions.push}') {
-    const repo = inferRepo(args, options.repo, env, creds.repo)
-    const { permissions } = await getInstallationAccessToken(outDir, repo, { fetchFn: options.fetchFn })
-    return { code: 0, stdout: `${JSON.stringify({ name: repo, push: permissions.contents === 'write' })}\n` }
+    const queriedRepo = args[1]!.replace(/^\/?repos\//, '')
+    const fetchFn = options.fetchFn ?? fetch
+    const { token, permissions } = await getInstallationAccessToken(outDir, queriedRepo, { fetchFn })
+    const repoRes = await fetchFn(`${creds.apiBase}/repos/${queriedRepo}`, { headers: ghHeaders(`Bearer ${token}`) })
+    const repoJson = repoRes.ok ? ((await repoRes.json()) as { full_name?: string }) : {}
+    return { code: 0, stdout: `${JSON.stringify({ name: repoJson.full_name ?? queriedRepo, push: permissions.contents === 'write' })}\n` }
   }
   if (args[0] === 'auth' && args[1] === 'git-credential') {
     if (args[2] !== 'get') return { code: 0 }

@@ -223,6 +223,9 @@ describe('GitHub App kernel compatibility', () => {
       const okDep = await resolveDeployment(machine, { repository: 'acme/widgets', cli: wWrite }, probe, binDir)
       expect(okDep.github.app).toBe(true)
 
+      // Probing a different repository must NOT inherit wrapper's --repo acme/widgets
+      await expect(probe([wWrite, 'api', 'repos/acme/other', '--jq', '{name: .full_name, push: .permissions.push}'])).rejects.toThrow()
+
       contentsPerm = 'read'
       const roDir = join(dir, 'perm-read')
       await saveGithubAppCredentials(roDir, { appId: 21, slug: 'dsh-perm', apiBase: `http://127.0.0.1:${port}`, pem: PRIVATE_PEM, repo: 'acme/widgets' })
