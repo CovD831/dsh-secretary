@@ -78,17 +78,24 @@ export function StageApp() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const lastGateSeqRef = useRef(0)
+  const gateTicketRef = useRef<string | undefined>(undefined)
   const spritesRef = useRef<OfficeSprites>({ images: {} })
   const plan = useMemo(() => solveOfficeLayout(workspaceId, 1), [workspaceId])
   const actorsRef = useRef<OfficeActor[]>(createInitialActors(plan))
 
+  const roomTickets = useMemo(() => {
+    if (workspaceId === 'default') return tickets.filter(t => !t.workspace || t.workspace === 'default')
+    const ws = settings?.blocks.workspaces.value?.find(w => w.id === workspaceId)
+    return tickets.filter(t => t.workspace === workspaceId || (!t.workspace && Boolean(ws?.repository) && Boolean(t.directory?.startsWith(ws!.repository))))
+  }, [tickets, workspaceId, settings])
+
   useEffect(() => {
-    actorsRef.current = syncActorsWithTickets(createInitialActors(plan), tickets, plan)
+    actorsRef.current = syncActorsWithTickets(createInitialActors(plan), roomTickets, plan)
   }, [plan])
 
   useEffect(() => {
-    actorsRef.current = syncActorsWithTickets(actorsRef.current, tickets, plan)
-  }, [tickets, plan])
+    actorsRef.current = syncActorsWithTickets(actorsRef.current, roomTickets, plan)
+  }, [roomTickets, plan])
 
   const refreshAll = useCallback(async () => {
     try {
@@ -97,7 +104,9 @@ export function StageApp() {
         officeCall('GET tickets', { query: { state: 'open', limit: 20 } }),
         officeCall('GET settings'),
         officeCall('GET avatars'),
-        officeCall('GET projection/spine', { query: { type: 'gate.evaluated', limit: 5 } }),
+        officeCall('GET projection/spine', {
+          query: { type: 'gate.evaluated', limit: 10, tail: '1', ...(lastGateSeqRef.current > 0 ? { sinceSeq: lastGateSeqRef.current } : {}) },
+        }),
       ])
       setFeed(feedRes.items)
       setActiveRuling(feedRes.activeRuling)
@@ -105,7 +114,7 @@ export function StageApp() {
       setTickets(ticketRes.items)
       setSettings(settingsRes)
       setAvatar(avatarRes.items.find(i => i.id === avatarRes.activeId) ?? avatarRes.items[0] ?? null)
-      const latestDeny = spineRes.items.find(ev => {
+      const latestDeny = [...spineRes.items].reverse().find(ev => {
         if (ev.seq <= lastGateSeqRef.current) return false
         const v = (ev.payload as Record<string, unknown> | undefined)?.verdict
         const kind = typeof v === 'string' ? v : (v as { kind?: unknown } | undefined)?.kind
@@ -113,6 +122,8 @@ export function StageApp() {
       })
       if (latestDeny) {
         lastGateSeqRef.current = latestDeny.seq
+        const tid = (latestDeny.payload as Record<string, unknown> | undefined)?.ticketId
+        gateTicketRef.current = typeof tid === 'string' ? tid : undefined
         setGateUntil(Date.now() + 8_000)
       }
       setOnline(true)
@@ -133,26 +144,28 @@ export function StageApp() {
 
   useEffect(() => {
     void refreshAll()
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined
     const unsub = subscribeOfficeStream(() => {
       setOnline(true)
       setStreamTick(t => t + 1)
-      void refreshAll()
+      if (debounceTimer) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => { void refreshAll() }, 120)
     })
     const timer = setInterval(() => { void refreshAll() }, 8000)
-    return () => { unsub(); clearInterval(timer) }
+    return () => { unsub(); clearInterval(timer); if (debounceTimer) clearTimeout(debounceTimer) }
   }, [refreshAll])
 
   const screenStates = useMemo(() => {
     const out: Record<string, StatusKind | 'off'> = {
-      executive: activeRuling ? 'needsDecision' : tickets.some(t => t.stage === 'working') ? 'working' : 'off',
+      executive: activeRuling ? 'needsDecision' : roomTickets.some(t => t.stage === 'working') ? 'working' : 'off',
     }
     for (const suite of WORKER_SUITES) {
       const actor = actorsRef.current.find(a => a.assignedSuiteId === suite && a.lifecycle !== 'leaving')
-      const ticket = actor?.ticketId ? tickets.find(t => t.id === actor.ticketId) : undefined
+      const ticket = actor?.ticketId ? roomTickets.find(t => t.id === actor.ticketId) : undefined
       out[suite] = !ticket ? 'off' : ticket.stage === 'person' ? 'needsDecision' : ticket.stage === 'working' ? 'working' : 'done'
     }
     return out
-  }, [activeRuling, tickets])
+  }, [activeRuling, roomTickets])
 
   const gateBlocked = gateUntil > Date.now()
 
@@ -168,13 +181,14 @@ export function StageApp() {
       const ctx = canvas?.getContext('2d')
       if (ctx) {
         ctx.clearRect(0, 0, CANVAS_W, CANVAS_H)
+        const gateActorId = actorsRef.current.find(a => a.ticketId && a.ticketId === gateTicketRef.current)?.id ?? 'lead'
         renderOfficeFrame(ctx, {
           plan,
           actors: actorsRef.current,
           screenStates,
           hoverTarget,
           elapsedMs: elapsed,
-          ...(gateUntil > Date.now() ? { gateIntercept: { targetActorId: 'lead', frame: Math.floor(elapsed / 200) % 3 } } : {}),
+          ...(gateUntil > Date.now() ? { gateIntercept: { targetActorId: gateActorId, frame: Math.floor(elapsed / 200) % 3 } } : {}),
         }, spritesRef.current, 2)
       }
       raf = requestAnimationFrame(tick)
@@ -202,7 +216,7 @@ export function StageApp() {
     } else if (hit.role === 'secretary') {
       inputRef.current?.focus()
     } else {
-      setSelectedTicketId(hit.ticketId ?? tickets[0]?.id ?? null)
+      setSelectedTicketId(hit.ticketId ?? roomTickets[0]?.id ?? null)
       setDrawerMode('worker')
     }
   }
@@ -258,7 +272,7 @@ export function StageApp() {
 
         <NpcDialog
           feed={feed} activeRuling={activeRuling} pendingCount={pendingCount} avatar={avatar}
-          hasWorkingTickets={tickets.some(t => t.stage === 'working')} gateBlocked={gateBlocked} inputRef={inputRef}
+          hasWorkingTickets={roomTickets.some(t => t.stage === 'working')} gateBlocked={gateBlocked} inputRef={inputRef}
           onSendMessage={handleSendMessage} onDecideRuling={handleDecideRuling} onOpenHandover={entry => setHandoverEntry(entry)}
         />
       </div>
@@ -266,7 +280,7 @@ export function StageApp() {
       <PropsDrawer activeProp={activeProp} onClose={() => setActiveProp(null)} onChanged={() => { void refreshAll() }} />
       <HandoverSheet entry={handoverEntry} onClose={() => setHandoverEntry(null)} />
       <WorkerDrawer
-        mode={drawerMode} workspaceId={workspaceId} settings={settings} tickets={tickets}
+        mode={drawerMode} workspaceId={workspaceId} settings={settings} tickets={roomTickets} allTickets={tickets}
         selectedTicketId={selectedTicketId} streamTick={streamTick}
         onSelectWorkspace={id => setWorkspaceId(id)} onSelectTicket={id => setSelectedTicketId(id)}
         onChanged={() => { void refreshAll() }} onClose={() => setDrawerMode(null)}

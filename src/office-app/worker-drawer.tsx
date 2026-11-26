@@ -13,12 +13,18 @@ export interface WorkerDrawerProps {
   readonly workspaceId: string
   readonly settings: SettingsView | null
   readonly tickets: readonly TicketItem[]
+  readonly allTickets?: readonly TicketItem[]
   readonly selectedTicketId: string | null
   readonly streamTick: number
   readonly onSelectWorkspace: (workspaceId: string) => void
   readonly onSelectTicket: (ticketId: string) => void
   readonly onChanged: () => void
   readonly onClose: () => void
+}
+
+function countRoomTickets(pool: readonly TicketItem[], roomId: string, repo?: string): number {
+  if (roomId === 'default') return pool.filter(t => !t.workspace || t.workspace === 'default').length
+  return pool.filter(t => t.workspace === roomId || (!t.workspace && Boolean(repo) && Boolean(t.directory?.startsWith(repo!)))).length
 }
 
 const KIND_COLOR: Record<string, string> = {
@@ -31,7 +37,7 @@ const KIND_COLOR: Record<string, string> = {
 }
 
 export function WorkerDrawer({
-  mode, workspaceId, settings, tickets, selectedTicketId, streamTick,
+  mode, workspaceId, settings, tickets, allTickets, selectedTicketId, streamTick,
   onSelectWorkspace, onSelectTicket, onChanged, onClose,
 }: WorkerDrawerProps) {
   const [transcript, setTranscript] = useState<TicketTranscriptView | null>(null)
@@ -73,6 +79,7 @@ export function WorkerDrawer({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {rooms.map(room => {
             const current = room.id === workspaceId
+            const roomCount = countRoomTickets(allTickets ?? tickets, room.id, room.repository)
             return (
               <button key={room.id} type="button" onClick={() => { onSelectWorkspace(room.id); onClose() }} style={{
                 textAlign: 'left', padding: '12px 14px', borderRadius: 4, cursor: 'pointer',
@@ -85,6 +92,10 @@ export function WorkerDrawer({
                   <div style={{ fontSize: 12, opacity: 0.78, marginTop: 2 }}>{room.repository}</div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{
+                    background: OFFICE_THEME.bgPanel, border: `1px solid ${OFFICE_THEME.borderWood}`,
+                    padding: '2px 8px', borderRadius: 3, fontSize: 12,
+                  }}>{roomCount} 工单</span>
                   <span style={{
                     background: OFFICE_THEME.woodDark, border: `1px solid ${OFFICE_THEME.borderGold}`,
                     padding: '2px 8px', borderRadius: 3, fontSize: 12,
@@ -173,7 +184,7 @@ export function WorkerDrawer({
         }}>
           {loading && !transcript && <div>读取现场终端卷宗中…</div>}
           {error && <div style={{ color: OFFICE_THEME.needsDecision }}>{error}</div>}
-          {transcript && transcript.entries.length === 0 && <div style={{ opacity: 0.7 }}>暂无脱敏终端轨迹。</div>}
+          {transcript && (transcript.entries?.length ?? 0) === 0 && <div style={{ opacity: 0.7 }}>暂无脱敏终端轨迹。</div>}
           {transcript?.entries.map(entry => (
             <div key={entry.id} style={{ padding: '4px 0', borderBottom: `1px solid ${OFFICE_THEME.borderWood}` }}>
               <span style={{ opacity: 0.6, marginRight: 8 }}>{entry.at}</span>

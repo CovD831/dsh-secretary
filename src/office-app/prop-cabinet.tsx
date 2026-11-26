@@ -197,7 +197,9 @@ export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClo
               <div key={pack.id} style={{ ...boxStyle, borderColor: avatars.activeId === pack.id ? OFFICE_THEME.borderGold : OFFICE_THEME.borderWood }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                   <strong>{pack.name}</strong>
-                  <span style={{ fontSize: 10 }}>{pack.source} · {pack.quantized ? '46色已量化' : '未量化'}</span>
+                  <span style={{ fontSize: 10 }}>
+                    {pack.provider === 'remote-ai' ? '远程生图' : pack.provider === 'local-remix' ? '本地色板重混' : '预置'} · {pack.quantized ? '46色已量化' : '未量化'}
+                  </span>
                 </div>
                 <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 6 }}>outOfPalette: {pack.outOfPaletteCount}</div>
                 <button type="button" disabled={busy || avatars.activeId === pack.id} style={btnStyle(avatars.activeId === pack.id)} onClick={() => { void selectAvatar(pack.id) }}>

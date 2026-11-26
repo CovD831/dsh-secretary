@@ -61,7 +61,7 @@ export interface Api {
   'POST prompts/preview': { body: PromptConfig; response: ReturnType<Prompts['preview']> }
   'GET projection/state': { response: StateProjectionView }
   'GET projection/notebook': { response: NotebookProjectionView }
-  'GET projection/spine': { query?: { sinceSeq?: number; limit?: number; ticketId?: string; type?: string }; response: SpineProjectionView }
+  'GET projection/spine': { query?: { sinceSeq?: number; limit?: number; ticketId?: string; type?: string; tail?: boolean | '1' | 'true' }; response: SpineProjectionView }
   'GET projection/deposits': { response: DepositsProjectionView }
   'GET rulings': { query?: { status?: RulingStatus }; response: { active: RulingItem | null; pendingCount: number; items: RulingItem[] } }
   'POST rulings/:id/decide': { body: Omit<DecideRulingInput, 'id' | 'actorId'> & { actorId?: string }; response: { ok: boolean; item?: RulingItem; duplicate?: boolean; reason?: string } }

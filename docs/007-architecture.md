@@ -362,6 +362,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/office-server.ts` | Standalone loopback HTTP + SSE server for the Pixel Office frontend, static/avatar asset serving, and live governance event stream |
 | `src/app/transcript-reader.ts` | Read-only ticket terminal transcript projection merging DSH persistent session events and M0 spine events with full secret redaction |
 | `src/app/avatar-pipeline.ts` | Custom secretary avatar 46-color Oklab quantization, background removal, nearest-neighbor downsampling, and active-avatar switching pipeline |
+| `src/app/avatar-provider.ts` | Avatar generation provider router (custom generator callback, runtime remote AI image API, and deterministic 38-color local palette remix fallback) |
 | `src/app/api.ts` | `Api`, every route with its parameters, query, body and response, and the filters of the lists; it imports only types, so the panel bundles it |
 | `src/app/views/text.ts` | The two forms of a view's text: `preview`, plain text on one line, and `markdown` without HTML; `plain` and `readable` |
 | `src/app/views/records.ts` | The rows the views share: Triggers, Tickets, Threads, Decisions and Channel links, and `ownersOf`, the owners of follow-ups as one request reads them |

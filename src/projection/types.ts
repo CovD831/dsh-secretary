@@ -170,6 +170,7 @@ export interface SpineQuery {
   readonly limit?: number
   readonly ticketId?: string
   readonly type?: string
+  readonly tail?: boolean
 }
 
 export interface SpineProjectionView {

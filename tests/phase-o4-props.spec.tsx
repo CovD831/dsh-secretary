@@ -176,7 +176,7 @@ describe('Phase O4: 4 Diegetic Governance Prop Modals', () => {
       'PUT settings/executor': () => ({ revision: 5, restarting: false }),
       'POST executor/pause': () => ({ paused: true }),
       'POST avatars/select': () => ({ ok: true, activeId: 'preset-walnut-01' }),
-      'POST avatars/generate': () => ({ ok: true, pack: { id: 'ai-1', name: '夜班秘书', source: 'ai', createdAt: '2026-11-26', portraitUrls: { neutral: '/n.png', working: '/w.png', happy: '/h.png', concerned: '/c.png' }, quantized: true, outOfPaletteCount: 0, statusPixels: 0, semiTransparentCount: 0 } }),
+      'POST avatars/generate': () => ({ ok: true, pack: { id: 'ai-1', name: '夜班秘书', source: 'ai', provider: 'local-remix', createdAt: '2026-11-26', portraitUrls: { neutral: '/n.png', working: '/w.png', happy: '/h.png', concerned: '/c.png' }, quantized: true, outOfPaletteCount: 0, statusPixels: 0, semiTransparentCount: 0 } }),
     })
     const onChanged = await mountProp('cabinet')
     expect(document.querySelector('input[type="file"]')).toBeNull()
@@ -203,6 +203,8 @@ describe('Phase O4: 4 Diegetic Governance Prop Modals', () => {
     await act(async () => { byText('生成并量化入库').closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
     await flush()
     expect(reqs.find(r => r.path === 'avatars/generate')?.body).toEqual({ name: '夜班秘书', prompt: '深色马甲戴圆框眼镜' })
+    expect(document.body.textContent).toContain('已生成并量化入库：夜班秘书')
+    expect(document.body.textContent).toContain('预置')
     expect(onChanged).toHaveBeenCalledTimes(4)
   })
 })

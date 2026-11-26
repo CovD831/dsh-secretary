@@ -1,15 +1,47 @@
 /** 羊皮纸质感《三段式公文纸》浮层：呈现结论 / 理由 / 影响与 M0 溯源印章。 */
+import { useEffect, useState } from 'react'
 import type { SecretaryFeedEntry } from '../app/tools/secretary-core.ts'
-import { DiegeticModal, OFFICE_THEME } from './office-api.tsx'
+import type { SpineEnvelope } from '../spine/types.ts'
+import { DiegeticModal, OFFICE_THEME, officeCall } from './office-api.tsx'
 
 export interface HandoverSheetProps {
   readonly entry: SecretaryFeedEntry | null
   readonly onClose: () => void
 }
 
+function parseRefSeq(ref: string): number | null {
+  const m = /(\d+)$/.exec(ref.trim())
+  const seq = m ? Number(m[1]) : NaN
+  return Number.isInteger(seq) && seq > 0 ? seq : null
+}
+
 export function HandoverSheet({ entry, onClose }: HandoverSheetProps) {
+  const [selectedRef, setSelectedRef] = useState<string | null>(null)
+  const [verified, setVerified] = useState<SpineEnvelope | null>(null)
+  const [verifying, setVerifying] = useState(false)
+  const [verifyError, setVerifyError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setSelectedRef(null); setVerified(null); setVerifyError(null)
+  }, [entry?.id])
+
   const handover = entry?.handover
   if (!entry || !handover) return null
+
+  const inspectRef = async (ref: string) => {
+    setSelectedRef(ref); setVerified(null); setVerifyError(null)
+    const seq = parseRefSeq(ref)
+    if (!seq) { setVerifyError('无法从印章提取数字 seq'); return }
+    setVerifying(true)
+    try {
+      const res = await officeCall('GET projection/spine', { query: { sinceSeq: seq - 1, limit: 1 } })
+      const ev = res.items.find(item => item.seq === seq) ?? res.items[0] ?? null
+      if (!ev) setVerifyError(`M0 事件脊未命中 seq=${seq}`)
+      else setVerified(ev)
+    } catch (err) {
+      setVerifyError(err instanceof Error ? err.message : String(err))
+    } finally { setVerifying(false) }
+  }
 
   const sections = [
     { heading: '【结论】', body: handover.conclusion },
@@ -44,14 +76,30 @@ export function HandoverSheet({ entry, onClose }: HandoverSheetProps) {
         }}>
           <strong style={{ fontSize: 12, color: OFFICE_THEME.woodDark }}>M0 溯源印章：</strong>
           {handover.evidenceRefs.length > 0 ? handover.evidenceRefs.map(ref => (
-            <span key={ref} style={{
-              background: OFFICE_THEME.woodDark, color: OFFICE_THEME.parchment,
+            <button key={ref} type="button" onClick={() => { void inspectRef(ref) }} style={{
+              background: selectedRef === ref ? OFFICE_THEME.woodMid : OFFICE_THEME.woodDark,
+              color: OFFICE_THEME.parchment, cursor: 'pointer',
               border: `1px solid ${OFFICE_THEME.borderGold}`, borderRadius: 2, padding: '2px 8px', fontSize: 12,
             }}>
               {ref}
-            </span>
+            </button>
           )) : <span style={{ fontSize: 12, opacity: 0.7 }}>无附加溯源印章</span>}
         </div>
+        {selectedRef && (
+          <div style={{
+            background: 'rgba(26,20,18,0.08)', border: `1px solid ${OFFICE_THEME.woodMid}`,
+            borderRadius: 3, padding: '8px 10px', fontSize: 12,
+          }}>
+            {verifying && <span>核验 M0 原始信封中…</span>}
+            {verifyError && <span style={{ color: OFFICE_THEME.needsDecision }}>{verifyError}</span>}
+            {verified && (
+              <div>
+                <strong>M0 原始信封核验：</strong>
+                <span>seq={verified.seq} / id={verified.id} / type={verified.type} / taint={verified.taint} / at={verified.at}</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </DiegeticModal>
   )

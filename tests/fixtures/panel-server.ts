@@ -423,7 +423,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     counts: { total: 0, pending: 0, asked: 0, resolved: 0, conflicts: 0, rulings: 0, verifications: 0, depositProposals: 0, dueReminders: 0 },
     groups: { pending: [], asked: [], resolved: [] },
   }) },
-  'GET projection/spine': { query: ['sinceSeq', 'limit', 'ticketId', 'type'], answer: () => ({
+  'GET projection/spine': { query: ['sinceSeq', 'limit', 'ticketId', 'type', 'tail'], answer: () => ({
     items: [], totalMatched: 0, headSeq: 0, nextSinceSeq: null, hasMore: false,
   }) },
   'GET projection/deposits': { answer: () => server.projectionDeposits ?? ({

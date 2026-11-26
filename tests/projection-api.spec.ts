@@ -186,4 +186,27 @@ describe('projection readers and HTTP endpoints (read-only invariant)', () => {
     const dbVerAfter = Number((store.db.prepare('PRAGMA data_version').get() as { data_version: number }).data_version)
     expect(dbVerAfter).toBe(dbVerBefore)
   })
+
+  it('returns latest gate.evaluated deny event when tail=true (B1)', async () => {
+    const stateDir = makeDir()
+    const store = new Store(join(stateDir, 'orchestrator.sqlite')); stores.push(store)
+    const gov = new GovernanceRuntime({ store, stateDir })
+    await gov.recover()
+    for (let i = 1; i <= 8; i++) {
+      gov.appender.append({
+        id: `gate-${i}`, stream: 'ticket:t-tail', type: 'gate.evaluated',
+        source: { kind: 'system', ref: 'g' }, evidence: [], taint: 'trusted',
+        payload: { ticketId: 't-tail', point: 'verify.rerun', verdict: { kind: i === 8 ? 'deny' : 'allow' } },
+      })
+    }
+    const tailView = await readSpineProjection(store, stateDir, { type: 'gate.evaluated', limit: 5, tail: true })
+    expect(tailView.items.map(e => e.seq)).toEqual([4, 5, 6, 7, 8])
+    expect((tailView.items[tailView.items.length - 1]!.payload as { verdict: { kind: string } }).verdict.kind).toBe('deny')
+
+    const call = mountHttp(store, stateDir)
+    const httpTail = await call('projection/spine?type=gate.evaluated&limit=5&tail=1')
+    expect(httpTail.status).toBe(200)
+    expect((httpTail.body.items as { seq: number }[]).map(e => e.seq)).toEqual([4, 5, 6, 7, 8])
+    await gov.shutdown()
+  })
 })

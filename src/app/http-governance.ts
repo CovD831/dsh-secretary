@@ -14,7 +14,8 @@ import {
   type MemoryStudioView, type RsiWorkbenchView,
 } from './governance-ops.ts'
 import type { HttpHost } from './http.ts'
-import { generateAvatarPackViaProvider, listAvatarPacks, selectAvatarPack } from './avatar-pipeline.ts'
+import { listAvatarPacks, selectAvatarPack } from './avatar-pipeline.ts'
+import { generateAvatarPackViaProvider } from './avatar-provider.ts'
 import { ingestBossDesktopMessage } from './tools/secretary-core.ts'
 
 export type {
@@ -39,7 +40,13 @@ export type GovernanceRouteKeys =
 
 const count = z.coerce.number().int().nonnegative()
 const limit = (fallback: number, max: number) => z.coerce.number().int().positive().catch(fallback).transform(v => Math.min(max, v))
-const SpineQuery = z.object({ sinceSeq: count.optional(), limit: limit(50, 200), ticketId: z.string().max(128).optional(), type: z.string().max(128).optional() })
+const SpineQuery = z.object({
+  sinceSeq: count.optional(),
+  limit: limit(50, 200),
+  ticketId: z.string().max(128).optional(),
+  type: z.string().max(128).optional(),
+  tail: z.enum(['1', 'true']).optional().transform(v => v === '1' || v === 'true'),
+})
 
 const DecideRulingBody = z.object({
   decision: z.enum(['approve', 'reject', 'revise']),

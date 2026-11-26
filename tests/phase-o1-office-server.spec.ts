@@ -1,10 +1,11 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  generateAvatarPackViaProvider, listAvatarPacks, processAndStoreAvatarPack, selectAvatarPack,
+  listAvatarPacks, processAndStoreAvatarPack, selectAvatarPack,
 } from '../src/app/avatar-pipeline.ts'
+import { generateAvatarPackViaProvider } from '../src/app/avatar-provider.ts'
 import { GovernanceRuntime } from '../src/app/governance.ts'
 import type { HttpHost } from '../src/app/http.ts'
 import { OfficeServer } from '../src/app/office-server.ts'
@@ -200,5 +201,74 @@ describe('Phase O1 OfficeServer, SSE, TranscriptReader & AvatarPipeline', () => 
 
     expect(selectAvatarPack(stateDir, store, 'custom-sec-01')).toEqual({ ok: true, activeId: 'custom-sec-01' })
     expect(listAvatarPacks(stateDir, store).activeId).toBe('custom-sec-01')
+  })
+
+  it('reads latest gate.evaluated deny event in readTicketTranscript when >5 events exist (B1)', async () => {
+    const stateDir = makeDir()
+    const store = new Store(join(stateDir, 'orchestrator.sqlite')); stores.push(store)
+    store.tickets.save(makeTicket('t-gate8'))
+    const gov = new GovernanceRuntime({ store, stateDir })
+    for (let i = 1; i <= 8; i++) {
+      gov.appender.append({
+        id: `g-${i}`, at: `2026-11-26T01:0${i}:00.000Z`, stream: 'ticket:t-gate8', type: 'gate.evaluated',
+        source: { kind: 'system', ref: 'test' }, evidence: [], taint: 'trusted',
+        payload: { ticketId: 't-gate8', point: 'verify.rerun', verdict: { kind: i === 8 ? 'deny' : 'allow' } },
+      })
+    }
+    const view = await readTicketTranscript({ ticketId: 't-gate8', store, stateDir, limit: 5 })
+    expect(view).toBeDefined()
+    expect(view!.entries.at(-1)?.summary).toContain('deny')
+    await gov.shutdown()
+  })
+
+  it('serves real HTTP POST /orchestrator/api/avatars/generate via local-remix and remote-ai (B2)', async () => {
+    const stateDir = makeDir()
+    const store = new Store(join(stateDir, 'orchestrator.sqlite')); stores.push(store)
+    const gov = new GovernanceRuntime({ store, stateDir })
+    const server = new OfficeServer({ host: makeHost(stateDir, store, gov) })
+    servers.push(server)
+    const port = await server.start(0)
+
+    const prevKey = process.env.DSH_AVATAR_IMAGE_API_KEY
+    const prevOpenAi = process.env.OPENAI_API_KEY
+    delete process.env.DSH_AVATAR_IMAGE_API_KEY
+    delete process.env.OPENAI_API_KEY
+    try {
+      const localRes = await fetch(`http://127.0.0.1:${port}/orchestrator/api/avatars/generate`, {
+        method: 'POST',
+        headers: { origin: `http://127.0.0.1:${port}`, 'x-orchestrator-request': '1', 'content-type': 'application/json' },
+        body: JSON.stringify({ name: '离线重混秘书', prompt: 'emerald vest glasses', seed: 7 }),
+      })
+      expect(localRes.status).toBe(200)
+      const localBody = await localRes.json() as { ok: boolean; pack?: { id: string; provider?: string; outOfPaletteCount: number } }
+      expect(localBody.ok).toBe(true)
+      expect(localBody.pack?.provider).toBe('local-remix')
+      expect(localBody.pack?.outOfPaletteCount).toBe(0)
+
+      const origFetch = globalThis.fetch
+      const ok2xB64 = makeTestPng(384, 480).toString('base64')
+      process.env.DSH_AVATAR_IMAGE_API_KEY = 'sk-test-avatar-mock'
+      vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+        if (String(url).includes('127.0.0.1')) return origFetch(url, init)
+        return new Response(JSON.stringify({ data: [{ b64_json: ok2xB64 }] }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }))
+
+      const remoteRes = await fetch(`http://127.0.0.1:${port}/orchestrator/api/avatars/generate`, {
+        method: 'POST',
+        headers: { origin: `http://127.0.0.1:${port}`, 'x-orchestrator-request': '1', 'content-type': 'application/json' },
+        body: JSON.stringify({ name: '远程生图秘书', prompt: 'navy coat', seed: 9 }),
+      })
+      expect(remoteRes.status).toBe(200)
+      const remoteBody = await remoteRes.json() as { ok: boolean; pack?: { id: string; provider?: string; outOfPaletteCount: number } }
+      expect(remoteBody.ok).toBe(true)
+      expect(remoteBody.pack?.provider).toBe('remote-ai')
+      expect(remoteBody.pack?.outOfPaletteCount).toBe(0)
+    } finally {
+      vi.unstubAllGlobals()
+      if (prevKey !== undefined) process.env.DSH_AVATAR_IMAGE_API_KEY = prevKey; else delete process.env.DSH_AVATAR_IMAGE_API_KEY
+      if (prevOpenAi !== undefined) process.env.OPENAI_API_KEY = prevOpenAi; else delete process.env.OPENAI_API_KEY
+      await server.close()
+      await gov.shutdown()
+    }
   })
 })

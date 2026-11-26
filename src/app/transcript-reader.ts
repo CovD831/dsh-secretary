@@ -155,7 +155,7 @@ export async function readTicketTranscript(input: {
   const maxEntries = Math.min(500, Math.max(1, Math.floor(input.limit ?? 200)))
   const [sessionEvents, spine] = await Promise.all([
     readSessionEvents(input.persistence, sessionId),
-    readSpineProjection(input.store, input.stateDir, { ticketId: input.ticketId, limit: 200 }),
+    readSpineProjection(input.store, input.stateDir, { ticketId: input.ticketId, limit: 200, tail: true }),
   ])
   const merged = [...mapSessionEvents(sessionEvents), ...mapSpineEvents(spine.items)]
   merged.sort((a, b) => {

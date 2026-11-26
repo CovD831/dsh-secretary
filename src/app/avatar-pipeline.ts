@@ -17,10 +17,13 @@ const NON_STATUS_BY_RGB = new Map<number, PaletteEntry>(
   NON_STATUS_PALETTE.map(e => [((e.rgb[0] << 16) | (e.rgb[1] << 8) | e.rgb[2]), e]),
 )
 
+export type AvatarProviderKind = 'preset' | 'remote-ai' | 'local-remix'
+
 export interface AvatarPackSummary {
   id: string
   name: string
   source: 'preset' | 'ai'
+  provider?: AvatarProviderKind
   createdAt: string
   portraitUrls: Record<SecretaryMood, string>
   spriteUrl?: string
@@ -36,6 +39,7 @@ export interface ProcessAvatarPackInput {
   name: string
   prompt: string
   model: string
+  provider?: AvatarProviderKind
   seed: number
   rawPortraits: Partial<Record<SecretaryMood, Buffer>>
   rawSpriteSheet?: Buffer
@@ -181,10 +185,8 @@ export function processAndStoreAvatarPack(input: ProcessAvatarPackInput): Avatar
     if (!valid) throw new Error(`帧表 ${sp.width}x${sp.height} 不是 192×192 的整数倍，请使用 384×384 或 768×768`)
     decodedSprite = sp
   }
-  const packDir = join(input.stateDir, 'avatars', input.id)
-  const portraitDir = join(packDir, 'portrait')
-  mkdirSync(portraitDir, { recursive: true })
   let outOfPaletteCount = 0, statusPixels = 0, semiTransparentCount = 0
+  const encodedPortraits = {} as Record<SecretaryMood, Uint8Array>
   for (const mood of MOODS) {
     const img = decodedPortraits[mood]
     const grid = normalizeToGrid(img.rgba, img.width, img.height, PORTRAIT_W, PORTRAIT_H)
@@ -193,43 +195,55 @@ export function processAndStoreAvatarPack(input: ProcessAvatarPackInput): Avatar
     outOfPaletteCount += audit.outOfPaletteCount
     statusPixels += audit.statusPixelsOutsideMask
     semiTransparentCount += audit.semiTransparentCount
-    writeFileSync(join(portraitDir, `${mood}.png`), encodePngRgba(outRgba, PORTRAIT_W, PORTRAIT_H))
+    encodedPortraits[mood] = encodePngRgba(outRgba, PORTRAIT_W, PORTRAIT_H)
   }
+  let encodedSprite: Uint8Array | undefined
   if (decodedSprite) {
-    mkdirSync(join(packDir, 'sprite'), { recursive: true })
     const grid = normalizeToGrid(decodedSprite.rgba, decodedSprite.width, decodedSprite.height, 192, 192)
     const outRgba = grid.toRgba()
     const audit = auditPaletteBuffer(outRgba, 192, 192, new Uint8Array(192 * 192))
     outOfPaletteCount += audit.outOfPaletteCount
     statusPixels += audit.statusPixelsOutsideMask
     semiTransparentCount += audit.semiTransparentCount
-    writeFileSync(join(packDir, 'sprite', 'secretary.png'), encodePngRgba(outRgba, 192, 192))
+    encodedSprite = encodePngRgba(outRgba, 192, 192)
+  }
+  if (outOfPaletteCount > 0 || statusPixels > 0 || semiTransparentCount > 0) {
+    throw new Error(`色板核验未通过，拒绝入库 (outOfPalette=${outOfPaletteCount}, status=${statusPixels}, semiAlpha=${semiTransparentCount})`)
+  }
+  const packDir = join(input.stateDir, 'avatars', input.id)
+  const portraitDir = join(packDir, 'portrait')
+  mkdirSync(portraitDir, { recursive: true })
+  for (const mood of MOODS) writeFileSync(join(portraitDir, `${mood}.png`), encodedPortraits[mood])
+  if (encodedSprite) {
+    mkdirSync(join(packDir, 'sprite'), { recursive: true })
+    writeFileSync(join(packDir, 'sprite', 'secretary.png'), encodedSprite)
   }
   const createdAt = (input.now?.() ?? new Date()).toISOString()
+  const provider = input.provider ?? 'remote-ai'
   writeFileSync(join(packDir, 'manifest.json'), JSON.stringify({
-    v: 1, id: input.id, name: input.name, source: 'ai', createdAt,
+    v: 1, id: input.id, name: input.name, source: 'ai', provider, createdAt,
     palette: { quantized: true, colors: 46, nonStatusColors: NON_STATUS_PALETTE.length },
-    generation: { model: input.model, seed: input.seed, prompt: input.prompt },
+    generation: { model: input.model, provider, seed: input.seed, prompt: input.prompt },
   }, null, 2))
   writeFileSync(join(packDir, 'metrics.json'), JSON.stringify({
     outOfPaletteCount, statusPixels, semiTransparentCount, nativeSize: [PORTRAIT_W, PORTRAIT_H], createdAt,
   }, null, 2))
   return {
-    id: input.id, name: input.name, source: 'ai', createdAt,
+    id: input.id, name: input.name, source: 'ai', provider, createdAt,
     portraitUrls: {
       neutral: `/avatar-assets/${input.id}/portrait/neutral.png`,
       working: `/avatar-assets/${input.id}/portrait/working.png`,
       happy: `/avatar-assets/${input.id}/portrait/happy.png`,
       concerned: `/avatar-assets/${input.id}/portrait/concerned.png`,
     },
-    ...(decodedSprite ? { spriteUrl: `/avatar-assets/${input.id}/sprite/secretary.png` } : {}),
+    ...(encodedSprite ? { spriteUrl: `/avatar-assets/${input.id}/sprite/secretary.png` } : {}),
     quantized: true, outOfPaletteCount, statusPixels, semiTransparentCount,
   }
 }
 
 export function listAvatarPacks(stateDir: string, store: Store): { activeId: string; items: AvatarPackSummary[] } {
   const preset: AvatarPackSummary = {
-    id: DEFAULT_AVATAR_ID, name: '胡桃木默认秘书', source: 'preset', createdAt: '2026-11-23T00:00:00.000Z',
+    id: DEFAULT_AVATAR_ID, name: '胡桃木默认秘书', source: 'preset', provider: 'preset', createdAt: '2026-11-23T00:00:00.000Z',
     portraitUrls: {
       neutral: '/assets/f1-proof/portrait_neutral.png', working: '/assets/f1-proof/portrait_working.png',
       happy: '/assets/f1-proof/portrait_happy.png', concerned: '/assets/f1-proof/portrait_concerned.png',
@@ -243,11 +257,11 @@ export function listAvatarPacks(stateDir: string, store: Store): { activeId: str
       if (!entry.isDirectory() || !AVATAR_ID_RE.test(entry.name)) continue
       const dir = join(root, entry.name)
       try {
-        const m = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) as { name?: string; createdAt?: string }
+        const m = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) as { name?: string; createdAt?: string; provider?: AvatarProviderKind }
         const met = JSON.parse(readFileSync(join(dir, 'metrics.json'), 'utf8')) as { outOfPaletteCount?: number; statusPixels?: number; semiTransparentCount?: number }
         if (!MOODS.every(mood => existsSync(join(dir, 'portrait', `${mood}.png`)))) continue
         items.push({
-          id: entry.name, name: m.name || entry.name, source: 'ai', createdAt: m.createdAt || '',
+          id: entry.name, name: m.name || entry.name, source: 'ai', provider: m.provider ?? 'remote-ai', createdAt: m.createdAt || '',
           portraitUrls: {
             neutral: `/avatar-assets/${entry.name}/portrait/neutral.png`, working: `/avatar-assets/${entry.name}/portrait/working.png`,
             happy: `/avatar-assets/${entry.name}/portrait/happy.png`, concerned: `/avatar-assets/${entry.name}/portrait/concerned.png`,
@@ -268,35 +282,4 @@ export function selectAvatarPack(stateDir: string, store: Store, avatarId: strin
   if (!items.some(i => i.id === avatarId)) throw new Error(`形象包不存在: ${avatarId}`)
   store.set(KV.governance.activeAvatar, avatarId)
   return { ok: true, activeId: avatarId }
-}
-
-export async function generateAvatarPackViaProvider(input: {
-  stateDir: string; id: string; name: string; prompt: string; seed?: number; model?: string
-  endpoint?: string; apiKey?: string; now?: () => Date
-  generator?: (opts: { prompt: string; mood: SecretaryMood; seed: number }) => Promise<Buffer>
-}): Promise<AvatarPackSummary> {
-  const seed = input.seed ?? 20261126
-  const model = input.model ?? 'gpt-image-1'
-  const rawPortraits = {} as Record<SecretaryMood, Buffer>
-  if (input.generator) {
-    for (const mood of MOODS) rawPortraits[mood] = await input.generator({ prompt: input.prompt, mood, seed })
-  } else {
-    if (!input.endpoint || !input.apiKey) throw new Error('未配置生图服务端点或 API Key（请通过运行期设置传入）')
-    for (const mood of MOODS) {
-      const res = await fetch(input.endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${input.apiKey}` },
-        body: JSON.stringify({ model, prompt: `${input.prompt}, pixel art bust portrait, ${mood} expression, flat white background`, size: '768x960', response_format: 'b64_json' }),
-      })
-      if (!res.ok) throw new Error(`生图请求失败 (${res.status})`)
-      const json = await res.json() as { data?: { b64_json?: string }[] }
-      const b64 = json.data?.[0]?.b64_json
-      if (!b64) throw new Error('生图响应缺少 b64_json')
-      rawPortraits[mood] = Buffer.from(b64, 'base64')
-    }
-  }
-  return processAndStoreAvatarPack({
-    stateDir: input.stateDir, id: input.id, name: input.name, prompt: input.prompt, model, seed, rawPortraits,
-    ...(input.now ? { now: input.now } : {}),
-  })
 }

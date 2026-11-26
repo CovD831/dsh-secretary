@@ -119,7 +119,7 @@ export async function readSpineProjection(
     && (!ticketId || ev.stream === `ticket:${ticketId}` || (isRecord(ev.payload) && ev.payload['ticketId'] === ticketId))
     && (!type || ev.type === type),
   )
-  const items = matched.slice(0, limit)
+  const items = query.tail ? matched.slice(-limit) : matched.slice(0, limit)
   return { items, totalMatched: matched.length, headSeq, nextSinceSeq: items.length ? items[items.length - 1]!.seq : null, hasMore: matched.length > limit }
 }
 

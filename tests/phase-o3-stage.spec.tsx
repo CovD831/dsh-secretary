@@ -3,6 +3,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { StageApp } from '../src/office-app/stage-app.tsx'
+import { createInitialActors, isoToScreen } from '../src/office-app/iso-engine.ts'
+import { solveOfficeLayout } from '../src/office-app/layout-solver.ts'
 
 declare global { var IS_REACT_ACT_ENVIRONMENT: boolean }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -208,16 +210,14 @@ describe('Phase O3 Pixel Office Stage', () => {
     expect(byText('m0:seq:108')).toBeTruthy()
     await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="关闭器物面板"]')!.click() })
 
-    await act(async () => { byText('门牌簿')!.click() })
-    const wsBtn = await waitText('repo-alpha')
-    await act(async () => { wsBtn.click() })
-    await waitText('repo-alpha')
-
     const canvas = document.querySelector<HTMLCanvasElement>('canvas[aria-label="像素办公室主舞台"]')!
     vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
       left: 0, top: 0, width: 1440, height: 900, right: 1440, bottom: 900, x: 0, y: 0, toJSON: () => ({}),
     })
-    for (const [cx, cy] of [[944, 340], [976, 356], [912, 324]]) {
+    const plan = solveOfficeLayout('default', 1)
+    const lead = createInitialActors(plan).find(a => a.role === 'lead')!
+    const leadPos = isoToScreen(lead.u + 0.5, lead.v + 0.5, plan.origin, 2)
+    for (const [cx, cy] of [[944, 340], [976, 356], [912, 324], [leadPos.x, leadPos.y - 16]]) {
       await act(async () => {
         canvas.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: cx, clientY: cy }))
       })
@@ -225,5 +225,96 @@ describe('Phase O3 Pixel Office Stage', () => {
     }
     await waitText('运行 vitest 幂等校验')
     expect(calls.some(c => c.method === 'GET' && c.path === 'tickets/t-101/transcript')).toBe(true)
+    await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="关闭器物面板"]')!.click() })
+
+    await act(async () => { byText('门牌簿')!.click() })
+    const wsBtn = await waitText('repo-alpha')
+    await act(async () => { wsBtn.click() })
+    await waitText('repo-alpha')
+  })
+
+  it('filters tickets and resident workers by workspaceId when switching doorplate rooms (B3)', async () => {
+    const multiTickets = [
+      {
+        id: 't-default', title: '主室工单', state: 'open', stage: 'working', action: 'running',
+        actions: { retry: false, stop: true }, strength: 'high', assignments: 1, inputs: 0, undelivered: 0,
+        sessionId: 'worker-t-default', summary: '主室任务', createdAt: '2026-11-26T08:00:00Z', updatedAt: '2026-11-26T08:02:00Z', threads: [],
+      },
+      {
+        id: 't-demo', title: 'Demo 仓库工单', state: 'open', stage: 'working', action: 'running', workspace: 'demo-repo',
+        actions: { retry: false, stop: true }, strength: 'high', assignments: 1, inputs: 0, undelivered: 0,
+        sessionId: 'worker-t-demo', summary: 'Demo 任务', createdAt: '2026-11-26T08:00:00Z', updatedAt: '2026-11-26T08:02:00Z', threads: [],
+      },
+    ]
+    const origFetch = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const path = String(url).replace(/^\/orchestrator\/api\//, '').split('?')[0]!
+      if (path === 'tickets') return new Response(JSON.stringify({ items: multiTickets, next_offset: null }), { status: 200 })
+      if (path === 'tickets/t-default/transcript') {
+        return new Response(JSON.stringify({
+          ticketId: 't-default', sessionId: 'worker-t-default', headSeq: 1, truncated: false,
+          entries: [{ id: 'ed0', at: '2026-11-26T08:01:00Z', kind: 'assistant', summary: '主室终端日志' }],
+        }), { status: 200 })
+      }
+      if (path === 'tickets/t-demo/transcript') {
+        return new Response(JSON.stringify({
+          ticketId: 't-demo', sessionId: 'worker-t-demo', headSeq: 3, truncated: false,
+          entries: [{ id: 'ed1', at: '2026-11-26T08:01:00Z', kind: 'assistant', summary: 'Demo 专属终端日志' }],
+        }), { status: 200 })
+      }
+      if (path === 'settings') {
+        return new Response(JSON.stringify({
+          policyVersion: 'v1',
+          blocks: {
+            policy: { value: {}, revision: 1 }, eval: { value: {}, revision: 1 }, executor: { value: {}, revision: 1 },
+            workspaces: {
+              value: [
+                { id: 'demo-repo', repository: '/srv/demo', baseBranch: 'main', branchPrefix: 'bot/', isolation: 'I2' },
+                { id: 'empty-repo', repository: '/srv/empty', baseBranch: 'main', branchPrefix: 'bot/', isolation: 'I2' },
+              ],
+              revision: 1,
+            },
+          },
+          sources: [], environment: { root: '/srv/default', variables: [] },
+        }), { status: 200 })
+      }
+      return origFetch(url, init)
+    }))
+
+    await act(async () => { root!.render(<StageApp />) })
+    await waitText('已整理交接公文。')
+
+    const canvas = document.querySelector<HTMLCanvasElement>('canvas[aria-label="像素办公室主舞台"]')!
+    vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
+      left: 0, top: 0, width: 1440, height: 900, right: 1440, bottom: 900, x: 0, y: 0, toJSON: () => ({}),
+    })
+    const openWorker = async (wsId: string) => {
+      const plan = solveOfficeLayout(wsId, 1)
+      const lead = createInitialActors(plan).find(a => a.role === 'lead')!
+      const pos = isoToScreen(lead.u + 0.5, lead.v + 0.5, plan.origin, 2)
+      await act(async () => {
+        canvas.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: pos.x, clientY: pos.y - 16 }))
+      })
+    }
+
+    await openWorker('default')
+    await waitText('主室工单')
+    expect(byText('Demo 仓库工单')).toBeUndefined()
+    await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="关闭器物面板"]')!.click() })
+
+    await act(async () => { byText('门牌簿')!.click() })
+    await act(async () => { (await waitText('demo-repo')).click() })
+    await waitText('demo-repo')
+
+    await openWorker('demo-repo')
+    await waitText('Demo 仓库工单')
+    await waitText('Demo 专属终端日志')
+    await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="关闭器物面板"]')!.click() })
+
+    await act(async () => { byText('门牌簿')!.click() })
+    await act(async () => { (await waitText('empty-repo')).click() })
+    await waitText('empty-repo')
+    await openWorker('empty-repo')
+    await waitText('当前工作区暂无工单。')
   })
 })
