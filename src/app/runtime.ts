@@ -292,7 +292,8 @@ export class Runtime extends Service implements SourceHost {
     const host = this.httpHost()
     this.disposers.push(registerHttp(this.ctx, host))
     this.officeServer = new OfficeServer({ host, onError: err => this.ctx.logger.warn('office-server: %s', String(err)) })
-    const officePort = this.machine.officePort?.get() ?? 0
+    const rawPort = this.machine.officePort
+    const officePort = typeof rawPort === 'number' ? rawPort : rawPort?.get?.() ?? 0
     if (officePort > 0) {
       try { await this.officeServer.start(officePort) }
       catch (err) { this.ctx.logger.warn('office-server start skipped: %s', String(err)) }

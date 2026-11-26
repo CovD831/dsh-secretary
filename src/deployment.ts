@@ -31,7 +31,7 @@ export const Config = s.object({
   admissionContextTimeoutMs: s.number().min(LIMITS.admissionContextTimeoutMs.min).max(LIMITS.admissionContextTimeoutMs.max).step(1)
     .default(15000).description('Time limit of one context read during an assessment, in milliseconds.').volatile(),
   officePort: s.number().min(0).max(65535).step(1).default(0)
-    .description('Standalone loopback Pixel Office HTTP+SSE port (0 disables).').volatile(),
+    .description('Standalone loopback Pixel Office HTTP+SSE port (0 disables).'),
 })
 export type DeploymentConfig = ReturnType<typeof Config>
 export interface Machine {
@@ -39,7 +39,7 @@ export interface Machine {
   promptMaxChars: Volatile<number>
   admissionContextMaxPages: Volatile<number>
   admissionContextTimeoutMs: Volatile<number>
-  officePort?: Volatile<number>
+  officePort?: number | Volatile<number>
 }
 const MOVED: Record<string, string> = {
   repository: 'on the GitHub Source', branchPrefix: 'in the prepare command of the Execution settings', github: 'on the GitHub Source',
