@@ -172,20 +172,21 @@ export class Runtime extends Service implements SourceHost {
           governance.secretaryMemoryCache = block
           this.secretaryMemoryBlock = block
         },
-        onMasterTurnIdleReply: text => {
+        onMasterTurnIdleReply: (text, expectedBossFeedId) => {
           const feed = store.get(KV.governance.feed) ?? []
           const last = feed.at(-1)
-          if (!last || last.role !== 'boss') return
+          if (!last || last.role !== 'boss' || last.id !== expectedBossFeedId) return
+          const clipped = text.length > 240 ? `${text.slice(0, 237)}…` : text
           const id = `say-fallback-${randomUUID().slice(0, 10)}`
           const at = governance.nowDate().toISOString()
           store.atomic(() => {
             const sourceRef = governance.appender.append({
               id: `secretary:say:${id}`, at, stream: 'secretary:dialog', type: 'secretary.say',
-              source: { kind: 'secretary', ref: 'assistant_fallback' }, evidence: [], taint: 'trusted',
-              payload: { text, expression: 'neutral' },
+              source: { kind: 'secretary', ref: 'assistant_fallback' }, evidence: [], taint: 'untrusted',
+              payload: { text: clipped, expression: 'neutral' },
             })
             appendSecretaryFeed(store, {
-              id, at, role: 'secretary', kind: 'say', text, expression: 'neutral', sourceRef,
+              id, at, role: 'secretary', kind: 'say', text: clipped, expression: 'neutral', sourceRef,
               ...(last.triggerId ? { triggerId: last.triggerId } : {}),
             })
           })

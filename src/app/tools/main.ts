@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { z } from 'zod'
-import { UserError, followupOwners, key, reasonText, type Decision, type DecisionKind, type EngineForMainSession, type EngineForPeople, type Engine, type Outbox }
+import { UserError, followupOwners, key, latestAssignment, liveTicket, reasonText, ticketOutcome, type Decision, type DecisionKind, type EngineForMainSession, type EngineForPeople, type Engine, type Outbox }
   from '../../core/index.ts'
 import { IM_WORDS, NOTE_WORDS, wordCount } from '../../infra/text.ts'
 import { AssessmentSchema, WorktreeNameSchema, type EvalRead, type MasterAssessor } from '../assessment.ts'
@@ -280,6 +280,18 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
               })()
             : undefined
         if (trigger && trigger.source === 'secretary-bus' && !trigger.channel) {
+          const ticket = args.ticket_id ? host.store.tickets.get(args.ticket_id) : undefined
+          if (args.ticket_id && !ticket) throw new UserError('unknownTicket', { ticketId: args.ticket_id })
+          if (args.purpose === 'result') {
+            const outcome = ticket && ticketOutcome(ticket)
+            const reported = !!ticket && liveTicket(ticket) && latestAssignment(ticket)?.report?.state === 'ready'
+            const ready = outcome === 'merged' || outcome === 'completed' || outcome === 'dropped' || reported
+            if (!ticket || !ready) throw new UserError('notReady')
+          }
+          const attention = args.purpose === 'attention' ? ticket?.attention : undefined
+          if (args.purpose === 'attention' && (!attention || attention.question !== args.human_action)) throw new UserError('notAttention')
+          if (args.purpose === 'answer' && !trigger.human) throw new UserError('notQuestion')
+          if (args.purpose === 'answer' && ticket && !ticket.answers?.includes(trigger.id)) throw new UserError('noAnswer')
           const id = `reply-${randomUUID().slice(0, 10)}`
           const at = host.governance?.nowDate().toISOString() ?? new Date().toISOString()
           host.store.atomic(() => {

@@ -23,9 +23,9 @@ export const ProposeSchema = z.object({
   slug: z.string().optional(),
   workspace_key: z.string().optional(),
   source_ref: SourceRefSchema.optional(),
-  trigger_id: z.string().min(1).optional().describe('老板消息的 trigger_id；推荐直接传此字段，系统自动从 M0 事件脊定位真实 trigger.received 的 source_ref'),
+  trigger_id: z.string().min(1).optional().describe('老板消息 trigger_id，自动从 M0 定位真实 source_ref'),
   statement: z.string().optional(),
-  scope: z.string().optional().describe('记忆作用域：global、person:<id> 或 workspace:<key>；省略或口语化名称时自动按层归一'),
+  scope: z.string().optional().describe('global / person:<id> / workspace:<key>'),
   source_type: z.enum(['session', 'inference']).optional(),
   topic_key: z.string().optional(),
   clearance: z.enum(['public', 'workspace', 'private']).optional(),
@@ -69,9 +69,9 @@ export const DraftSchema = z.object({
   scope: z.string().optional(),
   kind: z.enum(['gate', 'standing-order', 'evaluator', 'counter-rule']).optional(),
   level: z.enum(['object', 'meta']).optional(),
-  point: z.string().optional().describe('合法挂载点 <scope>.<stage>，如 verify.preflight、verify.completion、tool.before_execute、ticket.dispatch、outbox.send、intake.received'),
+  point: z.string().optional().describe('挂载点 <scope>.<stage>，如 verify.preflight/verify.completion/ticket.dispatch/outbox.send/intake.received'),
   requires: z.array(z.string()).optional(),
-  params: z.record(z.string(), z.unknown()).optional().describe('参数槽位定义，每个键的值必须为 ParamSpec 对象：{ type: "string"|"number"|"boolean"|"enum", default?, min?, max?, values? }'),
+  params: z.record(z.string(), z.unknown()).optional().describe('ParamSpec 对象：{ type: "string"|"number"|"boolean"|"enum", default?, min?, max?, values? }'),
   exceptions: z.array(z.string()).optional(),
   repairHint: z.string().optional(),
   intent: z.string().optional(),
@@ -100,11 +100,7 @@ export const DraftSchema = z.object({
   }).strict()).optional(),
   unansweredSlots: z.array(z.string()).optional(),
   rule: z.record(z.string(), z.unknown()).optional().describe(
-    '零代码声明式规则（自定义 gate/counter-rule/evaluator 必填）。支持 4 种积木：' +
-    '1) command_check: { kind: "command_check", requiredCommands: ["tsc --noEmit"], inputField?: "commands", requireExitZero?: true }（用例 ctx 形如 { commands: [{ command: "tsc --noEmit", exitCode: 0 }] }）；' +
-    '2) path_rules: { kind: "path_rules", inputField?: "changedPaths", forbiddenGlobs: [...] }；' +
-    '3) predicates: { kind: "predicates", mode?: "all"|"any", predicates: [{ path, op, value? }] }；' +
-    '4) workflow_sop: { kind: "workflow_sop", signal, steps: [...] }',
+    '声明式规则（自定义 gate/counter-rule/evaluator 必填）：command_check { kind, requiredCommands, inputField? }（ctx: { commands: [{ command, exitCode }] }）、path_rules、predicates 或 workflow_sop',
   ),
   measures: z.string().optional(),
   mandate: MandateSchema.optional(),

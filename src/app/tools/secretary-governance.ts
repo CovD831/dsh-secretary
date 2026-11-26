@@ -29,7 +29,7 @@ async function resolveTriggerSpineEnvelope(
 ): Promise<{ ref: SourceRef; env: SpineEnvelope<Record<string, unknown>> } | undefined> {
   if (gov.storeRef?.db) {
     try {
-      const rows = gov.storeRef.db.prepare("SELECT value FROM event_spine WHERE type = 'trigger.received' ORDER BY seq DESC LIMIT 200").all() as { value?: string }[]
+      const rows = gov.storeRef.db.prepare("SELECT value FROM event_spine WHERE value LIKE '%\"trigger.received\"%' ORDER BY seq DESC LIMIT 200").all() as { value?: string }[]
       for (const row of rows) {
         if (!row.value) continue
         const env = JSON.parse(row.value) as SpineEnvelope<Record<string, unknown>>
