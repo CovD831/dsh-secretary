@@ -23,6 +23,22 @@ export function family<V, A extends unknown[] = [string]>(prefix: string, format
   return Object.assign((...name: A) => `${prefix}${format(...name)}` as Key<V>, { prefix })
 }
 
+/** Persisted completion-guard observation state per ticket (survives host restarts). */
+export interface PersistedCompletionObs {
+  sessionDiffs: string[]
+  sawShellWrite: boolean
+  sawUnmeasuredTool: boolean
+  unmeasuredTools: string[]
+}
+
+/** Persisted runtime-guard budget state per assignment (survives host restarts). */
+export interface PersistedRuntimeBudget {
+  turns: number
+  stallTurns: number
+  totalTokens: number
+  tripped: boolean
+}
+
 export const KV = {
   /** Store: current database schema version. */
   store: { schema: record<number>('schema') },
@@ -48,6 +64,8 @@ export const KV = {
     temperatureScaler: record<TemperatureScaler>('governance-temperature-scaler'),
     openedHoldouts: record<Record<string, string>>('governance-opened-holdouts'),
     activeAvatar: record<string>('governance-active-avatar'),
+    completionObs: record<Record<string, PersistedCompletionObs>>('governance-completion-obs'),
+    runtimeBudgets: record<Record<string, PersistedRuntimeBudget>>('governance-runtime-budgets'),
   },
   /** Sessions: prompt revisions each Session has worked under, ordered oldest first; the last entry (`.at(-1)`) is its active revision. */
   sessions: { prompts: family<number[], [session: string]>('session-prompts:') },

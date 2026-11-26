@@ -8,11 +8,9 @@ import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Store } from '../app/store.ts'
 import type { Ticket } from '../core/index.ts'
-import {
-  executeVerifyRerunCommands,
-  type ExecuteVerifyRerunOptions, type ExecuteVerifyRerunReport,
-} from '../judgement/gates/verify-rerun.ts'
+import { executeVerifyRerunCommands, type ExecuteVerifyRerunOptions, type ExecuteVerifyRerunReport } from '../judgement/gates/verify-rerun.ts'
 import type { ExtendedJudgementRegistry, JudgementRegistry, PointEvaluation } from '../judgement/index.ts'
+import { KV, type PersistedCompletionObs } from '../kv.ts'
 import { redactValue } from '../spine/redact.ts'
 import type { SpineAppender } from '../spine/types.ts'
 import { resolveRootTicketId } from './runtime-guard.ts'
@@ -28,48 +26,23 @@ declare module '../judgement/types.ts' {
   }
 }
 
-interface TicketObservation {
-  readonly sessionDiffs: Set<string>
-  sawShellWrite: boolean
-  sawUnmeasuredTool: boolean
-  readonly unmeasuredTools: Set<string>
-}
-
-interface GitStatusSnapshot {
-  readonly gitDirtyPaths: string[] | null
-  readonly untrackedPaths: string[] | null
-  readonly headRev: string
-}
-
+interface TicketObservation { readonly sessionDiffs: Set<string>; sawShellWrite: boolean; sawUnmeasuredTool: boolean; readonly unmeasuredTools: Set<string> }
+interface GitStatusSnapshot { readonly gitDirtyPaths: string[] | null; readonly untrackedPaths: string[] | null; readonly headRev: string }
 export type PreExecuteDecision = 'allow' | { readonly kind: 'deny'; readonly reason: string }
 
 /** `PreExecuteCompletionGuard` 依赖注入契约。 */
 export interface PreExecuteCompletionGuardDeps {
-  readonly context: Context
-  readonly store: Store
-  readonly registry: ExtendedJudgementRegistry | JudgementRegistry
-  readonly appender?: SpineAppender
-  readonly now?: () => Date
-  readonly runVerifyCommand?: ExecuteVerifyRerunOptions['runCommand']
-  readonly rerunCache?: Map<string, ExecuteVerifyRerunReport>
-  readonly verifyTimeoutMs?: number
-  readonly autoInstall?: boolean
+  readonly context: Context; readonly store: Store; readonly registry: ExtendedJudgementRegistry | JudgementRegistry
+  readonly appender?: SpineAppender; readonly now?: () => Date; readonly runVerifyCommand?: ExecuteVerifyRerunOptions['runCommand']
+  readonly rerunCache?: Map<string, ExecuteVerifyRerunReport>; readonly verifyTimeoutMs?: number; readonly autoInstall?: boolean
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === 'object' && !Array.isArray(v))
-
-function unquoteGitPath(raw: string): string {
+const unquoteGitPath = (raw: string): string => {
   const s = raw.trim()
-  return s.startsWith('"') && s.endsWith('"') && s.length >= 2
-    ? s.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\')
-    : s
+  return s.startsWith('"') && s.endsWith('"') && s.length >= 2 ? s.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\') : s
 }
-
-function stripRenameArrow(raw: string): string {
-  const idx = raw.lastIndexOf(' -> ')
-  return idx >= 0 ? unquoteGitPath(raw.slice(idx + 4)) : unquoteGitPath(raw)
-}
-
+const stripRenameArrow = (raw: string): string => { const idx = raw.lastIndexOf(' -> '); return idx >= 0 ? unquoteGitPath(raw.slice(idx + 4)) : unquoteGitPath(raw) }
 function formatBlockReason(point: string, ev: PointEvaluation): string {
   if (ev.verdict.kind === 'deny') return `[${point}] ${ev.verdict.blockers.join('；')}`
   if (ev.verdict.kind === 'unmeasured') return `[${point}] 判据不可测 (${ev.verdict.cause})：${ev.verdict.detail}`
@@ -83,7 +56,23 @@ export class PreExecuteCompletionGuard {
   private readonly disposers: Array<() => void> = []
 
   constructor(private readonly deps: PreExecuteCompletionGuardDeps) {
+    this.hydrateObs()
     if (deps.autoInstall !== false) this.install()
+  }
+
+  private hydrateObs(): void {
+    const saved = this.deps.store.get?.(KV.governance.completionObs)
+    if (!saved) return
+    for (const [id, o] of Object.entries(saved).slice(-MAX_OBSERVED_TICKETS)) {
+      this.observed.set(id, { sessionDiffs: new Set(o.sessionDiffs ?? []), sawShellWrite: Boolean(o.sawShellWrite), sawUnmeasuredTool: Boolean(o.sawUnmeasuredTool), unmeasuredTools: new Set(o.unmeasuredTools ?? []) })
+    }
+  }
+
+  private persistObs(): void {
+    if (typeof this.deps.store.set !== 'function') return
+    const out: Record<string, PersistedCompletionObs> = {}
+    for (const [id, o] of this.observed) out[id] = { sessionDiffs: [...o.sessionDiffs], sawShellWrite: o.sawShellWrite, sawUnmeasuredTool: o.sawUnmeasuredTool, unmeasuredTools: [...o.unmeasuredTools] }
+    this.deps.store.set(KV.governance.completionObs, out)
   }
 
   /** 注册 `tools/result` 与 `tools/pre-execute` 监听（幂等，返回卸载函数）。 */
@@ -158,15 +147,23 @@ export class PreExecuteCompletionGuard {
     const rootId = resolveRootTicketId(this.deps.context, (exec.agent.session as never) ?? exec.agent.id)
     if (!rootId) return
     const obs = this.ensureObs(rootId), tool = exec.name.trim()
-    if (SHELL_TOOL_RE.test(tool)) { obs.sawShellWrite = true; obs.unmeasuredTools.add(tool) }
-    else if (EDITOR_BLIND_RE.test(tool)) { obs.sawUnmeasuredTool = true; obs.unmeasuredTools.add(tool) }
-    if (!isRecord(result.meta) || !Array.isArray(result.meta['diffs'])) return
-    const workdir = this.deps.store.tickets.get(rootId)?.execution?.directory ?? exec.agent.session?.header?.cwd
-    for (const diff of result.meta['diffs']) {
-      if (!isRecord(diff) || typeof diff['path'] !== 'string') continue
-      const norm = this.normalizeObservedPath(diff['path'], workdir)
-      if (norm) obs.sessionDiffs.add(norm)
+    let changed = false
+    if (SHELL_TOOL_RE.test(tool)) {
+      if (!obs.sawShellWrite || !obs.unmeasuredTools.has(tool)) changed = true
+      obs.sawShellWrite = true; obs.unmeasuredTools.add(tool)
+    } else if (EDITOR_BLIND_RE.test(tool)) {
+      if (!obs.sawUnmeasuredTool || !obs.unmeasuredTools.has(tool)) changed = true
+      obs.sawUnmeasuredTool = true; obs.unmeasuredTools.add(tool)
     }
+    if (isRecord(result.meta) && Array.isArray(result.meta['diffs'])) {
+      const workdir = this.deps.store.tickets.get(rootId)?.execution?.directory ?? exec.agent.session?.header?.cwd
+      for (const diff of result.meta['diffs']) {
+        if (!isRecord(diff) || typeof diff['path'] !== 'string') continue
+        const norm = this.normalizeObservedPath(diff['path'], workdir)
+        if (norm && !obs.sessionDiffs.has(norm)) { obs.sessionDiffs.add(norm); changed = true }
+      }
+    }
+    if (changed) this.persistObs()
   }
 
   private async collectGitStatus(cwd?: string): Promise<GitStatusSnapshot> {

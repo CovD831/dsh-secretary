@@ -2,7 +2,7 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { isoTime } from '../core/model.ts'
@@ -43,23 +43,13 @@ function validateProposal(p: MemoryProposal): { error: WriteResult } | { targetR
   }
   if (!validRef(p.sourceRef)) return { error: reject('missing-source-ref', '缺少有效的 M0 sourceRef (seq > 0 且 id 非空)') }
   if (!p.statement.trim() || !p.author.trim()) return { error: reject('invalid-input', 'statement 与 author 不能为空') }
-  if (p.expectedRevision !== undefined && (!Number.isSafeInteger(p.expectedRevision) || p.expectedRevision < 0)) {
-    return { error: reject('invalid-input', 'expectedRevision 必须为非负整数') }
-  }
+  if (p.expectedRevision !== undefined && (!Number.isSafeInteger(p.expectedRevision) || p.expectedRevision < 0)) return { error: reject('invalid-input', 'expectedRevision 必须为非负整数') }
   if (p.importance !== undefined && (!Number.isFinite(p.importance) || p.importance < 0 || p.importance > 10)) return { error: reject('invalid-input', 'importance 须在 0–10 间') }
-  if ([p.observedAt, p.validFrom, p.lastAccessedAt].some(ts => ts !== undefined && !Number.isFinite(Date.parse(ts)))) {
-    return { error: reject('invalid-input', '时间戳格式非法') }
-  }
+  if ([p.observedAt, p.validFrom, p.lastAccessedAt].some(ts => ts !== undefined && !Number.isFinite(Date.parse(ts)))) return { error: reject('invalid-input', '时间戳格式非法') }
   const validScope = p.scope === 'global' || /^workspace:[^\s]+$/.test(p.scope) || /^person:[^\s]+$/.test(p.scope)
-  if (!validScope || (p.layer === 'm4' && p.scope !== 'global') || (p.layer === 'm2' && p.scope.startsWith('workspace:'))) {
-    return { error: reject('scope-mismatch', `层级 ${p.layer} 不允许作用域 "${p.scope}"`) }
-  }
-  if (p.layer === 'm2' && (p.taint === 'external_untrusted' || p.sourceType === 'external_doc')) {
-    return { error: reject('untrusted-m2-forbidden', '禁止不可信外部来源 (external_untrusted/external_doc) 写入 M2 偏好层') }
-  }
-  if (p.layer === 'm3' && (!p.scope.startsWith('workspace:') || (p.workspaceKey && p.workspaceKey !== p.scope.slice(10)))) {
-    return { error: reject('scope-mismatch', `M3 作用域与 workspaceKey 不匹配: "${p.scope}"`) }
-  }
+  if (!validScope || (p.layer === 'm4' && p.scope !== 'global') || (p.layer === 'm2' && p.scope.startsWith('workspace:'))) return { error: reject('scope-mismatch', `层级 ${p.layer} 不允许作用域 "${p.scope}"`) }
+  if (p.layer === 'm2' && (p.taint === 'external_untrusted' || p.sourceType === 'external_doc')) return { error: reject('untrusted-m2-forbidden', '禁止不可信外部来源 (external_untrusted/external_doc) 写入 M2 偏好层') }
+  if (p.layer === 'm3' && (!p.scope.startsWith('workspace:') || (p.workspaceKey && p.workspaceKey !== p.scope.slice(10)))) return { error: reject('scope-mismatch', `M3 作用域与 workspaceKey 不匹配: "${p.scope}"`) }
   if (p.layer === 'm4') {
     const uniq = new Set((p.workspacesSeen ?? []).map(s => s.trim()).filter(Boolean))
     if ((uniq.size < 2 || (p.seenCount ?? 0) < 2) && p.sourceType !== 'user_ruling') {
@@ -141,6 +131,20 @@ export class MemoryWriter {
     const existing = await readMemoryPage(this.dir, 'm6/ledger.md')
     return existing?.layer === 'm6' ? existing : { version: 1, layer: 'm6', pageKey: 'm6/ledger', scope: 'global', revision: 0, updatedAt: nowIso, items: [], changeLog: [] }
   }
+  private async writeAndCommit(pages: readonly [string, FactPage | LedgerPage][], message: string): Promise<string | undefined> {
+    const snaps = new Map<string, string | null>()
+    for (const [rel] of pages) {
+      const abs = join(this.dir, rel)
+      snaps.set(abs, await readFile(abs, 'utf8').catch(e => ((e as NodeJS.ErrnoException).code === 'ENOENT' ? null : Promise.reject(e))))
+    }
+    try {
+      for (const [rel, page] of pages) await writeMemoryPage(this.dir, rel, page)
+      return await this.commitPaths(pages.map(([rel]) => rel), message)
+    } catch (err) {
+      for (const [abs, prev] of snaps) await (prev === null ? rm(abs, { force: true }) : writeFile(abs, prev, 'utf8')).catch(() => {})
+      throw err
+    }
+  }
   private async appendAttention(input: AttentionProposal, nowIso: string, author: string): Promise<{ item: AttentionItem; commit?: string }> {
     const ledger = await this.loadLedger(nowIso)
     const item: AttentionItem = {
@@ -151,8 +155,7 @@ export class MemoryWriter {
     }
     ledger.items.push(item); ledger.revision += 1; ledger.updatedAt = nowIso
     ledger.changeLog.push(formatChangeLogLine(nowIso, `m6:${item.kind}`, item.id, input.sourceRefs[0]!, author, item.question))
-    await writeMemoryPage(this.dir, 'm6/ledger.md', ledger)
-    return { item, commit: await this.commitPaths(['m6/ledger.md'], `m6: add ${item.kind} ${item.id}`) }
+    return { item, commit: await this.writeAndCommit([['m6/ledger.md', ledger]], `m6: add ${item.kind} ${item.id}`) }
   }
 
   propose(proposal: MemoryProposal): Promise<WriteResult> {
@@ -234,8 +237,8 @@ export class MemoryWriter {
       finalPage.entries.push(entry); finalPage.revision += 1; finalPage.updatedAt = nowIso
       finalPage.changeLog.push(formatChangeLogLine(nowIso, 'accept', entry.id, proposal.sourceRef, proposal.author, entry.statement))
       touched.set(checked.targetRel, finalPage)
-      for (const [relPath, page] of touched) await writeMemoryPage(this.dir, relPath, page)
-      const supersededIds = toInvalidate.map(c => c.entry.id), commit = await this.commitPaths([...touched.keys()], `memory(${proposal.layer}): accept ${entry.id}`)
+      const supersededIds = toInvalidate.map(c => c.entry.id)
+      const commit = await this.writeAndCommit([...touched.entries()], `memory(${proposal.layer}): accept ${entry.id}`)
       this.emitAudit('memory.accepted', stream, proposal.author, { layer: proposal.layer, entryId: entry.id, pagePath: checked.targetRel, revision: finalPage.revision, supersededIds, ...(entry.m2Kind ? { m2Kind: entry.m2Kind } : {}) }, proposal.sourceRef, taint)
       return { kind: 'accepted', entry, pagePath: checked.targetRel, supersededIds, commit }
     })
@@ -257,8 +260,7 @@ export class MemoryWriter {
       targetEntry.validTo = nowIso; targetEntry.invalidatedBy = `tombstone:${input.sourceRef.id}`; targetEntry.invalidationReason = input.reason.trim()
       factPage.revision += 1; factPage.updatedAt = nowIso
       factPage.changeLog.push(formatChangeLogLine(nowIso, 'tombstone', targetEntry.id, input.sourceRef, input.author, targetEntry.invalidationReason))
-      await writeMemoryPage(this.dir, relPath, factPage)
-      const commit = await this.commitPaths([relPath], `memory(${factPage.layer}): tombstone ${targetEntry.id}`)
+      const commit = await this.writeAndCommit([[relPath, factPage]], `memory(${factPage.layer}): tombstone ${targetEntry.id}`)
       this.emitAudit('memory.tombstoned', `memory:${factPage.layer}`, input.author, { layer: factPage.layer, entryId: targetEntry.id, pagePath: relPath, reason: targetEntry.invalidationReason }, input.sourceRef)
       return { entry: targetEntry, pagePath: relPath, commit }
     })
@@ -293,8 +295,7 @@ export class MemoryWriter {
       else { item.status = input.action === 'dismiss' ? 'dismissed' : input.action === 'approve' ? 'approved' : 'expired'; item.remainingStickyTurns = 0; if (input.action === 'dismiss') setCooldown() }
       item.updatedAt = nowIso; ledger.revision += 1; ledger.updatedAt = nowIso
       ledger.changeLog.push(formatChangeLogLine(nowIso, `m6:${input.action}`, item.id, item.sourceRefs[0]!, author, item.status))
-      await writeMemoryPage(this.dir, 'm6/ledger.md', ledger)
-      const commit = await this.commitPaths(['m6/ledger.md'], `m6: ${input.action} ${item.id}`)
+      const commit = await this.writeAndCommit([['m6/ledger.md', ledger]], `m6: ${input.action} ${item.id}`)
       const evType = input.action === 'dismiss' ? 'memory.rejected' : input.action === 'expire' ? 'memory.tombstoned' : 'memory.accepted'
       this.emitAudit(evType, 'memory:m6', author, { layer: 'm6', action: input.action, attentionId: item.id, status: item.status }, item.sourceRefs[0])
       return { item, commit }
