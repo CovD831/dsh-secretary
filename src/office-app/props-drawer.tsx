@@ -1,5 +1,8 @@
-/** 四大场景治理器物浮层总入口（规章册 / 皮质备忘手账 / 软木体检板 / 机要文件柜），由 Phase O4 填充完整器物实现。 */
-import { DiegeticModal } from './office-api.tsx'
+/** 四大场景治理器物浮层总入口：根据 activeProp 调度《门禁规章册》《皮质备忘手账》《软木体检板》《机要文件柜》。 */
+import { PropCabinet } from './prop-cabinet.tsx'
+import { PropCorkboard } from './prop-corkboard.tsx'
+import { PropLedger } from './prop-ledger.tsx'
+import { PropNotebook } from './prop-notebook.tsx'
 
 export type GovernancePropKind = 'ledger' | 'notebook' | 'corkboard' | 'cabinet'
 
@@ -9,11 +12,11 @@ export interface PropsDrawerProps {
   readonly onChanged?: () => void
 }
 
-export function PropsDrawer({ activeProp, onClose }: PropsDrawerProps) {
+/** 调度对应器物浮层并在写操作成功后通知宿主刷新投影。 */
+export function PropsDrawer({ activeProp, onClose, onChanged }: PropsDrawerProps) {
   if (!activeProp) return null
-  return (
-    <DiegeticModal open title={activeProp} onClose={onClose}>
-      <p>加载器物内容中…</p>
-    </DiegeticModal>
-  )
+  if (activeProp === 'ledger') return <PropLedger open onClose={onClose} onChanged={onChanged} />
+  if (activeProp === 'notebook') return <PropNotebook open onClose={onClose} onChanged={onChanged} />
+  if (activeProp === 'corkboard') return <PropCorkboard open onClose={onClose} onChanged={onChanged} />
+  return <PropCabinet open onClose={onClose} onChanged={onChanged} />
 }
