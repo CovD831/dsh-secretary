@@ -102,23 +102,50 @@ async function readMergedSpine(store: Pick<Store, 'db'> | undefined, stateDir: s
   return [...bySeq.values()].sort((a, b) => a.seq - b.seq)
 }
 
-/** 合并磁盘 M0 分片完整行与 SQLite `event_spine` 未刷盘缓冲，按 `seq` 去重升序分页。 */
+/** 合并磁盘 M0 分片完整行与 SQLite `event_spine` 未刷盘缓冲，按 `seq` 去重升序分页；`tail` 无 `sinceSeq` 时逆序早停。 */
 export async function readSpineProjection(
   store: Pick<Store, 'db'> | undefined,
   stateDir: string,
   query: SpineQuery = {},
 ): Promise<SpineProjectionView> {
-  const all = await readMergedSpine(store, stateDir)
-  const headSeq = all.length ? all[all.length - 1]!.seq : 0
   const sinceSeq = query.sinceSeq !== undefined && Number.isFinite(query.sinceSeq) ? Math.max(0, Math.floor(query.sinceSeq)) : 0
   const limit = Math.min(200, Math.max(1, query.limit !== undefined && Number.isFinite(query.limit) ? Math.floor(query.limit) : 50))
   const ticketId = query.ticketId?.trim() || undefined
   const type = query.type?.trim() || undefined
-  const matched = all.filter(ev =>
+  const matches = (ev: SpineEnvelope): boolean =>
     (sinceSeq <= 0 || ev.seq > sinceSeq)
     && (!ticketId || ev.stream === `ticket:${ticketId}` || (isRecord(ev.payload) && ev.payload['ticketId'] === ticketId))
-    && (!type || ev.type === type),
-  )
+    && (!type || ev.type === type)
+
+  if (query.tail && sinceSeq === 0) {
+    const bySeq = new Map<number, SpineEnvelope>()
+    let headSeq = 0, matchedCount = 0
+    for (const ev of readSqliteBuffer(store)) {
+      bySeq.set(ev.seq, ev)
+      if (ev.seq > headSeq) headSeq = ev.seq
+      if (matches(ev)) matchedCount += 1
+    }
+    const m0Dir = join(stateDir, 'memory', 'm0')
+    let names: string[] = []
+    try { names = (await readdir(m0Dir)).filter(n => SHARD_FILE_RE.test(n)).sort() } catch { names = [] }
+    for (let i = names.length - 1; i >= 0; i--) {
+      if (matchedCount > limit && headSeq > 0) break
+      let events: readonly SpineEnvelope[]
+      try { events = await readCachedShardEvents(join(m0Dir, names[i]!)) } catch { continue }
+      for (let j = events.length - 1; j >= 0; j--) {
+        const ev = events[j]!
+        if (ev.seq > headSeq) headSeq = ev.seq
+        if (!bySeq.has(ev.seq)) { bySeq.set(ev.seq, ev); if (matches(ev)) matchedCount += 1 }
+      }
+    }
+    const matched = [...bySeq.values()].filter(matches).sort((a, b) => a.seq - b.seq)
+    const items = matched.slice(-limit)
+    return { items, totalMatched: matched.length, headSeq, nextSinceSeq: items.length ? items[items.length - 1]!.seq : null, hasMore: matched.length > limit }
+  }
+
+  const all = await readMergedSpine(store, stateDir)
+  const headSeq = all.length ? all[all.length - 1]!.seq : 0
+  const matched = all.filter(matches)
   const items = query.tail ? matched.slice(-limit) : matched.slice(0, limit)
   return { items, totalMatched: matched.length, headSeq, nextSinceSeq: items.length ? items[items.length - 1]!.seq : null, hasMore: matched.length > limit }
 }

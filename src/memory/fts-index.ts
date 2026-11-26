@@ -1,8 +1,10 @@
 /** 可删可重建的 SQLite FTS5 派生记忆索引（只读消费 M1–M4 真源，支持 M0 原文受控降级）。 */
+import { createHash } from 'node:crypto'
 import { existsSync, rmSync } from 'node:fs'
-import { lstat, mkdir, readdir, readFile } from 'node:fs/promises'
+import { lstat, mkdir, readdir } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { readCachedShardEvents } from '../projection/shard-cache.ts'
 import { redactValue } from '../spine/redact.ts'
 import type { SpineEnvelope } from '../spine/types.ts'
 import { listMemoryPages } from './codec.ts'
@@ -13,43 +15,14 @@ export const RECIPE_FINGERPRINT = 'm1-m4-fts5-unicode61-cjk2-v1'
 const SHARD_FILE_RE = /^\d{4}-\d{2}-\d{2}\.jsonl$/
 const CLEARANCE_ORDER: Record<Clearance, number> = { public: 0, workspace: 1, private: 2 }
 
-export interface FtsSearchOptions {
-  readonly now?: Date | string
-  readonly limit?: number
-  readonly fallbackToM0?: boolean
-}
-
-export interface FtsSearchHit {
-  readonly entry: MemoryEntry
-  readonly layer: FactLayer
-  readonly relPath: string
-  readonly score: number
-}
-
+export interface FtsSearchOptions { readonly now?: Date | string; readonly limit?: number; readonly fallbackToM0?: boolean }
+export interface FtsSearchHit { readonly entry: MemoryEntry; readonly layer: FactLayer; readonly relPath: string; readonly score: number }
 export interface M0FallbackHit {
-  readonly seq: number
-  readonly id: string
-  readonly at: string
-  readonly type: string
-  readonly stream: string
-  readonly taint: SpineEnvelope['taint']
-  readonly score: number
-  readonly snippet: string
+  readonly seq: number; readonly id: string; readonly at: string; readonly type: string
+  readonly stream: string; readonly taint: SpineEnvelope['taint']; readonly score: number; readonly snippet: string
 }
-
-export interface FtsSearchResult {
-  readonly hits: readonly FtsSearchHit[]
-  readonly m0FallbackHits: readonly M0FallbackHit[]
-  readonly usedFallback: boolean
-  readonly rebuilt: boolean
-}
-
-export interface MemoryFtsIndexOptions {
-  readonly memoryDir: string
-  readonly dbPath: string
-  readonly recipeFingerprint?: string
-  readonly now?: () => Date
-}
+export interface FtsSearchResult { readonly hits: readonly FtsSearchHit[]; readonly m0FallbackHits: readonly M0FallbackHit[]; readonly usedFallback: boolean; readonly rebuilt: boolean }
+export interface MemoryFtsIndexOptions { readonly memoryDir: string; readonly dbPath: string; readonly recipeFingerprint?: string; readonly now?: () => Date }
 
 /** 提取中英文检索词元（英文单词与中文一元/二元切片），统一供 FTS5 与词法打分使用。 */
 export function tokenizeForSearch(text: string): string[] {
@@ -120,20 +93,9 @@ export async function searchM0Fallback(
 
   const hits: M0FallbackHit[] = []
   for (let i = shards.length - 1; i >= 0; i--) {
-    const filePath = join(m0Dir, shards[i]!)
-    let raw = ''
-    try {
-      const info = await lstat(filePath)
-      if (!info.isFile() || info.isSymbolicLink()) continue
-      raw = await readFile(filePath, 'utf8')
-    } catch { continue }
-    const complete = raw.endsWith('\n') ? raw : raw.slice(0, raw.lastIndexOf('\n') + 1)
-    for (const line of complete.split('\n')) {
-      const trimmed = line.trim()
-      if (!trimmed) continue
-      let ev: SpineEnvelope
-      try { ev = JSON.parse(trimmed) as SpineEnvelope } catch { continue }
-      if (!ev || typeof ev.seq !== 'number' || typeof ev.id !== 'string' || typeof ev.type !== 'string') continue
+    let events: readonly SpineEnvelope[]
+    try { events = await readCachedShardEvents(join(m0Dir, shards[i]!)) } catch { continue }
+    for (const ev of events) {
       if (!canCallerReadM0Event(caller, ev)) continue
       const safePayload = redactValue(ev.payload).value
       const text = `${ev.type} ${ev.stream} ${JSON.stringify(safePayload)}`.toLowerCase()
@@ -152,6 +114,28 @@ export async function searchM0Fallback(
   }
   const limit = Math.max(1, options.limit ?? 10)
   return hits.sort((a, b) => b.score - a.score || b.seq - a.seq).slice(0, limit)
+}
+
+async function computeSourceFingerprint(memoryDir: string): Promise<string> {
+  const parts: string[] = []
+  const walk = async (absDir: string, relDir: string): Promise<void> => {
+    let entries
+    try {
+      const dirSt = await lstat(absDir)
+      if (dirSt.isSymbolicLink() || !dirSt.isDirectory()) return
+      entries = await readdir(absDir, { withFileTypes: true })
+    } catch { return }
+    for (const d of entries) {
+      if (d.isSymbolicLink()) continue
+      const abs = join(absDir, d.name), rel = `${relDir}/${d.name}`
+      if (d.isDirectory()) await walk(abs, rel)
+      else if (d.isFile() && d.name.endsWith('.md')) {
+        try { const st = await lstat(abs); if (!st.isSymbolicLink()) parts.push(`${rel}:${st.size}:${st.mtimeMs}`) } catch { /* 忽略并发删除 */ }
+      }
+    }
+  }
+  for (const layer of ['m1', 'm2', 'm3', 'm4']) await walk(join(memoryDir, layer), layer)
+  return createHash('sha256').update(parts.sort().join('\n')).digest('hex').slice(0, 16)
 }
 
 /** 可删可重建的 SQLite FTS5 派生记忆索引（仅从 Markdown M1–M4 重建，绝不回写真源）。 */
@@ -176,34 +160,20 @@ export class MemoryFtsIndex {
     this.db = undefined
   }
 
-  getMeta(): { recipeFingerprint: string; builtAt: string } | undefined {
+  getMeta(): { recipeFingerprint: string; builtAt: string; sourceFingerprint: string } | undefined {
     if (!this.db) return undefined
     try {
-      const row = this.db.prepare('SELECT recipe_fingerprint, built_at FROM index_meta WHERE id = 1').get() as
-        | { recipe_fingerprint?: string; built_at?: string } | undefined
+      const row = this.db.prepare('SELECT recipe_fingerprint, built_at, source_fingerprint FROM index_meta WHERE id = 1').get() as
+        | { recipe_fingerprint?: string; built_at?: string; source_fingerprint?: string } | undefined
       return row?.recipe_fingerprint && row.built_at
-        ? { recipeFingerprint: row.recipe_fingerprint, builtAt: row.built_at } : undefined
+        ? { recipeFingerprint: row.recipe_fingerprint, builtAt: row.built_at, sourceFingerprint: row.source_fingerprint ?? '' } : undefined
     } catch { return undefined }
   }
 
   private createSchema(db: DatabaseSync): void {
     db.exec(`
-      CREATE TABLE IF NOT EXISTS index_meta (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        recipe_fingerprint TEXT NOT NULL,
-        built_at TEXT NOT NULL
-      );
-      CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-        entry_id UNINDEXED,
-        layer UNINDEXED,
-        rel_path UNINDEXED,
-        entry_json UNINDEXED,
-        tokens,
-        statement,
-        topic_key,
-        verbatim_quote,
-        tokenize='unicode61'
-      );
+      CREATE TABLE IF NOT EXISTS index_meta (id INTEGER PRIMARY KEY CHECK (id = 1), recipe_fingerprint TEXT NOT NULL, built_at TEXT NOT NULL, source_fingerprint TEXT NOT NULL DEFAULT '');
+      CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(entry_id UNINDEXED, layer UNINDEXED, rel_path UNINDEXED, entry_json UNINDEXED, tokens, statement, topic_key, verbatim_quote, tokenize='unicode61');
     `)
   }
 
@@ -222,28 +192,33 @@ export class MemoryFtsIndex {
 
   async open(): Promise<{ rebuilt: boolean; indexedEntries: number }> {
     if (!this.isInMemory && this.db && !existsSync(this.dbPath)) this.close()
+    const sourceFp = await computeSourceFingerprint(this.memoryDir)
     if (this.db) {
       try {
         const meta = this.getMeta()
         const countRow = this.db.prepare('SELECT count(*) AS c FROM memory_fts').get() as { c: number }
-        if (meta?.recipeFingerprint === this.recipeFingerprint) return { rebuilt: false, indexedEntries: Number(countRow.c) }
+        if (meta?.recipeFingerprint === this.recipeFingerprint && meta.sourceFingerprint === sourceFp) {
+          return { rebuilt: false, indexedEntries: Number(countRow.c) }
+        }
       } catch { /* 损坏则重建 */ }
       return this.openFreshAndRebuild()
     }
     if (!this.isInMemory && !existsSync(this.dbPath)) return this.openFreshAndRebuild()
+    let db: DatabaseSync | undefined
     try {
       if (!this.isInMemory) await mkdir(dirname(this.dbPath), { recursive: true })
-      const db = new DatabaseSync(this.dbPath)
-      const meta = db.prepare('SELECT recipe_fingerprint, built_at FROM index_meta WHERE id = 1').get() as
-        | { recipe_fingerprint?: string; built_at?: string } | undefined
+      db = new DatabaseSync(this.dbPath)
+      const meta = db.prepare('SELECT recipe_fingerprint, built_at, source_fingerprint FROM index_meta WHERE id = 1').get() as
+        | { recipe_fingerprint?: string; built_at?: string; source_fingerprint?: string } | undefined
       const countRow = db.prepare('SELECT count(*) AS c FROM memory_fts').get() as { c: number }
-      if (meta?.recipe_fingerprint !== this.recipeFingerprint) {
+      if (meta?.recipe_fingerprint !== this.recipeFingerprint || meta.source_fingerprint !== sourceFp) {
         db.close()
         return this.openFreshAndRebuild()
       }
       this.db = db
       return { rebuilt: false, indexedEntries: Number(countRow.c) }
     } catch {
+      try { db?.close() } catch { /* 忽略关闭失败 */ }
       return this.openFreshAndRebuild()
     }
   }
@@ -254,13 +229,15 @@ export class MemoryFtsIndex {
       this.db = new DatabaseSync(this.dbPath)
       this.createSchema(this.db)
     }
+    const sourceFp = await computeSourceFingerprint(this.memoryDir)
     const pages = existsSync(this.memoryDir) ? await listMemoryPages(this.memoryDir, ['m1', 'm2', 'm3', 'm4']) : []
     const builtAt = this.now().toISOString()
     const db = this.db
     db.exec('BEGIN IMMEDIATE')
     try {
       db.exec('DELETE FROM memory_fts; DELETE FROM index_meta;')
-      db.prepare('INSERT INTO index_meta (id, recipe_fingerprint, built_at) VALUES (1, ?, ?)').run(this.recipeFingerprint, builtAt)
+      db.prepare('INSERT INTO index_meta (id, recipe_fingerprint, built_at, source_fingerprint) VALUES (1, ?, ?, ?)')
+        .run(this.recipeFingerprint, builtAt, sourceFp)
       const insert = db.prepare(
         'INSERT INTO memory_fts (entry_id, layer, rel_path, entry_json, tokens, statement, topic_key, verbatim_quote) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       )

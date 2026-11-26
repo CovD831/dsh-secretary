@@ -8,31 +8,22 @@ import { latestAssignment, liveTicket, runningAssignment, type EngineForExecutor
 import type { ApprovalMode, Settings } from '../policy.ts'
 import type { Store } from '../app/store.ts'
 import type { ApprovalOutcome, RulingQueue } from '../app/ruling-queue.ts'
-import { KV } from '../kv.ts'
+import { KV, type PersistedRuntimeBudget } from '../kv.ts'
 import { calibrateProbability, classifyThresholdBand } from '../rsi/index.ts'
 import type { SpineAppender } from '../spine/types.ts'
 import { ticketOfSession } from './dsh.ts'
 
 export interface HostApprovalRequest {
-  readonly agent: Agent
-  readonly toolName: string
-  readonly callId?: unknown
-  readonly reason?: string
-  readonly signal?: AbortSignal
+  readonly agent: Agent; readonly toolName: string; readonly callId?: unknown; readonly reason?: string; readonly signal?: AbortSignal
 }
-
 declare module '@deepseek-ai/cordis' {
-  interface Events {
-    'approval/request'(req: HostApprovalRequest, next: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome>
-  }
+  interface Events { 'approval/request'(req: HostApprovalRequest, next: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome> }
 }
 
 const SAFE_READ_TOOLS = new Set([
-  'read', 'read_image', 'glob', 'grep', 'web_search', 'todo_write', 'skill',
-  'list_agents', 'list_subagent_models', 'wait_agent', 'job_list', 'job_output',
-  'orchestrator_read', 'orchestrator_report', 'orchestrator_ack',
-  'orchestrator_thread_follow', 'orchestrator_thread_unrelated', 'orchestrator_trigger_handback',
-  'team_task_list', 'team_task_get',
+  'read', 'read_image', 'glob', 'grep', 'web_search', 'todo_write', 'skill', 'list_agents', 'list_subagent_models', 'wait_agent',
+  'job_list', 'job_output', 'orchestrator_read', 'orchestrator_report', 'orchestrator_ack', 'orchestrator_thread_follow',
+  'orchestrator_thread_unrelated', 'orchestrator_trigger_handback', 'team_task_list', 'team_task_get',
 ])
 const SHELL_TOOLS = new Set(['bash', 'pwsh', 'shell', 'bash_persistent', 'pwsh_persistent'])
 const FILE_WRITE_TOOLS = new Set(['write', 'edit', 'str_replace_editor', 'fs_write', 'fs_edit', 'fs_delete'])
@@ -55,12 +46,9 @@ interface AssignmentBudgetState {
 }
 
 export interface RuntimeGuardDeps {
-  readonly context: Context
-  readonly store: Pick<Store, 'tickets' | 'settings' | 'atomic' | 'get'>
-  readonly engine: Pick<EngineForExecutor, 'report'>
-  readonly appender: SpineAppender
-  readonly rulings: RulingQueue
-  readonly relayToMaster: (id: string, text: string) => void
+  readonly context: Context; readonly store: Pick<Store, 'tickets' | 'settings' | 'atomic' | 'get' | 'set'>
+  readonly engine: Pick<EngineForExecutor, 'report'>; readonly appender: SpineAppender
+  readonly rulings: RulingQueue; readonly relayToMaster: (id: string, text: string) => void
 }
 
 const isRec = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === 'object' && !Array.isArray(v))
@@ -127,7 +115,10 @@ export class RuntimeGuard {
   private readonly budgets = new Map<string, AssignmentBudgetState>()
   private seq = 0
 
-  constructor(private readonly deps: RuntimeGuardDeps) {}
+  constructor(private readonly deps: RuntimeGuardDeps) {
+    const saved = this.deps.store.get?.(KV.governance.runtimeBudgets)
+    if (saved) for (const [id, b] of Object.entries(saved).slice(-500)) this.budgets.set(id, { turns: b.turns, stallTurns: b.stallTurns, totalTokens: b.totalTokens, turnHadProgress: false, turnHadFailure: false, tripped: Boolean(b.tripped) })
+  }
 
   install(): void {
     const { context: ctx } = this.deps
@@ -144,8 +135,17 @@ export class RuntimeGuard {
 
   private stateOf(assignmentId: string): AssignmentBudgetState {
     let st = this.budgets.get(assignmentId)
-    if (!st) { st = { turns: 0, stallTurns: 0, totalTokens: 0, turnHadProgress: false, turnHadFailure: false, tripped: false }; this.budgets.set(assignmentId, st) }
+    if (!st) {
+      if (this.budgets.size >= 500) { const oldest = this.budgets.keys().next().value; if (oldest !== undefined) this.budgets.delete(oldest) }
+      st = { turns: 0, stallTurns: 0, totalTokens: 0, turnHadProgress: false, turnHadFailure: false, tripped: false }
+      this.budgets.set(assignmentId, st)
+    }
     return st
+  }
+  private persistBudgets(): void {
+    const out: Record<string, PersistedRuntimeBudget> = {}
+    for (const [id, b] of this.budgets) out[id] = { turns: b.turns, stallTurns: b.stallTurns, totalTokens: b.totalTokens, tripped: b.tripped }
+    this.deps.store.set(KV.governance.runtimeBudgets, out)
   }
 
   private async onPreExecute(exec: ToolExecution, next: () => Promise<PreToolDecision>): Promise<PreToolDecision> {
@@ -196,13 +196,29 @@ export class RuntimeGuard {
     this.deps.relayToMaster(`approval:${ticket.id}:${String(req.callId ?? ++this.seq)}`, JSON.stringify({
       kind: 'approval_pending', ticket_id: ticket.id, tool_name: req.toolName, reason: req.reason ?? '',
     }))
-    return this.deps.rulings.requestDshApproval({
+    const snapMode = effectiveApprovalMode(this.deps.store.settings(), ticket), snapAsg = runningAssignment(ticket)?.id
+    const outcome = await this.deps.rulings.requestDshApproval({
       question, ticketId: ticket.id, sessionId: req.agent.id, toolName: req.toolName,
       ...(ticket.execution?.workspace ? { workspace: ticket.execution.workspace } : {}),
       ...(req.callId !== undefined ? { callId: String(req.callId) } : {}),
       ...(hostApprovalId ? { hostApprovalId } : {}),
       ...(req.signal ? { signal: req.signal } : {}),
     })
+    if (outcome === 'allowed-once') {
+      const fresh = this.deps.store.tickets.get(ticket.id), paused = this.deps.store.settings().paused
+      const freshAsg = fresh ? runningAssignment(fresh)?.id : undefined
+      const freshMode = fresh ? effectiveApprovalMode(this.deps.store.settings(), fresh) : undefined
+      const asgChanged = Boolean(snapAsg && freshAsg !== snapAsg) || !freshAsg
+      if (!fresh || !liveTicket(fresh) || paused || asgChanged || freshMode !== snapMode) {
+        this.deps.appender.append({
+          id: `approval:stale:${ticket.id}:${String(req.callId ?? ++this.seq)}`, stream: `ticket:${ticket.id}`, type: 'approval.stale_cancelled',
+          source: { kind: 'system', ref: 'runtime-guard.approval' }, evidence: [{ kind: 'event', ref: `session:${req.agent.id}` }], taint: 'trusted',
+          payload: { ticketId: ticket.id, sessionId: req.agent.id, toolName: req.toolName, snapMode, freshMode, asgChanged, paused, ticketState: fresh?.ended ? 'ended' : fresh ? 'inactive' : 'missing' },
+        })
+        return 'cancelled'
+      }
+    }
+    return outcome
   }
 
   private onToolResult(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): void {
@@ -252,26 +268,23 @@ export class RuntimeGuard {
     if (event.type === 'assistant/message' && event.data.usage) {
       const u = event.data.usage
       st.totalTokens += u.totalTokens ?? (u.inputTokens + u.outputTokens + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0))
-      this.checkCircuitBreaker(ticket, assignment.id, st)
-      return
+      this.checkCircuitBreaker(ticket, assignment.id, st); this.persistBudgets(); return
     }
     const rawEv = event as { type: string; seq?: unknown }
     if (rawEv.type === 'team/task' || rawEv.type === 'subagent/start' || rawEv.type === 'subagent/end') {
       this.deps.appender.append({
-        id: `trace:${rawEv.type.replace('/', '.')}:${ticket.id}:${++this.seq}`,
-        stream: `ticket:${ticket.id}`, type: `worker.${rawEv.type.replace('/', '_')}` as `${string}.${string}`,
-        source: { kind: 'worker', ref: session.id },
+        id: `trace:${rawEv.type.replace('/', '.')}:${ticket.id}:${++this.seq}`, stream: `ticket:${ticket.id}`,
+        type: `worker.${rawEv.type.replace('/', '_')}` as `${string}.${string}`, source: { kind: 'worker', ref: session.id },
         evidence: [{ kind: 'event', ref: `session:${session.id}#${String(rawEv.seq ?? '')}` }], taint: 'trusted',
         payload: { ticketId: ticket.id, assignmentId: assignment.id, sessionId: session.id, eventType: rawEv.type },
-      })
-      return
+      }); return
     }
     if (event.type === 'turn/end' && session.id === `worker-${ticket.id}`) {
       st.turns += 1
       if (st.turnHadProgress) st.stallTurns = 0
       else if (st.turnHadFailure) st.stallTurns += 1
       st.turnHadProgress = false; st.turnHadFailure = false
-      this.checkCircuitBreaker(ticket, assignment.id, st)
+      this.checkCircuitBreaker(ticket, assignment.id, st); this.persistBudgets()
     }
   }
 
@@ -299,10 +312,7 @@ export class RuntimeGuard {
       kind: 'system_escalation', escalationType: 'runaway_breaker', ticketId: ticket.id,
       ...(ticket.execution?.workspace ? { workspace: ticket.execution.workspace } : {}),
       question: `工单「${ticket.title}」因 ${reason} 已熔断暂停，是否继续？`,
-      options: [
-        { id: 'retry', label: '调高预算并重试', consequence: '开启新一轮 Assignment 继续当前 Worktree', recommended: false },
-        { id: 'stop', label: '停止该工单', consequence: '结束工单并保留现场供人工检查', recommended: true },
-      ],
+      options: [{ id: 'retry', label: '调高预算并重试', consequence: '开启新一轮 Assignment 继续当前 Worktree', recommended: false }, { id: 'stop', label: '停止该工单', consequence: '结束工单并保留现场供人工检查', recommended: true }],
     })
     this.deps.relayToMaster(`breaker:${ticket.id}:${assignmentId}`, JSON.stringify({ kind: 'circuit_broken', ticket_id: ticket.id, reason }))
   }
