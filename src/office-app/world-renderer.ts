@@ -162,7 +162,7 @@ function computeL2List(world: OfficeWorldPlan, actors: readonly OfficeActor[], c
 }
 
 function renderL0AndL1(ctx: CanvasRenderingContext2D, state: WorldSceneState, sprites: OfficeSprites, cam: OfficeCamera): void {
-  const { world } = state, z = cam.zoom, cw = ctx.canvas.width || 1440, ch = ctx.canvas.height || 900
+  const { world } = state, z = cam.zoom, cw = ctx.canvas?.width || 1440, ch = ctx.canvas?.height || 900
   ctx.fillStyle = '#3E4A44'; ctx.fillRect(0, 0, cw, ch)
   const corners = [screenToWorldIso(0, 0, world, cam), screenToWorldIso(cw, 0, world, cam), screenToWorldIso(0, ch, world, cam), screenToWorldIso(cw, ch, world, cam)]
   for (let v = Math.min(...corners.map((p) => p.v)) - 2; v <= Math.max(...corners.map((p) => p.v)) + 2; v++) for (let u = Math.min(...corners.map((p) => p.u)) - 2; u <= Math.max(...corners.map((p) => p.u)) + 2; u++) {

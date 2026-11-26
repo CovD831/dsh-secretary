@@ -78,6 +78,7 @@ export function StageApp() {
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null)
   const [hoverTarget, setHoverTarget] = useState<WorldPickResult | null>(null)
   const [pendingBoss, setPendingBoss] = useState<{ text: string; sentAt: number; baseSayId?: string } | null>(null)
+  const [actorSnap, setActorSnap] = useState<OfficeActor[]>([])
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
@@ -107,7 +108,11 @@ export function StageApp() {
     return out
   }, [world, tickets, settings])
 
-  useEffect(() => { actorsRef.current = syncWorldActors(actorsRef.current, tickets, world, settings) }, [tickets, world, settings])
+  useEffect(() => {
+    const synced = syncWorldActors(actorsRef.current, tickets, world, settings)
+    actorsRef.current = synced
+    setActorSnap(synced)
+  }, [tickets, world, settings])
 
   const refreshAll = useCallback(async () => {
     try {
@@ -161,22 +166,23 @@ export function StageApp() {
         ? 'needsDecision'
         : roomList.some(t => t.stage === 'working') ? 'working' : 'off'
     }
-    for (const actor of actorsRef.current) {
+    for (const actor of actorSnap) {
       if (actor.role !== 'worker' || !actor.assignedSuiteId || actor.lifecycle === 'leaving') continue
       const ticket = actor.ticketId ? tickets.find(t => t.id === actor.ticketId) : undefined
       out[actor.assignedSuiteId] = !ticket ? 'off' : ticket.stage === 'person' ? 'needsDecision' : ticket.stage === 'working' ? 'working' : 'done'
     }
     return out
-  }, [activeRuling, tickets, world, settings, workspaceId])
+  }, [activeRuling, tickets, world, settings, workspaceId, actorSnap])
 
   const gateBlocked = gateUntil > Date.now()
   const latestSayId = useMemo(() => [...feed].reverse().find(e => e.role === 'secretary')?.id, [feed])
   const latestEntry = feed[feed.length - 1]
   const secretaryThinking = Boolean(pendingBoss) || Boolean(latestEntry?.role === 'boss' && !activeRuling && Date.now() - Date.parse(latestEntry.at) < 45_000)
+  const effectiveCollapsed = dialogCollapsed && !activeRuling && !gateBlocked && !secretaryThinking
   const secretaryMood = resolveSecretaryMood(activeRuling, gateBlocked, tickets.some(t => t.stage === 'working'), feed, secretaryThinking)
   const secretaryPortraitSrc = avatar?.portraitUrls[secretaryMood] ?? `/assets/f1-proof/portrait_${secretaryMood}.png`
 
-  useEffect(() => { if (activeRuling || gateBlocked) setDialogCollapsed(false) }, [activeRuling, gateBlocked])
+  useEffect(() => { if (activeRuling || gateBlocked || secretaryThinking) setDialogCollapsed(false) }, [activeRuling, gateBlocked, secretaryThinking])
   useEffect(() => {
     if (prevSayIdRef.current && latestSayId && prevSayIdRef.current !== latestSayId) setDialogCollapsed(false)
     prevSayIdRef.current = latestSayId
@@ -201,7 +207,10 @@ export function StageApp() {
       const ctx = canvasRef.current?.getContext('2d')
       if (ctx) {
         ctx.clearRect(0, 0, CANVAS_W, CANVAS_H)
-        const gateActorId = actorsRef.current.find(a => a.ticketId && a.ticketId === gateTicketRef.current)?.id ?? 'lead'
+        const gateActorId = actorsRef.current.find(a => a.ticketId && a.ticketId === gateTicketRef.current)?.id
+          ?? actorsRef.current.find(a => a.id === `lead-${workspaceId}`)?.id
+          ?? actorsRef.current.find(a => a.role === 'lead')?.id
+          ?? 'secretary'
         renderWorldFrame(ctx, {
           world, actors: actorsRef.current, screenStates, activeWorkspaceId: workspaceId, hoverTarget, secretaryThinking, elapsedMs: elapsed,
           ...(gateUntil > Date.now() ? { gateIntercept: { targetActorId: gateActorId, frame: Math.floor(elapsed / 200) % 3 } } : {}),
@@ -244,7 +253,10 @@ export function StageApp() {
     const { x, y, scaleX, scaleY } = toCanvasCoords(e.clientX, e.clientY)
     if (dragRef.current) {
       const dx = e.clientX - dragRef.current.startX, dy = e.clientY - dragRef.current.startY
-      if (!dragRef.current.moved && Math.hypot(dx, dy) >= 5) { dragRef.current.moved = true; setDialogCollapsed(true) }
+      if (!dragRef.current.moved && Math.hypot(dx, dy) >= 5) {
+        dragRef.current.moved = true
+        if (!activeRuling && !gateBlocked && !secretaryThinking) setDialogCollapsed(true)
+      }
       if (dragRef.current.moved) setCamera(c => ({ ...c, panX: Math.round(dragRef.current!.panX + dx * scaleX), panY: Math.round(dragRef.current!.panY + dy * scaleY) }))
       return
     }
@@ -264,8 +276,8 @@ export function StageApp() {
   return (
     <div style={{ minHeight: '100vh', background: OFFICE_THEME.bgDeep, color: OFFICE_THEME.inkCream, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       <div style={{ position: 'relative', width: '100%', maxWidth: CANVAS_W, overflow: 'hidden' }}>
-        <GameHud online={online} activeWorkspaceId={workspaceId} world={world} actors={actorsRef.current} roomStats={roomStats}
-          workingCount={tickets.filter(t => t.stage === 'working').length} camera={camera} dialogCollapsed={dialogCollapsed}
+        <GameHud online={online} activeWorkspaceId={workspaceId} world={world} actors={actorSnap.length > 0 ? actorSnap : actorsRef.current} roomStats={roomStats}
+          workingCount={tickets.filter(t => t.stage === 'working').length} camera={camera} dialogCollapsed={effectiveCollapsed}
           secretaryMood={secretaryMood} secretaryPortraitSrc={secretaryPortraitSrc} gateBlocked={gateBlocked}
           onOpenProp={p => { if (p === 'doorplate') setDrawerMode('doorplate'); else setActiveProp(p) }}
           onZoomChange={zoom => setCamera(zoom === 1 ? DEFAULT_CAMERA : cameraForGridPoint((world.wings.find(w => w.workspaceId === workspaceId) ?? world.lobby).focusPoint, world, 2))}

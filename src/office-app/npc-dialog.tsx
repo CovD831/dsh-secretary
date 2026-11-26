@@ -195,7 +195,7 @@ export function NpcDialog({
         {activeRuling ? (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ background: OFFICE_THEME.needsDecision, color: '#fff', padding: '2px 8px', borderRadius: 3, fontSize: 12, fontWeight: 700 }}>
+              <span style={{ background: OFFICE_THEME.needsDecision, color: OFFICE_THEME.inkCream, padding: '2px 8px', borderRadius: 3, fontSize: 12, fontWeight: 700 }}>
                 {ORIGIN_LABELS[activeRuling.kind]}{activeRuling.toolName ? ` · ${activeRuling.toolName}` : ''}
               </span>
               <span style={{ background: OFFICE_THEME.woodDark, color: OFFICE_THEME.borderGold, border: `1px solid ${OFFICE_THEME.borderGold}`, padding: '2px 8px', borderRadius: 3, fontSize: 12 }}>
@@ -239,7 +239,7 @@ export function NpcDialog({
               <div style={{ display: 'flex', gap: 8 }}>
                 <button type="button" disabled={busy} onClick={() => void handleDecide('approve')} style={{ background: OFFICE_THEME.done, color: OFFICE_THEME.inkDark, border: 'none', borderRadius: 3, padding: '6px 14px', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>批准</button>
                 <button type="button" disabled={busy} onClick={() => void handleDecide('revise')} style={{ background: OFFICE_THEME.stuck, color: OFFICE_THEME.inkDark, border: 'none', borderRadius: 3, padding: '6px 14px', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>打回修改</button>
-                <button type="button" disabled={busy} onClick={() => void handleDecide('reject')} style={{ background: OFFICE_THEME.needsDecision, color: '#fff', border: 'none', borderRadius: 3, padding: '6px 14px', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>否决</button>
+                <button type="button" disabled={busy} onClick={() => void handleDecide('reject')} style={{ background: OFFICE_THEME.needsDecision, color: OFFICE_THEME.inkCream, border: 'none', borderRadius: 3, padding: '6px 14px', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>否决</button>
               </div>
               <button type="button" onClick={() => setHistoryOpen(v => !v)} style={{ background: OFFICE_THEME.woodDark, color: OFFICE_THEME.inkCream, border: `1px solid ${OFFICE_THEME.borderGold}`, borderRadius: 3, padding: '6px 12px', cursor: 'pointer', fontSize: 12 }}>历史回看 ({feed.length})</button>
             </div>
