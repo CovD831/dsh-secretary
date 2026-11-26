@@ -25,6 +25,8 @@ export interface GameHudProps {
   readonly secretaryMood: SecretaryExpression
   readonly secretaryPortraitSrc: string
   readonly gateBlocked: boolean
+  readonly seed?: number
+  readonly onRerollSeed?: () => void
   readonly onOpenProp: (prop: 'doorplate' | GovernancePropKind) => void
   readonly onZoomChange: (zoom: 1 | 2) => void
   readonly onResetCamera: () => void
@@ -43,9 +45,26 @@ const DOCK_PROPS: readonly { id: 'doorplate' | GovernancePropKind; label: string
 
 const DAY_PIPS = [0, 1, 2, 3, 4, 5] as const
 
+interface RowRun { readonly v: number; readonly u0: number; readonly u1: number }
+function mergeRowRuns(cells: readonly { u: number; v: number }[]): RowRun[] {
+  const byV = new Map<number, number[]>()
+  for (const c of cells) { const list = byV.get(c.v) ?? []; list.push(c.u); byV.set(c.v, list) }
+  const runs: RowRun[] = []
+  for (const [v, us] of byV) {
+    const sorted = [...new Set(us)].sort((a, b) => a - b)
+    let start = sorted[0]!, prev = start
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i] === prev + 1) { prev = sorted[i]!; continue }
+      runs.push({ v, u0: start, u1: prev + 1 }); start = prev = sorted[i]!
+    }
+    runs.push({ v, u0: start, u1: prev + 1 })
+  }
+  return runs
+}
+
 export function GameHud({
   online, activeWorkspaceId, world, actors, roomStats, workingCount, camera,
-  dialogCollapsed, secretaryMood, secretaryPortraitSrc, gateBlocked,
+  dialogCollapsed, secretaryMood, secretaryPortraitSrc, gateBlocked, seed = 1, onRerollSeed,
   onOpenProp, onZoomChange, onResetCamera, onFocusLobby, onSelectWing, onOpenRoomDrawer,
 }: GameHudProps) {
   const studioWings = world.wings.filter(w => w.kind === 'studio')
@@ -94,6 +113,7 @@ export function GameHud({
           <NineSliceButton ariaLabel="全楼视角" active={camera.zoom === 1} onClick={() => onZoomChange(1)}>1×</NineSliceButton>
           <NineSliceButton ariaLabel="近景视角" active={camera.zoom === 2} onClick={() => onZoomChange(2)}>2×</NineSliceButton>
           <NineSliceButton ariaLabel="重置镜头" onClick={onResetCamera}>居中</NineSliceButton>
+          <NineSliceButton ariaLabel="切换布局种子" title="切换肉鸽房型与家居种子" onClick={onRerollSeed}>种子 #{seed}</NineSliceButton>
         </div>
 
         <NineSliceButton
@@ -177,26 +197,33 @@ export function GameHud({
             style={{ position: 'absolute', right: -10, bottom: -10, zIndex: 2, imageRendering: 'pixelated', pointerEvents: 'none' }}
           />
           <div style={{ position: 'relative', width: '100%', height: '100%', background: OFFICE_THEME.bgDeep, overflow: 'hidden' }}>
-            <div style={{
-              position: 'absolute',
-              left: `${(world.corridorRect.u / world.buildingCols) * 100}%`,
-              top: `${(world.corridorRect.v / world.buildingRows) * 100}%`,
-              width: `${(world.corridorRect.w / world.buildingCols) * 100}%`,
-              height: `${(world.corridorRect.h / world.buildingRows) * 100}%`,
-              background: OFFICE_THEME.woodDark,
-            }}>
-              <span style={{
-                position: 'absolute', left: '50%', bottom: 1, transform: 'translateX(-50%)',
-                width: 0, height: 0,
-                borderLeft: '4px solid transparent', borderRight: '4px solid transparent',
-                borderBottom: `5px solid ${OFFICE_THEME.borderGold}`,
+            {world.corridorCells?.length ? mergeRowRuns(world.corridorCells).map((run, idx) => (
+              <div key={`cor-${idx}`} style={{
+                position: 'absolute', background: OFFICE_THEME.woodDark,
+                left: `${(run.u0 / world.buildingCols) * 100}%`, top: `${(run.v / world.buildingRows) * 100}%`,
+                width: `${((run.u1 - run.u0) / world.buildingCols) * 100}%`, height: `${(1 / world.buildingRows) * 100}%`,
               }} />
-            </div>
+            )) : (
+              <div style={{
+                position: 'absolute', background: OFFICE_THEME.woodDark,
+                left: `${(world.corridorRect.u / world.buildingCols) * 100}%`, top: `${(world.corridorRect.v / world.buildingRows) * 100}%`,
+                width: `${(world.corridorRect.w / world.buildingCols) * 100}%`, height: `${(world.corridorRect.h / world.buildingRows) * 100}%`,
+              }} />
+            )}
+            <span style={{
+              position: 'absolute', transform: 'translateX(-50%)', width: 0, height: 0,
+              left: `${((world.corridorRect.u + world.corridorRect.w / 2) / world.buildingCols) * 100}%`,
+              top: `${((world.corridorRect.v + world.corridorRect.h) / world.buildingRows) * 100}%`,
+              marginTop: -6, borderLeft: '4px solid transparent', borderRight: '4px solid transparent',
+              borderBottom: `5px solid ${OFFICE_THEME.borderGold}`, pointerEvents: 'none',
+            }} />
 
             {world.wings.map(wing => {
               const isStudio = wing.kind === 'studio'
               const isActive = Boolean(wing.workspaceId && wing.workspaceId === activeWorkspaceId)
               const bg = wing.themeHex ?? (isStudio ? OFFICE_THEME.woodWarm : '#4A6A50')
+              const hasCells = Boolean(wing.cells?.length)
+              const stroke = isActive ? OFFICE_THEME.borderGold : OFFICE_THEME.borderWood
               return (
                 <button
                   key={wing.id} type="button"
@@ -208,10 +235,20 @@ export function GameHud({
                     top: `${(wing.rect.v / world.buildingRows) * 100}%`,
                     width: `${(wing.rect.w / world.buildingCols) * 100}%`,
                     height: `${(wing.rect.h / world.buildingRows) * 100}%`,
-                    background: bg,
-                    border: isActive ? `2px solid ${OFFICE_THEME.borderGold}` : `1px solid ${OFFICE_THEME.borderWood}`,
+                    background: hasCells ? 'transparent' : bg,
+                    border: hasCells ? 'none' : `${isActive ? 2 : 1}px solid ${stroke}`,
                   }}
                 >
+                  {hasCells && mergeRowRuns(wing.cells!).map((run, idx) => (
+                    <span key={`${wing.id}-r-${idx}`} style={{
+                      position: 'absolute', pointerEvents: 'none', background: bg,
+                      left: `${((run.u0 - wing.rect.u) / Math.max(1, wing.rect.w)) * 100}%`,
+                      top: `${((run.v - wing.rect.v) / Math.max(1, wing.rect.h)) * 100}%`,
+                      width: `${((run.u1 - run.u0) / Math.max(1, wing.rect.w)) * 100}%`,
+                      height: `${(1 / Math.max(1, wing.rect.h)) * 100}%`,
+                      boxShadow: `inset 0 0 0 ${isActive ? 2 : 1}px ${stroke}`,
+                    }} />
+                  ))}
                   {wing.suites.map((suite, idx) => (
                     <span key={`${wing.id}-s-${idx}`} style={{
                       position: 'absolute',

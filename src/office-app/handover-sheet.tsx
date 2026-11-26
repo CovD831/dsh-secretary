@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import type { SecretaryFeedEntry } from '../app/tools/secretary-core.ts'
 import type { SpineEnvelope } from '../spine/types.ts'
 import { DiegeticModal, OFFICE_THEME, officeCall } from './office-api.tsx'
+import { DIEGETIC_PARCHMENT_CARD, nineSliceButtonStyle } from './ui-skin.tsx'
 
 export interface HandoverSheetProps {
   readonly entry: SecretaryFeedEntry | null
@@ -67,9 +68,9 @@ export function HandoverSheet({ entry, onClose }: HandoverSheetProps) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {sections.map(sec => (
           <section key={sec.heading} style={{
+            ...DIEGETIC_PARCHMENT_CARD,
             padding: '10px 12px',
-            borderLeft: `3px solid ${OFFICE_THEME.woodDark}`,
-            background: 'rgba(255,255,255,0.22)',
+            borderLeft: `4px solid ${OFFICE_THEME.woodDark}`,
           }}>
             <h3 style={{ margin: '0 0 6px', fontSize: 14, color: OFFICE_THEME.woodDark }}>{sec.heading}</h3>
             <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{sec.body}</p>
@@ -83,9 +84,8 @@ export function HandoverSheet({ entry, onClose }: HandoverSheetProps) {
           <strong style={{ fontSize: 12, color: OFFICE_THEME.woodDark }}>M0 溯源印章：</strong>
           {handover.evidenceRefs.length > 0 ? handover.evidenceRefs.map(ref => (
             <button key={ref} type="button" onClick={() => { void inspectRef(ref) }} style={{
-              background: selectedRef === ref ? OFFICE_THEME.woodMid : OFFICE_THEME.woodDark,
-              color: OFFICE_THEME.parchment, cursor: 'pointer',
-              border: `1px solid ${OFFICE_THEME.borderGold}`, borderRadius: 2, padding: '2px 8px', fontSize: 12,
+              ...nineSliceButtonStyle(selectedRef === ref),
+              color: OFFICE_THEME.parchment, padding: '2px 8px', fontSize: 12,
             }}>
               {ref}
             </button>
@@ -93,8 +93,9 @@ export function HandoverSheet({ entry, onClose }: HandoverSheetProps) {
         </div>
         {selectedRef && (
           <div style={{
-            background: 'rgba(26,20,18,0.08)', border: `1px solid ${OFFICE_THEME.woodMid}`,
-            borderRadius: 3, padding: '8px 10px', fontSize: 12,
+            ...DIEGETIC_PARCHMENT_CARD,
+            backgroundColor: OFFICE_THEME.parchment,
+            padding: '8px 10px', fontSize: 12,
           }}>
             {verifying && <span>核验 M0 原始信封中…</span>}
             {verifyError && <span style={{ color: OFFICE_THEME.needsDecision }}>{verifyError}</span>}

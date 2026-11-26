@@ -5,19 +5,16 @@ import type { AvatarPackSummary } from '../app/avatar-pipeline.ts'
 import type { IsolationTier } from '../judgement/types.ts'
 import type { ApprovalMode } from '../policy.ts'
 import { DiegeticModal, OFFICE_THEME, officeCall } from './office-api.tsx'
+import { DIEGETIC_DARK_INPUT, DIEGETIC_WALNUT_CARD, nineSliceButtonStyle } from './ui-skin.tsx'
 
 type DrawerTab = 'workspaces' | 'executor' | 'avatars'
 type WorkspaceItem = NonNullable<ApiResponse<'GET settings'>['blocks']['workspaces']['value']>[number]
 const ISOLATIONS: readonly IsolationTier[] = ['I1', 'I2', 'I3', 'I4', 'I5']
 const APPROVAL_MODES: readonly ApprovalMode[] = ['always-ask', 'smart-auto', 'full-trust']
 
-const boxStyle: CSSProperties = { background: '#261F1C', border: `1px solid ${OFFICE_THEME.borderWood}`, borderRadius: 4, padding: 10 }
-const inputStyle: CSSProperties = { width: '100%', boxSizing: 'border-box', padding: '4px 6px', background: OFFICE_THEME.bgDeep, color: OFFICE_THEME.inkCream, border: `1px solid ${OFFICE_THEME.borderWood}`, borderRadius: 3, fontSize: 12 }
-const btnStyle = (active = false): CSSProperties => ({
-  padding: '5px 10px', borderRadius: 3, fontSize: 12, cursor: 'pointer',
-  border: `1px solid ${active ? OFFICE_THEME.borderGold : OFFICE_THEME.borderWood}`,
-  background: active ? OFFICE_THEME.woodMid : OFFICE_THEME.woodDark, color: OFFICE_THEME.inkCream,
-})
+const boxStyle: CSSProperties = { ...DIEGETIC_WALNUT_CARD, padding: 10 }
+const inputStyle: CSSProperties = DIEGETIC_DARK_INPUT
+const btnStyle = (active = false): CSSProperties => nineSliceButtonStyle(active)
 
 /** 墙角《机要文件柜》：胡桃木档案风，严禁提供任何本地图片上传框。 */
 export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClose: () => void; onChanged?: () => void }) {
@@ -118,7 +115,7 @@ export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClo
         <button type="button" style={btnStyle(tab === 'executor')} onClick={() => setTab('executor')}>沙箱审批与熔断锁</button>
         <button type="button" style={btnStyle(tab === 'avatars')} onClick={() => setTab('avatars')}>秘书形象定制</button>
       </div>
-      {notice && <p style={{ background: '#3A2E28', border: `1px solid ${OFFICE_THEME.borderGold}`, padding: '6px 10px', margin: '0 0 10px', fontSize: 12 }}>{notice}</p>}
+      {notice && <p style={{ ...DIEGETIC_WALNUT_CARD, backgroundColor: '#3A2E28', margin: '0 0 10px', fontSize: 12 }}>{notice}</p>}
 
       {tab === 'workspaces' && (
         <form onSubmit={e => { void saveWorkspaces(e) }} style={{ display: 'grid', gap: 10 }}>
@@ -194,7 +191,7 @@ export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClo
         <div style={{ display: 'grid', gap: 12 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
             {avatars.items.map(pack => (
-              <div key={pack.id} style={{ ...boxStyle, borderColor: avatars.activeId === pack.id ? OFFICE_THEME.borderGold : OFFICE_THEME.borderWood }}>
+              <div key={pack.id} style={{ ...boxStyle, outline: avatars.activeId === pack.id ? `2px solid ${OFFICE_THEME.borderGold}` : 'none' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                   <strong>{pack.name}</strong>
                   <span style={{ fontSize: 10 }}>

@@ -193,9 +193,9 @@ export function NpcDialog({
                       const active = effectiveOption === opt.id
                       return (
                         <button key={opt.id} type="button" onClick={() => setSelectedOption(opt.id)} style={{
-                          textAlign: 'left', padding: '6px 8px', cursor: 'pointer', boxSizing: 'border-box',
+                          ...NINE_SLICE_SLOT, textAlign: 'left', padding: '6px 8px', cursor: 'pointer', width: '100%',
                           background: active ? OFFICE_THEME.woodMid : OFFICE_THEME.bgDeep, color: OFFICE_THEME.inkCream,
-                          border: `2px solid ${active ? OFFICE_THEME.borderGold : OFFICE_THEME.borderWood}`,
+                          outline: active ? `2px solid ${OFFICE_THEME.borderGold}` : 'none',
                         }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700 }}>
                             <span>{opt.label}</span>

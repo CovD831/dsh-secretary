@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 // Phase O4 verification: 4 diegetic governance prop modals (ledger, notebook, corkboard, cabinet) with mocked fetch.
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PropsDrawer, type GovernancePropKind } from '../src/office-app/props-drawer.tsx'
+import { FROZEN_PALETTE } from '../src/pixel-office/palette.ts'
 
 declare global { var IS_REACT_ACT_ENVIRONMENT: boolean }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -206,5 +209,20 @@ describe('Phase O4: 4 Diegetic Governance Prop Modals', () => {
     expect(document.body.textContent).toContain('已生成并量化入库：夜班秘书')
     expect(document.body.textContent).toContain('预置')
     expect(onChanged).toHaveBeenCalledTimes(4)
+  })
+
+  it('enforces 46-color FROZEN_PALETTE compliance across all office-app UI components', () => {
+    const allowed = new Set(FROZEN_PALETTE.map(e => e.hex.toUpperCase()))
+    const uiFiles = [
+      'office-api.tsx', 'ui-skin.tsx', 'game-hud.tsx', 'npc-dialog.tsx',
+      'prop-ledger.tsx', 'prop-notebook.tsx', 'prop-corkboard.tsx', 'prop-cabinet.tsx',
+      'worker-drawer.tsx', 'handover-sheet.tsx',
+    ]
+    for (const file of uiFiles) {
+      const src = readFileSync(resolve(process.cwd(), 'src/office-app', file), 'utf8')
+      const hexes = [...src.matchAll(/#[0-9A-Fa-f]{3,8}\b/g)].map(m => m[0].toUpperCase())
+      const invalid = hexes.filter(h => !allowed.has(h))
+      expect(invalid, `${file} contains out-of-palette hex colors`).toEqual([])
+    }
   })
 })

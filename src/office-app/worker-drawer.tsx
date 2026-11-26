@@ -4,6 +4,7 @@ import type { TicketTranscriptView } from '../app/transcript-reader.ts'
 import type { SettingsView } from '../app/views/settings.ts'
 import type { TicketListView } from '../app/views/tickets.ts'
 import { DiegeticModal, OFFICE_THEME, officeCall } from './office-api.tsx'
+import { DIEGETIC_WALNUT_CARD, NINE_SLICE_SLOT, nineSliceButtonStyle } from './ui-skin.tsx'
 
 export type WorkerDrawerMode = 'doorplate' | 'worker' | null
 type TicketItem = TicketListView['items'][number]
@@ -82,9 +83,10 @@ export function WorkerDrawer({
             const roomCount = countRoomTickets(allTickets ?? tickets, room.id, room.repository)
             return (
               <button key={room.id} type="button" onClick={() => { onSelectWorkspace(room.id); onClose() }} style={{
-                textAlign: 'left', padding: '12px 14px', borderRadius: 4, cursor: 'pointer',
-                background: current ? OFFICE_THEME.woodMid : OFFICE_THEME.bgDeep, color: OFFICE_THEME.inkCream,
-                border: `1px solid ${current ? OFFICE_THEME.borderGold : OFFICE_THEME.borderWood}`,
+                ...DIEGETIC_WALNUT_CARD,
+                textAlign: 'left', padding: '10px 12px', cursor: 'pointer', width: '100%',
+                backgroundColor: current ? OFFICE_THEME.woodMid : OFFICE_THEME.bgDeep,
+                outline: current ? `2px solid ${OFFICE_THEME.borderGold}` : 'none',
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
               }}>
                 <div>
@@ -136,9 +138,7 @@ export function WorkerDrawer({
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {tickets.map(t => (
               <button key={t.id} type="button" onClick={() => onSelectTicket(t.id)} style={{
-                background: t.id === activeTicket?.id ? OFFICE_THEME.woodMid : OFFICE_THEME.bgDeep,
-                color: OFFICE_THEME.inkCream, border: `1px solid ${t.id === activeTicket?.id ? OFFICE_THEME.borderGold : OFFICE_THEME.borderWood}`,
-                borderRadius: 3, padding: '4px 10px', cursor: 'pointer', fontSize: 12,
+                ...nineSliceButtonStyle(t.id === activeTicket?.id), padding: '4px 10px', fontSize: 12,
               }}>{t.title || t.id}</button>
             ))}
           </div>
@@ -146,15 +146,15 @@ export function WorkerDrawer({
 
         {activeTicket ? (
           <div style={{
-            background: OFFICE_THEME.bgDeep, border: `1px solid ${OFFICE_THEME.borderWood}`,
-            borderRadius: 4, padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12,
+            ...DIEGETIC_WALNUT_CARD,
+            padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12,
           }}>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <strong style={{ fontSize: 15 }}>{activeTicket.title}</strong>
                 <span style={{
                   background: OFFICE_THEME.woodDark, color: OFFICE_THEME.borderGold,
-                  border: `1px solid ${OFFICE_THEME.borderGold}`, borderRadius: 3, padding: '2px 8px', fontSize: 11,
+                  border: `1px solid ${OFFICE_THEME.borderGold}`, padding: '2px 8px', fontSize: 11,
                 }}>{stageText}</span>
               </div>
               <p style={{ margin: '6px 0 0', fontSize: 12, opacity: 0.85 }}>
@@ -163,22 +163,19 @@ export function WorkerDrawer({
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button type="button" disabled={busy || !activeTicket.actions.retry} onClick={() => void runAction('retry')} style={{
-                background: OFFICE_THEME.stuck, color: OFFICE_THEME.inkDark, border: 'none', borderRadius: 3,
-                padding: '6px 12px', fontWeight: 700, cursor: activeTicket.actions.retry ? 'pointer' : 'not-allowed',
-                opacity: activeTicket.actions.retry ? 1 : 0.45, fontSize: 12,
+                ...nineSliceButtonStyle(false, busy || !activeTicket.actions.retry),
+                background: OFFICE_THEME.stuck, color: OFFICE_THEME.inkDark, padding: '4px 12px', fontWeight: 700, fontSize: 12,
               }}>重试</button>
               <button type="button" disabled={busy || !activeTicket.actions.stop} onClick={() => void runAction('stop')} style={{
-                background: OFFICE_THEME.needsDecision, color: '#fff', border: 'none', borderRadius: 3,
-                padding: '6px 12px', fontWeight: 700, cursor: activeTicket.actions.stop ? 'pointer' : 'not-allowed',
-                opacity: activeTicket.actions.stop ? 1 : 0.45, fontSize: 12,
+                ...nineSliceButtonStyle(false, busy || !activeTicket.actions.stop),
+                background: OFFICE_THEME.needsDecision, color: OFFICE_THEME.inkCream, padding: '4px 12px', fontWeight: 700, fontSize: 12,
               }}>停止</button>
             </div>
           </div>
         ) : <p style={{ opacity: 0.75 }}>当前工作区暂无工单。</p>}
 
         <div ref={logRef} aria-label="现场终端卷宗" style={{
-          background: OFFICE_THEME.bgDeep, color: OFFICE_THEME.inkCream,
-          border: `1px solid ${OFFICE_THEME.borderGold}`, borderRadius: 4,
+          ...NINE_SLICE_SLOT, color: OFFICE_THEME.inkCream,
           padding: 12, height: 320, overflowY: 'auto', fontSize: 12, lineHeight: 1.5,
           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
         }}>

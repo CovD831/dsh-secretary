@@ -4,17 +4,15 @@ import type { MemoryStudioView } from '../app/governance-ops.ts'
 import type { M2Kind } from '../memory/types.ts'
 import type { NotebookProjectionView } from '../projection/types.ts'
 import { DiegeticModal, OFFICE_THEME, officeCall } from './office-api.tsx'
+import { DIEGETIC_LIGHT_INPUT, DIEGETIC_PARCHMENT_CARD, nineSliceButtonStyle } from './ui-skin.tsx'
 
 const M2_KINDS: readonly M2Kind[] = ['preference', 'veto', 'shared_event', 'internal_moniker', 'correction_repair']
 const toSlug = (raw: string, fallback: string): string =>
   raw.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^[^a-z0-9]+|-+$/g, '').slice(0, 64) || fallback
 
-const pageStyle: CSSProperties = { background: '#E8D8BE', border: `1px solid ${OFFICE_THEME.woodMid}`, borderRadius: 4, padding: 10 }
-const inputStyle: CSSProperties = { width: '100%', boxSizing: 'border-box', padding: '4px 6px', background: '#F6ECDC', color: OFFICE_THEME.inkDark, border: `1px solid ${OFFICE_THEME.woodMid}`, borderRadius: 3, fontSize: 12 }
-const btnStyle = (primary = false): CSSProperties => ({
-  padding: '4px 9px', borderRadius: 3, fontSize: 11, cursor: 'pointer', border: `1px solid ${OFFICE_THEME.woodDark}`,
-  background: primary ? OFFICE_THEME.woodDark : '#EFE3CE', color: primary ? OFFICE_THEME.inkCream : OFFICE_THEME.inkDark,
-})
+const pageStyle: CSSProperties = { ...DIEGETIC_PARCHMENT_CARD, padding: 10 }
+const inputStyle: CSSProperties = DIEGETIC_LIGHT_INPUT
+const btnStyle = (primary = false): CSSProperties => nineSliceButtonStyle(primary)
 
 /** 秘书手边《皮质备忘手账》：双栏羊皮纸手账，严禁直写 M4。 */
 export function PropNotebook({ open, onClose, onChanged }: { open: boolean; onClose: () => void; onChanged?: () => void }) {
@@ -79,10 +77,10 @@ export function PropNotebook({ open, onClose, onChanged }: { open: boolean; onCl
 
   return (
     <DiegeticModal open={open} title="皮质备忘手账" subtitle="秘书手边 · M1–M3 批注与 M6 待办账本" variant="parchment" width={940} onClose={onClose}>
-      {error && <p style={{ color: '#9E2A2B', margin: '0 0 8px' }}>加载失败：{error}</p>}
-      {notice && <p style={{ background: '#EFE3CE', border: `1px solid ${OFFICE_THEME.woodMid}`, padding: '6px 10px', margin: '0 0 10px', fontSize: 12 }}>{notice}</p>}
+      {error && <p style={{ color: '#9E2F2C', margin: '0 0 8px' }}>加载失败：{error}</p>}
+      {notice && <p style={{ ...DIEGETIC_PARCHMENT_CARD, backgroundColor: OFFICE_THEME.parchment, margin: '0 0 10px', fontSize: 12 }}>{notice}</p>}
       {!data ? <p>摊开皮质手账中…</p> : <>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, padding: '8px 12px', background: '#E5D1B3', border: `1px solid ${OFFICE_THEME.woodMid}`, borderRadius: 4, marginBottom: 12, fontSize: 12 }}>
+        <div style={{ ...DIEGETIC_PARCHMENT_CARD, backgroundColor: OFFICE_THEME.parchment, display: 'flex', flexWrap: 'wrap', gap: 14, marginBottom: 12, fontSize: 12 }}>
           <span>重复提问率：<strong>{(data.studio.metrics.repeatQuestionRate * 100).toFixed(1)}%</strong> ({data.studio.metrics.repeatQuestions}/{data.studio.metrics.totalQuestions})</span>
           <span>误召回数：<strong>{data.studio.metrics.falseRecallCount}</strong></span>
           <span>周纠偏数：<strong>{data.studio.metrics.weeklyCorrectedMemories}</strong> ({data.studio.metrics.windowDays}d)</span>
@@ -114,12 +112,12 @@ export function PropNotebook({ open, onClose, onChanged }: { open: boolean; onCl
             </form>
             <div style={{ maxHeight: 240, overflowY: 'auto', display: 'grid', gap: 6 }}>
               {m13.length === 0 ? <span style={{ fontSize: 12, opacity: 0.75 }}>暂无 M1–M3 实体记忆。</span> : m13.map(row => (
-                <div key={row.entry.id} style={{ padding: 6, background: '#F3E7D3', border: `1px solid ${OFFICE_THEME.woodMid}`, borderRadius: 3, fontSize: 11 }}>
+                <div key={row.entry.id} style={{ ...DIEGETIC_PARCHMENT_CARD, backgroundColor: OFFICE_THEME.parchment, padding: 6, fontSize: 11 }}>
                   <div style={{ display: 'flex', gap: 6, marginBottom: 2 }}>
                     <strong>[{row.layer}]</strong>
                     <span>{row.entry.topicKey ?? row.entry.m2Kind ?? row.entry.scope}</span>
                     {row.entry.resident && <span>★常驻</span>}
-                    {row.entry.validTo && <span style={{ color: '#9E2A2B' }}>已墓碑</span>}
+                    {row.entry.validTo && <span style={{ color: '#9E2F2C' }}>已墓碑</span>}
                     <span style={{ marginLeft: 'auto', opacity: 0.75 }}>#{row.entry.sourceRef.seq}</span>
                   </div>
                   <div>{row.entry.statement}</div>
@@ -131,7 +129,7 @@ export function PropNotebook({ open, onClose, onChanged }: { open: boolean; onCl
             <strong style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>右页 · 工单原文便利贴审批 ({data.studio.pendingPatches.length})</strong>
             <div style={{ display: 'grid', gap: 6, marginBottom: 12 }}>
               {data.studio.pendingPatches.length === 0 ? <span style={{ fontSize: 12, opacity: 0.75 }}>暂无待审批便利贴。</span> : data.studio.pendingPatches.map((p, idx) => (
-                <div key={`${p.targetRelPath}-${idx}`} style={{ padding: 8, background: '#F7E9B8', border: `1px solid ${OFFICE_THEME.woodMid}`, borderRadius: 3, fontSize: 11 }}>
+                <div key={`${p.targetRelPath}-${idx}`} style={{ ...DIEGETIC_PARCHMENT_CARD, backgroundColor: OFFICE_THEME.parchment, outline: `2px solid ${OFFICE_THEME.borderGold}`, padding: 8, fontSize: 11 }}>
                   <div style={{ opacity: 0.8, marginBottom: 3 }}>[{p.layer}] {p.targetRelPath} · #{p.sourceRef.seq}</div>
                   {p.verbatimQuote && <blockquote style={{ margin: '0 0 4px', paddingLeft: 6, borderLeft: `2px solid ${OFFICE_THEME.woodDark}`, opacity: 0.9 }}>{p.verbatimQuote}</blockquote>}
                   <div style={{ fontWeight: 600, marginBottom: 6 }}>{p.statement}</div>
@@ -148,9 +146,9 @@ export function PropNotebook({ open, onClose, onChanged }: { open: boolean; onCl
             </div>
             <div style={{ maxHeight: 160, overflowY: 'auto', display: 'grid', gap: 4 }}>
               {nbItems.map(item => (
-                <div key={item.id} style={{ padding: 6, background: '#F3E7D3', border: `1px solid ${OFFICE_THEME.woodMid}`, borderRadius: 3, fontSize: 11 }}>
+                <div key={item.id} style={{ ...DIEGETIC_PARCHMENT_CARD, backgroundColor: OFFICE_THEME.parchment, padding: 6, fontSize: 11 }}>
                   <span>[{item.status}/{item.kind}] {item.question}</span>
-                  {item.due && <strong style={{ marginLeft: 6, color: '#9E2A2B' }}>已到期</strong>}
+                  {item.due && <strong style={{ marginLeft: 6, color: '#9E2F2C' }}>已到期</strong>}
                 </div>
               ))}
             </div>

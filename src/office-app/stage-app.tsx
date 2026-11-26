@@ -60,6 +60,7 @@ function syncWorldActors(prev: OfficeActor[], tickets: readonly TicketItem[], wo
 export function StageApp() {
   const [viewport, setViewport] = useState(getInitialViewport)
   const [workspaceId, setWorkspaceId] = useState('default')
+  const [worldSeed, setWorldSeed] = useState(1)
   const [camera, setCamera] = useState<OfficeCamera>(() => { const vp = getInitialViewport(); return cameraForGridPoint(WORLD_CENTER, solveWorldFloorplan([{ id: 'default', title: 'default' }], 1), defaultZoomFor(vp.w), vp.w, vp.h) })
   const [dialogCollapsed, setDialogCollapsed] = useState(true)
   const [feed, setFeed] = useState<SecretaryFeedEntry[]>([])
@@ -92,7 +93,7 @@ export function StageApp() {
     { id: 'default', title: 'default', repository: settings?.environment.root },
     ...(settings?.blocks.workspaces.value ?? []).map(w => ({ id: w.id, title: w.id, repository: w.repository })),
   ], [settings])
-  const world = useMemo(() => solveWorldFloorplan(workspaces, 1), [workspaces])
+  const world = useMemo(() => solveWorldFloorplan(workspaces, worldSeed), [workspaces, worldSeed])
   const actorsRef = useRef<OfficeActor[]>(createInitialWorldActors(world))
 
   const roomTickets = useMemo(() => tickets.filter(t => resolveRoomId(t, settings) === workspaceId), [tickets, workspaceId, settings])
@@ -273,13 +274,14 @@ export function StageApp() {
   }
 
   const resetCam = () => setCamera(cameraForGridPoint(WORLD_CENTER, world, defaultZoomFor(viewport.w), viewport.w, viewport.h))
+  const rerollSeed = () => { const next = (worldSeed % 99) + 1; setWorldSeed(next); setCamera(c => cameraForGridPoint(WORLD_CENTER, solveWorldFloorplan(workspaces, next), c.zoom, viewport.w, viewport.h)) }
 
   return (
     <div style={{ position: 'fixed', inset: 0, width: '100vw', height: '100vh', background: OFFICE_THEME.bgDeep, color: OFFICE_THEME.inkCream, overflow: 'hidden' }}>
       <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
         <GameHud online={online} activeWorkspaceId={workspaceId} world={world} actors={actorSnap.length > 0 ? actorSnap : actorsRef.current} roomStats={roomStats}
           workingCount={tickets.filter(t => t.stage === 'working').length} camera={camera} dialogCollapsed={effectiveCollapsed}
-          secretaryMood={secretaryMood} secretaryPortraitSrc={secretaryPortraitSrc} gateBlocked={gateBlocked}
+          secretaryMood={secretaryMood} secretaryPortraitSrc={secretaryPortraitSrc} gateBlocked={gateBlocked} seed={worldSeed} onRerollSeed={rerollSeed}
           onOpenProp={p => { if (p === 'doorplate') setDrawerMode('doorplate'); else setActiveProp(p) }}
           onZoomChange={zoom => setCamera(cameraForGridPoint(WORLD_CENTER, world, zoom, viewport.w, viewport.h))}
           onResetCamera={resetCam}

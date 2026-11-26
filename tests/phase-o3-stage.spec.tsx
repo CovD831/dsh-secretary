@@ -350,5 +350,10 @@ describe('Phase O3 Pixel Office Stage', () => {
     expect(zoom2Btn.style.background).not.toBe(zoom1Btn.style.background)
     await act(async () => { zoom1Btn.click() })
     expect(zoom1Btn.style.background).not.toBe(zoom2Btn.style.background)
+
+    const seedBtn = document.querySelector<HTMLButtonElement>('button[aria-label="切换布局种子"]')!
+    expect(seedBtn.textContent).toBe('种子 #1')
+    await act(async () => { seedBtn.click() })
+    expect(seedBtn.textContent).toBe('种子 #2')
   })
 })

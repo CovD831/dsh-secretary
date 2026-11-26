@@ -4,6 +4,7 @@ import type { ApiRequest, ApiResponse } from '../app/api.ts'
 import type { RsiWorkbenchView } from '../app/governance-ops.ts'
 import type { FourWayAttribution } from '../rsi/types.ts'
 import { DiegeticModal, OFFICE_THEME, officeCall } from './office-api.tsx'
+import { DIEGETIC_LIGHT_INPUT, DIEGETIC_PARCHMENT_CARD, nineSliceButtonStyle } from './ui-skin.tsx'
 
 const ATTRIBUTIONS: readonly FourWayAttribution[] = ['missing_rule', 'wrong_rule', 'unmeasurable', 'rule_conflict']
 const DEFAULT_ABLATION_CASES: ApiRequest<'POST rsi/ablation'>['body']['cases'] = [
@@ -17,9 +18,9 @@ const DEFAULT_HOLDOUT_CASES: ApiRequest<'POST rsi/holdout'>['body']['cases'] = [
   { id: 'h-4', family: 'f4', expectedOutcome: 'clean', input: { sessionDiffs: ['src/b.ts'], gitDirtyPaths: ['src/b.ts'], untrackedPaths: [], allowedPaths: ['src/**'] } },
 ]
 
-const pinCard: CSSProperties = { background: '#E9D6B5', color: OFFICE_THEME.inkDark, border: `1px solid ${OFFICE_THEME.woodDark}`, borderRadius: 4, padding: 10 }
-const inputStyle: CSSProperties = { width: '100%', boxSizing: 'border-box', padding: '4px 6px', background: '#F7ECDA', color: OFFICE_THEME.inkDark, border: `1px solid ${OFFICE_THEME.woodMid}`, borderRadius: 3, fontSize: 11 }
-const btnStyle: CSSProperties = { padding: '4px 10px', borderRadius: 3, fontSize: 11, cursor: 'pointer', border: `1px solid ${OFFICE_THEME.borderGold}`, background: OFFICE_THEME.woodDark, color: OFFICE_THEME.inkCream }
+const pinCard: CSSProperties = { ...DIEGETIC_PARCHMENT_CARD, padding: 10 }
+const inputStyle: CSSProperties = { ...DIEGETIC_LIGHT_INPUT, fontSize: 11 }
+const btnStyle: CSSProperties = nineSliceButtonStyle(true)
 const pct = (v: number | undefined) => v === undefined ? 'unmeasured' : `${(v * 100).toFixed(1)}%`
 
 /** 后墙《体检与校准软木板》：4 张软木钉板卡片展示在线体检、ECE 校准与 LOO/Holdout 实证。 */
@@ -61,14 +62,14 @@ export function PropCorkboard({ open, onClose, onChanged }: { open: boolean; onC
 
   return (
     <DiegeticModal open={open} title="体检与校准软木板" subtitle="后墙 · L1–L13 摩擦、ECE 校准与 LOO/Holdout 实证" variant="cork" width={940} onClose={onClose}>
-      {error && <p style={{ background: '#E7B9B5', color: OFFICE_THEME.inkDark, padding: '6px 10px', borderRadius: 3, margin: '0 0 10px', fontSize: 12 }}>{error}</p>}
+      {error && <p style={{ ...DIEGETIC_PARCHMENT_CARD, backgroundColor: '#9E2F2C', color: OFFICE_THEME.inkCream, margin: '0 0 10px', fontSize: 12 }}>{error}</p>}
       {!wb ? <p>读取软木板钉卡中…</p> : (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div style={pinCard}>
             <strong style={{ display: 'block', marginBottom: 6, fontSize: 13 }}>钉卡 1 · M0 自然回填 L1–L13 摩擦标签 ({wb.snapshot.eventCount} 条)</strong>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, fontSize: 11 }}>
               {Object.entries(wb.snapshot.labelCounts).map(([label, cnt]) => (
-                <div key={label} style={{ background: '#F4E6CE', padding: '3px 6px', borderRadius: 3, border: `1px solid ${OFFICE_THEME.woodMid}` }}>
+                <div key={label} style={{ background: OFFICE_THEME.parchment, padding: '3px 6px', border: `1px solid ${OFFICE_THEME.woodMid}` }}>
                   <code>{label}</code>: <strong>{cnt}</strong>
                 </div>
               ))}
@@ -95,7 +96,7 @@ export function PropCorkboard({ open, onClose, onChanged }: { open: boolean; onC
             {wb.calibration.bins.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6, fontSize: 10 }}>
                 {wb.calibration.bins.map(b => (
-                  <span key={b.binIndex} style={{ background: '#F4E6CE', padding: '2px 5px', borderRadius: 3 }}>
+                  <span key={b.binIndex} style={{ background: OFFICE_THEME.parchment, border: `1px solid ${OFFICE_THEME.woodMid}`, padding: '2px 5px' }}>
                     #{b.binIndex} [{b.lower.toFixed(1)},{b.upper.toFixed(1)}] n={b.count} emp={b.empiricalRate.toFixed(2)}
                   </span>
                 ))}
@@ -103,7 +104,7 @@ export function PropCorkboard({ open, onClose, onChanged }: { open: boolean; onC
             )}
             <div style={{ display: 'grid', gap: 4 }}>
               {wb.snapshot.candidateDrafts.length === 0 ? <span style={{ fontSize: 11, opacity: 0.75 }}>暂无 Seen&gt;=3 候选草案。</span> : wb.snapshot.candidateDrafts.map(d => (
-                <div key={d.id} style={{ background: '#F7E9B8', padding: '4px 6px', borderRadius: 3, fontSize: 11 }}>
+                <div key={d.id} style={{ background: OFFICE_THEME.parchment, border: `1px solid ${OFFICE_THEME.borderGold}`, padding: '4px 6px', fontSize: 11 }}>
                   <strong>{d.id}</strong> [{d.point}] ({d.stage ?? 'shadow'}): {d.intent}
                 </div>
               ))}
@@ -117,7 +118,7 @@ export function PropCorkboard({ open, onClose, onChanged }: { open: boolean; onC
               {ablationRes && <span style={{ fontSize: 11 }}>cases {ablationRes.baseline.totalCases} · catches {ablationRes.baseline.catches} · net {ablationRes.baseline.netBenefit.toFixed(2)}</span>}
             </div>
             {ablationRes && (
-              <div style={{ fontSize: 11, background: '#F4E6CE', padding: 6, borderRadius: 3, marginBottom: 8 }}>
+              <div style={{ fontSize: 11, background: OFFICE_THEME.parchment, border: `1px solid ${OFFICE_THEME.woodMid}`, padding: 6, marginBottom: 8 }}>
                 冗余：{ablationRes.redundantGateIds.join(', ') || '无'} · 有害：{ablationRes.harmfulGateIds.join(', ') || '无'}
               </div>
             )}
@@ -131,7 +132,7 @@ export function PropCorkboard({ open, onClose, onChanged }: { open: boolean; onC
                 <span style={{ fontSize: 10 }}>已开封：{Object.keys(wb.openedHoldouts).length}</span>
               </div>
               {holdoutRes && (
-                <div style={{ fontSize: 11, background: '#F4E6CE', padding: 6, borderRadius: 3 }}>
+                <div style={{ fontSize: 11, background: OFFICE_THEME.parchment, border: `1px solid ${OFFICE_THEME.woodMid}`, padding: 6 }}>
                   {holdoutRes.ok ? `${holdoutRes.result.verdict} (promoted=${String(holdoutRes.result.promoted)}): ${holdoutRes.result.reason}` : holdoutRes.reason}
                 </div>
               )}

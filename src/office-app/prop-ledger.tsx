@@ -3,6 +3,7 @@ import { type CSSProperties, useCallback, useEffect, useState } from 'react'
 import type { DiscoveredDepositRecord, Stage } from '../judgement/index.ts'
 import type { DepositProjectionItem, DepositsProjectionView } from '../projection/types.ts'
 import { DiegeticModal, OFFICE_THEME, officeCall } from './office-api.tsx'
+import { DIEGETIC_PARCHMENT_CARD, nineSliceButtonStyle } from './ui-skin.tsx'
 
 const STAGES: readonly Stage[] = ['shadow', 'observe', 'enforce', 'retired']
 
@@ -42,15 +43,9 @@ function mergeRules(proj: readonly DepositProjectionItem[], records: readonly Di
   return [...map.values()]
 }
 
-const cardStyle: CSSProperties = {
-  background: '#E8D8BE', border: `1px solid ${OFFICE_THEME.woodMid}`, borderRadius: 4, padding: 10, marginBottom: 8,
-}
+const cardStyle: CSSProperties = { ...DIEGETIC_PARCHMENT_CARD, padding: 10, marginBottom: 8 }
 const stampStyle = (active: boolean, disabled = false): CSSProperties => ({
-  padding: '3px 8px', borderRadius: 3, fontSize: 11, cursor: disabled ? 'not-allowed' : 'pointer',
-  border: `1px solid ${active ? OFFICE_THEME.inkDark : OFFICE_THEME.woodMid}`,
-  background: active ? OFFICE_THEME.woodDark : '#EFE3CE',
-  color: active ? OFFICE_THEME.inkCream : OFFICE_THEME.inkDark,
-  opacity: disabled && !active ? 0.45 : 1,
+  ...nineSliceButtonStyle(active, disabled), padding: '2px 8px',
 })
 
 /** 前台《门禁规章册》：羊皮纸账册风格，支持阶段切换与反例规则 D5 禁升强制锁定。 */
@@ -88,10 +83,10 @@ export function PropLedger({ open, onClose, onChanged }: { open: boolean; onClos
 
   return (
     <DiegeticModal open={open} title="门禁规章册" subtitle="前台 · 注册表真源与三态判据战绩" variant="parchment" onClose={onClose}>
-      {error && <p style={{ color: '#9E2A2B', margin: '0 0 8px' }}>加载失败：{error}</p>}
-      {notice && <p style={{ background: '#EFE3CE', border: `1px solid ${OFFICE_THEME.woodMid}`, padding: '6px 10px', margin: '0 0 10px', fontSize: 12 }}>{notice}</p>}
+      {error && <p style={{ color: '#9E2F2C', margin: '0 0 8px' }}>加载失败：{error}</p>}
+      {notice && <p style={{ ...DIEGETIC_PARCHMENT_CARD, backgroundColor: OFFICE_THEME.parchment, margin: '0 0 10px', fontSize: 12 }}>{notice}</p>}
       {!data ? <p>翻阅规章册中…</p> : <>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, padding: '8px 10px', background: '#E5D1B3', border: `1px solid ${OFFICE_THEME.woodMid}`, borderRadius: 4, marginBottom: 12, fontSize: 12 }}>
+        <div style={{ ...DIEGETIC_PARCHMENT_CARD, backgroundColor: OFFICE_THEME.parchment, display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 12, fontSize: 12 }}>
           <span>总规章：<strong>{Math.max(data.proj.total, items.length)}</strong></span>
           <span>已准入：<strong>{data.proj.admittedCount || items.filter(i => i.admitted).length}</strong></span>
           <span>总触发：<strong>{data.proj.totalTriggers}</strong></span>
@@ -105,19 +100,19 @@ export function PropLedger({ open, onClose, onChanged }: { open: boolean; onClos
             <div key={item.id} style={cardStyle}>
               <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                 <strong style={{ fontSize: 13 }}>{item.id}</strong>
-                <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 3, background: item.admitted ? '#C8DEC4' : '#E7B9B5', border: `1px solid ${OFFICE_THEME.woodDark}` }}>
+                <span style={{ fontSize: 11, padding: '1px 6px', background: item.admitted ? '#4A6A50' : '#9E2F2C', color: OFFICE_THEME.inkCream, border: `1px solid ${OFFICE_THEME.woodDark}` }}>
                   {item.admitted ? '已准入' : '未准入'}
                 </span>
-                <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 3, background: '#D5C0A1', border: `1px solid ${OFFICE_THEME.woodMid}` }}>
+                <span style={{ fontSize: 11, padding: '1px 6px', background: OFFICE_THEME.parchmentSoft, color: OFFICE_THEME.inkDark, border: `1px solid ${OFFICE_THEME.woodMid}` }}>
                   阶段：{item.stage}
                 </span>
                 {item.kind && <span style={{ fontSize: 11, opacity: 0.8 }}>{item.kind}</span>}
-                {d5Locked && <span style={{ fontSize: 11, color: '#8A3B12', fontWeight: 700 }}>D5 宪法禁升强制</span>}
+                {d5Locked && <span style={{ fontSize: 11, color: '#9E2F2C', fontWeight: 700 }}>D5 宪法禁升强制</span>}
               </div>
               <div style={{ fontSize: 12, opacity: 0.88, marginBottom: 6 }}>
                 挂载点：<code>{item.point ?? item.signal ?? '未指定'}</code> · 夹具 {item.casesCount} · triggers {item.stats.triggers} / allow {item.stats.allow} / deny {item.stats.deny} / unmeasured {item.stats.unmeasured}
               </div>
-              {item.error && <p style={{ color: '#9E2A2B', fontSize: 11, margin: '0 0 6px' }}>{item.error}</p>}
+              {item.error && <p style={{ color: '#9E2F2C', fontSize: 11, margin: '0 0 6px' }}>{item.error}</p>}
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {STAGES.map(stage => {
                   const locked = d5Locked && stage === 'enforce'
@@ -138,7 +133,7 @@ export function PropLedger({ open, onClose, onChanged }: { open: boolean; onClos
           <button type="button" style={stampStyle(ledgerOpen)} onClick={() => setLedgerOpen(v => !v)}>
             {ledgerOpen ? '收起 LEDGER.md 原文卷轴' : '展开 LEDGER.md 原文卷轴'}
           </button>
-          {ledgerOpen && <pre style={{ marginTop: 8, padding: 10, background: '#EFE3CE', border: `1px solid ${OFFICE_THEME.woodMid}`, borderRadius: 4, fontSize: 11, overflowX: 'auto', whiteSpace: 'pre-wrap' }}>{data.markdown}</pre>}
+          {ledgerOpen && <pre style={{ ...DIEGETIC_PARCHMENT_CARD, marginTop: 8, padding: 10, fontSize: 11, overflowX: 'auto', whiteSpace: 'pre-wrap' }}>{data.markdown}</pre>}
         </div>
       </>}
     </DiegeticModal>
