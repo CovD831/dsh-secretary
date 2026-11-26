@@ -1,4 +1,4 @@
-/** V2 微缩沙盘 7 层等距渲染与跨走廊寻路引擎。 */
+/** V2.5 微缩沙盘 7 层等距渲染与跨走廊 BFS 寻路引擎。 */
 import { HIGHLIGHT_GOLD, PROP_LABELS, STATUS_GLOW_COLORS } from './catalog.ts'
 import { WORLD_ASSET_CATALOG } from './diorama-catalog.ts'
 import type { OfficeActor, OfficeSprites } from './iso-engine.ts'
@@ -30,14 +30,23 @@ function makeWorldChair(suite: RoomEntity): RoomEntity {
 }
 
 function isWallBlocked(world: OfficeWorldPlan, u1: number, v1: number, u2: number, v2: number): boolean {
-  for (const w of world.partitionWalls) {
-    if (w.axis === 'u' && v1 === v2 && v1 >= w.start && v1 < w.end && ((u1 === w.fixed - 1 && u2 === w.fixed) || (u2 === w.fixed - 1 && u1 === w.fixed))) return true
-    if (w.axis === 'v' && u1 === u2 && u1 >= w.start && u1 < w.end && ((v1 === w.fixed - 1 && v2 === w.fixed) || (v2 === w.fixed - 1 && v1 === w.fixed))) return true
+  for (const s of world.wallSegments ?? []) {
+    if (v1 === v2 && s.from.u === s.to.u && s.from.u === Math.max(u1, u2) && v1 >= Math.min(s.from.v, s.to.v) && v1 < Math.max(s.from.v, s.to.v)) return true
+    if (u1 === u2 && s.from.v === s.to.v && s.from.v === Math.max(v1, v2) && u1 >= Math.min(s.from.u, s.to.u) && u1 < Math.max(s.from.u, s.to.u)) return true
   }
   return false
 }
 
+function buildWalkableSet(world: OfficeWorldPlan): Set<string> {
+  const walkable = new Set<string>()
+  for (const c of world.corridorCells ?? []) walkable.add(`${c.u},${c.v}`)
+  for (const c of world.lobby.cells ?? []) walkable.add(`${c.u},${c.v}`)
+  for (const w of world.wings) if (w.kind === 'studio') for (const c of w.cells ?? []) walkable.add(`${c.u},${c.v}`)
+  return walkable
+}
+
 function findWorldPath(world: OfficeWorldPlan, from: GridPoint, to: GridPoint): GridPoint[] {
+  const walkable = buildWalkableSet(world)
   const blocked = new Set<string>()
   for (const e of [...world.lobby.suites, ...world.lobby.shared, ...world.wings.flatMap((w) => [...w.suites, ...w.shared])]) {
     for (const c of e.footprint) blocked.add(`${c.u},${c.v}`)
@@ -51,7 +60,7 @@ function findWorldPath(world: OfficeWorldPlan, from: GridPoint, to: GridPoint): 
     if (`${cur.u},${cur.v}` === goalKey) break
     for (const [du, dv] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
       const nu = cur.u + du, nv = cur.v + dv, nk = `${nu},${nv}`
-      if (nu < 0 || nv < 0 || nu >= world.buildingCols || nv >= world.buildingRows || parent.has(nk)) continue
+      if (parent.has(nk) || (!walkable.has(nk) && nk !== goalKey)) continue
       if (isWallBlocked(world, cur.u, cur.v, nu, nv) || (blocked.has(nk) && nk !== goalKey)) continue
       parent.set(nk, cur); queue.push({ u: nu, v: nv })
     }
@@ -105,37 +114,37 @@ export function stepWorldActors(actors: OfficeActor[], world: OfficeWorldPlan, d
 }
 
 function getEntityBox(e: RoomEntity, world: OfficeWorldPlan, cam: OfficeCamera): Box {
-  const meta = WORLD_ASSET_CATALOG[e.assetId]!, pos = worldIsoToScreen(e.anchor.u + e.size[0] / 2, e.anchor.v + e.size[1] / 2, world, cam)
-  return { x: Math.round(pos.x - meta.anchor[0] * cam.zoom), y: Math.round(pos.y - meta.anchor[1] * cam.zoom), w: meta.nativeSize[0] * cam.zoom, h: meta.nativeSize[1] * cam.zoom }
+  const m = WORLD_ASSET_CATALOG[e.assetId]!, p = worldIsoToScreen(e.anchor.u + e.size[0] / 2, e.anchor.v + e.size[1] / 2, world, cam)
+  return { x: Math.round(p.x - m.anchor[0] * cam.zoom), y: Math.round(p.y - m.anchor[1] * cam.zoom), w: m.nativeSize[0] * cam.zoom, h: m.nativeSize[1] * cam.zoom }
 }
 function getActorBox(a: OfficeActor, world: OfficeWorldPlan, cam: OfficeCamera): Box {
-  const pos = worldIsoToScreen(a.u + 0.5, a.v + 0.5, world, cam)
-  return { x: Math.round(pos.x - 16 * cam.zoom), y: Math.round(pos.y - 44 * cam.zoom), w: 32 * cam.zoom, h: 48 * cam.zoom }
+  const p = worldIsoToScreen(a.u + 0.5, a.v + 0.5, world, cam)
+  return { x: Math.round(p.x - 16 * cam.zoom), y: Math.round(p.y - 44 * cam.zoom), w: 32 * cam.zoom, h: 48 * cam.zoom }
 }
 function getMountBox(m: RoomWallMount, world: OfficeWorldPlan, cam: OfficeCamera, baseU = 0, baseV = 0): Box {
   const meta = WORLD_ASSET_CATALOG[m.assetId]!, pos = m.wall === 'back' ? worldIsoToScreen(m.at, baseV, world, cam) : worldIsoToScreen(baseU, m.at, world, cam)
   const w = meta.nativeSize[0] * cam.zoom, h = meta.nativeSize[1] * cam.zoom
   return { x: Math.round(pos.x - w / 2), y: Math.round(pos.y - h - m.h * cam.zoom), w, h }
 }
-function getDoorplateBox(wing: WorldWingPlan, world: OfficeWorldPlan, cam: OfficeCamera): Box {
-  const pos = worldIsoToScreen(wing.rect.u === 0 ? wing.doorway.u + 0.8 : wing.doorway.u + 0.2, wing.doorway.v - 0.8, world, cam)
-  return { x: Math.round(pos.x - 12 * cam.zoom), y: Math.round(pos.y - 34 * cam.zoom), w: 24 * cam.zoom, h: 16 * cam.zoom }
+const getDoorplateBox = (wing: WorldWingPlan, world: OfficeWorldPlan, cam: OfficeCamera): Box => {
+  const p = worldIsoToScreen(wing.rect.u === 0 ? wing.doorway.u + 0.8 : wing.doorway.u + 0.2, wing.doorway.v - 0.8, world, cam)
+  return { x: Math.round(p.x - 12 * cam.zoom), y: Math.round(p.y - 34 * cam.zoom), w: 24 * cam.zoom, h: 16 * cam.zoom }
 }
-function getWingSignBox(wing: WorldWingPlan, world: OfficeWorldPlan, cam: OfficeCamera): Box {
-  const pos = worldIsoToScreen(wing.rect.u + wing.rect.w / 2, wing.rect.v + Math.min(4.2, wing.rect.h / 2), world, cam)
-  const w = Math.max(72, wing.title.length * 10 + 14) * cam.zoom
-  return { x: Math.round(pos.x - w / 2), y: Math.round(pos.y - 16 * cam.zoom), w, h: 16 * cam.zoom }
+const getWingSignBox = (wing: WorldWingPlan, world: OfficeWorldPlan, cam: OfficeCamera): Box => {
+  const p = worldIsoToScreen(wing.rect.u + wing.rect.w / 2, wing.rect.v + Math.min(4.2, wing.rect.h / 2), world, cam), w = Math.max(72, wing.title.length * 10 + 14) * cam.zoom
+  return { x: Math.round(p.x - w / 2), y: Math.round(p.y - 16 * cam.zoom), w, h: 16 * cam.zoom }
 }
-function tileKindAt(u: number, v: number, world: OfficeWorldPlan): 'corridor_tile' | 'floor_wood' | 'stone_tile' | null {
-  const c = world.corridorRect
-  if (u >= c.u && u < c.u + c.w && v >= c.v && v < c.v + c.h) return 'corridor_tile'
-  for (const w of world.wings) if (u >= w.rect.u && u < w.rect.u + w.rect.w && v >= w.rect.v && v < w.rect.v + w.rect.h) {
-    if (w.chamferSE && (u - w.rect.u) + (v - w.rect.v) >= w.rect.w + w.rect.h - 1 - w.chamferSE) continue
-    return w.kind === 'studio' ? 'floor_wood' : 'stone_tile'
+
+function build2DTileMap(world: OfficeWorldPlan): Map<string, 'corridor_tile' | 'floor_wood' | 'stone_tile'> {
+  const map = new Map<string, 'corridor_tile' | 'floor_wood' | 'stone_tile'>()
+  for (const c of [...(world.corridorCells ?? []), ...(world.lobby.cells ?? [])]) map.set(`${c.u},${c.v}`, 'corridor_tile')
+  for (const w of world.wings) {
+    const k = w.floorStyle === 'warm_parquet' ? 'corridor_tile' : w.kind === 'studio' ? 'floor_wood' : 'stone_tile'
+    for (const c of w.cells ?? []) map.set(`${c.u},${c.v}`, k)
   }
-  const inApron = u >= -1 && u <= world.buildingCols && v >= -1 && v <= world.buildingRows + 1
-  return inApron || (u >= 9 && u <= 12 && v >= world.buildingRows && v <= world.buildingRows + 2) ? 'stone_tile' : null
+  return map
 }
+
 function computeL2List(world: OfficeWorldPlan, actors: readonly OfficeActor[], cam: OfficeCamera): L2Item[] {
   const items: L2Item[] = [], suites = allSuites(world)
   for (const entity of [...suites, ...world.lobby.shared, ...world.wings.flatMap((w) => w.shared), ...world.exteriorProps]) {
@@ -155,8 +164,10 @@ function renderL0ToL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, spr
   const { world } = state, z = cam.zoom, cw = ctx.canvas?.width || 1440, ch = ctx.canvas?.height || 900
   ctx.fillStyle = '#201A18'; ctx.fillRect(0, 0, cw, ch)
   ctx.fillStyle = '#302722'; ctx.fillRect(Math.round(cw * 0.08), Math.round(ch * 0.08), Math.round(cw * 0.84), Math.round(ch * 0.84))
+  const tileMap = build2DTileMap(world)
   for (let v = -1; v <= world.buildingRows + 2; v++) for (let u = -1; u <= world.buildingCols; u++) {
-    const kind = tileKindAt(u, v, world), img = kind ? sprites.images[kind] : undefined; if (!img) continue
+    const kind = tileMap.get(`${u},${v}`) ?? (u >= -1 && u <= world.buildingCols && v >= -1 && v <= world.buildingRows + 1 ? 'stone_tile' : null)
+    const img = kind ? sprites.images[kind] : undefined; if (!img) continue
     const p = worldIsoToScreen(u + 0.5, v + 0.5, world, cam); ctx.drawImage(img, Math.round(p.x - 16 * z), Math.round(p.y - 8 * z), 32 * z, 16 * z)
   }
   const runnerImg = sprites.images.runner_navy ?? sprites.images.corridor_runner
@@ -171,32 +182,20 @@ function renderL0ToL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, spr
     const b = it.entity ? getEntityBox(it.entity, world, cam) : it.actor ? getActorBox(it.actor, world, cam) : null
     if (b) ctx.fillRect(Math.round(b.x + 2 * z), Math.round(b.y + b.h - 4 * z), Math.round(b.w * 0.85), Math.max(3, 5 * z))
   }
-  const wallImg = sprites.images.wall_segment
-  if (wallImg) {
-    for (let u = 0; u < world.buildingCols; u += 2) { const p = worldIsoToScreen(u + 1, 0, world, cam); ctx.save(); ctx.translate(Math.round(p.x + 16 * z), Math.round(p.y - 72 * z)); ctx.scale(-1, 1); ctx.drawImage(wallImg, 0, 0, 32 * z, 80 * z); ctx.restore() }
-    for (let v = 0; v < 15; v += 2) { const p = worldIsoToScreen(0, v + 1, world, cam); ctx.drawImage(wallImg, Math.round(p.x - 16 * z), Math.round(p.y - 72 * z), 32 * z, 80 * z) }
-  }
-  for (const pw of world.partitionWalls) {
-    const p1 = pw.axis === 'u' ? worldIsoToScreen(pw.fixed, pw.start, world, cam) : worldIsoToScreen(pw.start, pw.fixed, world, cam)
-    const p2 = pw.axis === 'u' ? worldIsoToScreen(pw.fixed, pw.end, world, cam) : worldIsoToScreen(pw.end, pw.fixed, world, cam)
+  const sortedWalls = [...(world.wallSegments ?? [])].sort((a, b) => (a.from.u + a.from.v + a.to.u + a.to.v) - (b.from.u + b.from.v + b.to.u + b.to.v))
+  for (const seg of sortedWalls) {
+    const p1 = worldIsoToScreen(seg.from.u, seg.from.v, world, cam), p2 = worldIsoToScreen(seg.to.u, seg.to.v, world, cam)
     const steps = Math.max(1, Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y) / (2 * z)))
-    for (let i = 0; i <= steps; i++) { const wx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - 2 * z), wy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - 20 * z); ctx.fillStyle = '#1A1412'; ctx.fillRect(wx - z, wy - z, 5 * z, 21 * z) }
     for (let i = 0; i <= steps; i++) {
-      const wx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - 2 * z), wy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - 20 * z)
-      ctx.fillStyle = '#6B4A32'; ctx.fillRect(wx, wy, 4 * z, 4 * z); ctx.fillStyle = pw.axis === 'u' ? '#BFA48C' : '#D9C4A8'; ctx.fillRect(wx, wy + 4 * z, 4 * z, 10 * z); ctx.fillStyle = '#4A3428'; ctx.fillRect(wx, wy + 14 * z, 4 * z, 5 * z)
+      const t = i / steps, h = (seg.startH + (seg.endH - seg.startH) * t) * z, wx = Math.round(p1.x + (p2.x - p1.x) * t - 2 * z), wy = Math.round(p1.y + (p2.y - p1.y) * t - h)
+      ctx.fillStyle = '#1A1412'; ctx.fillRect(wx - z, wy - z, 5 * z, h + 2 * z); ctx.fillStyle = '#4A3428'; ctx.fillRect(wx, wy, 4 * z, 5 * z)
+      ctx.fillStyle = seg.tier === 'cutaway' || seg.tier === 'portal' ? '#7A6150' : seg.shade === 'shaded' ? '#BFA48C' : '#D9C4A8'; ctx.fillRect(wx, wy + 5 * z, 4 * z, Math.max(1, h - 15 * z))
+      ctx.fillStyle = '#6B4A32'; ctx.fillRect(wx, wy + h - 10 * z, 4 * z, 10 * z)
     }
+    if (seg.hasWindow && sprites.images.facade_window) { const wp = worldIsoToScreen((seg.from.u + seg.to.u) / 2, (seg.from.v + seg.to.v) / 2, world, cam); ctx.drawImage(sprites.images.facade_window, Math.round(wp.x - 28 * z), Math.round(wp.y - 30 * z), 56 * z, 26 * z) }
   }
-  for (const d of world.interiorDoors ?? []) if (sprites.images.door_wood) {
-    const dp = worldIsoToScreen(d.u, d.v + 1, world, cam); ctx.drawImage(sprites.images.door_wood, Math.round(dp.x - 20 * z), Math.round(dp.y - 58 * z), 40 * z, 64 * z)
-  }
-  for (const f of world.frontFacade ?? []) {
-    const p1 = worldIsoToScreen(f.from.u, f.from.v, world, cam), p2 = worldIsoToScreen(f.to.u, f.to.v, world, cam)
-    const steps = Math.max(1, Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y) / (2 * z))), fh = f.heightPx * z
-    for (let i = 0; i <= steps; i++) { const fx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - z), fy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - fh); ctx.fillStyle = '#1A1412'; ctx.fillRect(fx - z, fy - z, 5 * z, fh + 2 * z) }
-    for (let i = 0; i <= steps; i++) { const fx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - z), fy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - fh); ctx.fillStyle = '#4A3428'; ctx.fillRect(fx, fy, 4 * z, 4 * z); ctx.fillStyle = '#7A6150'; ctx.fillRect(fx, fy + 4 * z, 4 * z, fh - 4 * z) }
-    if (f.hasWindow && sprites.images.facade_window) { const wp = worldIsoToScreen((f.from.u + f.to.u) / 2, (f.from.v + f.to.v) / 2, world, cam); ctx.save(); ctx.translate(Math.round(wp.x + 32 * z), Math.round(wp.y - 36 * z)); ctx.scale(-1, 1); ctx.drawImage(sprites.images.facade_window, 0, 0, 64 * z, 40 * z); ctx.restore() }
-  }
-  if (sprites.images.door_glass) { const dp = worldIsoToScreen(11, world.buildingRows, world, cam); ctx.save(); ctx.translate(Math.round(dp.x + 40 * z), Math.round(dp.y - 52 * z)); ctx.scale(-1, 1); ctx.drawImage(sprites.images.door_glass, 0, 0, 80 * z, 56 * z); ctx.restore() }
+  for (const d of world.interiorDoors ?? []) if (sprites.images.door_wood) { const dp = worldIsoToScreen(d.u, d.v + 1, world, cam); ctx.drawImage(sprites.images.door_wood, Math.round(dp.x - 19 * z), Math.round(dp.y - 50 * z), 38 * z, 52 * z) }
+  if (sprites.images.door_glass) { const dp = worldIsoToScreen(11, world.buildingRows, world, cam); ctx.drawImage(sprites.images.door_glass, Math.round(dp.x - 38 * z), Math.round(dp.y - 49 * z), 76 * z, 50 * z) }
   const drawMount = (m: RoomWallMount, bu: number, bv: number) => {
     const img = sprites.images[m.assetId]; if (!img) return
     const b = getMountBox(m, world, cam, bu, bv)
