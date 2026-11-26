@@ -1,0 +1,245 @@
+{
+  "version": 1,
+  "paletteSize": 38,
+  "assets": {
+    "floor_wood": {
+      "file": "floor_wood.png",
+      "width": 32,
+      "height": 16,
+      "anchor": [
+        16,
+        8
+      ],
+      "opaquePixels": 345,
+      "uniqueColors": 17,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "rug_woven": {
+      "file": "rug_woven.png",
+      "width": 64,
+      "height": 32,
+      "anchor": [
+        32,
+        16
+      ],
+      "opaquePixels": 1183,
+      "uniqueColors": 28,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "wall_segment": {
+      "file": "wall_segment.png",
+      "width": 80,
+      "height": 56,
+      "anchor": [
+        40,
+        52
+      ],
+      "opaquePixels": 1451,
+      "uniqueColors": 30,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "door_glass": {
+      "file": "door_glass.png",
+      "width": 80,
+      "height": 56,
+      "anchor": [
+        40,
+        52
+      ],
+      "opaquePixels": 1457,
+      "uniqueColors": 28,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "window_day": {
+      "file": "window_day.png",
+      "width": 64,
+      "height": 48,
+      "anchor": [
+        32,
+        44
+      ],
+      "opaquePixels": 991,
+      "uniqueColors": 28,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "clock_wall": {
+      "file": "clock_wall.png",
+      "width": 24,
+      "height": 24,
+      "anchor": [
+        12,
+        12
+      ],
+      "opaquePixels": 363,
+      "uniqueColors": 23,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "corkboard": {
+      "file": "corkboard.png",
+      "width": 80,
+      "height": 56,
+      "anchor": [
+        40,
+        52
+      ],
+      "opaquePixels": 1608,
+      "uniqueColors": 29,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "reception_desk": {
+      "file": "reception_desk.png",
+      "width": 80,
+      "height": 56,
+      "anchor": [
+        40,
+        50
+      ],
+      "opaquePixels": 2066,
+      "uniqueColors": 36,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "exec_desk": {
+      "file": "exec_desk.png",
+      "width": 96,
+      "height": 64,
+      "anchor": [
+        48,
+        56
+      ],
+      "opaquePixels": 2731,
+      "uniqueColors": 27,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "worker_desk": {
+      "file": "worker_desk.png",
+      "width": 64,
+      "height": 48,
+      "anchor": [
+        32,
+        42
+      ],
+      "opaquePixels": 1409,
+      "uniqueColors": 31,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "bookshelf": {
+      "file": "bookshelf.png",
+      "width": 64,
+      "height": 56,
+      "anchor": [
+        32,
+        50
+      ],
+      "opaquePixels": 1589,
+      "uniqueColors": 33,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "file_cabinet": {
+      "file": "file_cabinet.png",
+      "width": 64,
+      "height": 56,
+      "anchor": [
+        32,
+        50
+      ],
+      "opaquePixels": 1793,
+      "uniqueColors": 32,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "water_cooler": {
+      "file": "water_cooler.png",
+      "width": 32,
+      "height": 48,
+      "anchor": [
+        16,
+        44
+      ],
+      "opaquePixels": 838,
+      "uniqueColors": 21,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "plant_pot": {
+      "file": "plant_pot.png",
+      "width": 32,
+      "height": 48,
+      "anchor": [
+        16,
+        44
+      ],
+      "opaquePixels": 847,
+      "uniqueColors": 30,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "char_secretary": {
+      "file": "char_secretary.png",
+      "width": 128,
+      "height": 96,
+      "anchor": [
+        16,
+        44
+      ],
+      "cellSize": [
+        32,
+        48
+      ],
+      "cols": 4,
+      "rows": 2,
+      "opaquePixels": 6058,
+      "uniqueColors": 34,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "char_lead": {
+      "file": "char_lead.png",
+      "width": 128,
+      "height": 96,
+      "anchor": [
+        16,
+        44
+      ],
+      "cellSize": [
+        32,
+        48
+      ],
+      "cols": 4,
+      "rows": 2,
+      "opaquePixels": 5470,
+      "uniqueColors": 24,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "char_worker": {
+      "file": "char_worker.png",
+      "width": 128,
+      "height": 96,
+      "anchor": [
+        16,
+        44
+      ],
+      "cellSize": [
+        32,
+        48
+      ],
+      "cols": 4,
+      "rows": 2,
+      "opaquePixels": 5450,
+      "uniqueColors": 28,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    }
+  }
+}
