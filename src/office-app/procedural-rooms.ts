@@ -1,4 +1,4 @@
-/** V2.5 肉鸽异形预制房型、5 套模块化家居组合、MST+环路走廊路网与三阶立体墙体生成器。 */
+/** V2.6 规整肉鸽预制房型、5 套家居组合、MST+环路走廊路网与 68px 全高连续墙体生成器。 */
 import { WORLD_ASSET_CATALOG } from './diorama-catalog.ts'
 import type { Facing, GridPoint, RoomEntity, RoomWallMount, SuiteKind, WallSide } from './layout-solver.ts'
 import type { CorridorBranchSpec, CorridorNetworkMetrics, FurnitureComboKind, InteriorDoorSpec, PrefabShapeKind, WallSegment3D, WallTier, WorldWingPlan } from './world-types.ts'
@@ -43,12 +43,12 @@ export function makeWorldEntity(
 type ShapePredicate = (du: number, dv: number, w: number, h: number, isLeft: boolean) => boolean
 
 export const ROOM_SHAPE_PREFABS: Record<PrefabShapeKind, ShapePredicate> = {
-  'l-alcove': (du, dv, w, h, isLeft) => isLeft ? !(du < 2 && dv >= h - 3) : !(du >= w - 2 && dv < 2),
-  'stepped-zigzag': (du, dv, w, h, isLeft) => isLeft ? !(du < 2 && dv < 2) && !(du < 1 && dv >= h - 2) : !(du >= w - 2 && dv >= h - 2) && !(du >= w - 1 && dv < 2),
-  'bay-window': (du, dv, w, h, isLeft) => { const m = Math.floor(h / 2); return isLeft ? du >= 1 || Math.abs(dv - m) <= 1 : du < w - 1 || Math.abs(dv - m) <= 1 },
-  'chamfer-octagon': (du, dv, w, h, isLeft) => isLeft ? du + dv >= 1 && (w - 1 - du) + dv >= 0 && du + (h - 1 - dv) >= 2 : (w - 1 - du) + (h - 1 - dv) >= 2 && (w - 1 - du) + dv >= 1,
-  't-studio': (du, dv, w, h, isLeft) => (dv >= 2 && dv < h - 2) || (isLeft ? du >= 2 : du < w - 2),
-  'courtyard-nook': (du, dv, w, h, isLeft) => !(dv >= h - 2 && (isLeft ? du >= 2 && du <= 4 : Math.abs(du - Math.floor(w / 2)) <= 1)),
+  'l-alcove': (du, dv, w, h, isLeft) => isLeft ? !(du < 4 && dv >= h - 4) : !(du >= w - 4 && dv < 4),
+  'stepped-zigzag': (du, dv, w, h, isLeft) => isLeft ? !(du < 4 && dv < 3) : !(du >= w - 4 && dv < 3),
+  'bay-window': (du, dv, w, h, isLeft) => { const m = Math.floor(h / 2); return isLeft ? du >= 2 || Math.abs(dv - m) <= 2 : du < w - 2 || Math.abs(dv - m) <= 2 },
+  'chamfer-octagon': (du, dv, w, h, isLeft) => isLeft ? du + (h - 1 - dv) >= 3 : (w - 1 - du) + (h - 1 - dv) >= 3,
+  't-studio': (du, dv, w, h, isLeft) => !(dv >= h - 3 && (isLeft ? du < 4 : du >= w - 4)),
+  'courtyard-nook': (du, dv, w, h, isLeft) => !(dv >= h - 3 && (isLeft ? du >= 2 && du < 6 : du >= w - 6 && du < w - 2)),
 }
 
 export function buildShapeCells(
@@ -193,18 +193,14 @@ export function populateWingFurniture(
 }
 
 export function buildCorridorNetwork(
-  buildingRows: number, wings: readonly WorldWingPlan[], rng: () => number,
+  buildingRows: number, wings: readonly WorldWingPlan[], rng: () => number, lobbyTopV = 0,
 ): { corridorCells: GridPoint[]; corridorBranches: CorridorBranchSpec[]; networkMetrics: CorridorNetworkMetrics } {
   const cellMap = new Map<string, GridPoint>()
-  const addRect = (u0: number, v0: number, w: number, h: number) => {
-    for (let dv = 0; dv < h; dv++) for (let du = 0; du < w; du++) cellMap.set(cellKey(u0 + du, v0 + dv), { u: u0 + du, v: v0 + dv })
-  }
-  addRect(9, 0, 4, buildingRows)
+  for (let v = lobbyTopV; v < buildingRows; v++) for (let u = 9; u < 13; u++) cellMap.set(cellKey(u, v), { u, v })
   const branches: CorridorBranchSpec[] = [
-    { from: { u: 10, v: 3 }, to: { u: 10, v: buildingRows - 1 }, width: 2 + Math.floor(rng() * 2), hasRunner: true },
-    { from: { u: 12, v: 8 }, to: { u: 20, v: 8 }, width: 2, hasRunner: true },
+    { from: { u: 10, v: lobbyTopV + 2 }, to: { u: 10, v: buildingRows - 1 }, width: 2 + Math.floor(rng() * 2), hasRunner: true },
+    { from: { u: 13, v: 9 }, to: { u: 19, v: 9 }, width: 2, hasRunner: false },
   ]
-  addRect(12, 8, 9, 2)
   const studios = wings.filter((w) => w.kind === 'studio')
   const roomCount = studios.length + 1
   const mstEdges = Math.max(0, roomCount - 1)
@@ -219,18 +215,12 @@ export function buildCorridorNetwork(
 
 export function extractWallSegments3D(
   lobby: WorldWingPlan, wings: readonly WorldWingPlan[], corridorCells: readonly GridPoint[],
-  interiorDoors: readonly InteriorDoorSpec[], _mainEntrance: GridPoint, buildingRows: number,
+  _interiorDoors: readonly InteriorDoorSpec[], _mainEntrance: GridPoint, buildingRows: number,
 ): WallSegment3D[] {
   const zoneOf = new Map<string, string>()
   for (const c of corridorCells) zoneOf.set(cellKey(c.u, c.v), 'corridor')
   for (const c of lobby.cells ?? []) zoneOf.set(cellKey(c.u, c.v), 'corridor')
   for (const w of wings) if (w.kind === 'studio') for (const c of w.cells ?? []) zoneOf.set(cellKey(c.u, c.v), w.id)
-
-  const doorSet = new Set<string>()
-  for (const d of interiorDoors) {
-    if (d.axis === 'u') { doorSet.add(`u:${d.u},${d.v}`); doorSet.add(`u:${d.u},${d.v + 1}`) }
-    else { doorSet.add(`v:${d.u},${d.v}`); doorSet.add(`v:${d.u + 1},${d.v}`) }
-  }
 
   const raw: WallSegment3D[] = []
   const pushEdge = (from: GridPoint, to: GridPoint, tier: WallTier, shade: 'sunlit' | 'shaded' | 'exterior', startH: number, endH: number, hasWindow?: boolean) =>
@@ -239,48 +229,64 @@ export function extractWallSegments3D(
   for (const [k, zId] of zoneOf.entries()) {
     const [u, v] = k.split(',').map(Number) as [number, number]
     const nNW = zoneOf.get(cellKey(u - 1, v)), nNE = zoneOf.get(cellKey(u, v - 1)), nSE = zoneOf.get(cellKey(u + 1, v)), nSW = zoneOf.get(cellKey(u, v + 1))
-    if (!nNW) pushEdge({ u, v }, { u, v: v + 1 }, 'back', 'shaded', 64, 64)
-    if (!nNE) pushEdge({ u, v }, { u: u + 1, v }, 'back', 'sunlit', 64, 64)
-    if (nSE && nSE !== zId && !doorSet.has(`u:${u + 1},${v}`)) {
-      pushEdge({ u: u + 1, v }, { u: u + 1, v: v + 1 }, 'partition', 'shaded', 48, 48)
-    }
-    if (nSW && nSW !== zId && !doorSet.has(`v:${u},${v + 1}`)) {
-      pushEdge({ u, v: v + 1 }, { u: u + 1, v: v + 1 }, 'partition', 'sunlit', 48, 48)
-    }
+    if (!nNW) pushEdge({ u, v }, { u, v: v + 1 }, 'back', 'shaded', 68, 68)
+    if (!nNE) pushEdge({ u, v }, { u: u + 1, v }, 'back', 'sunlit', 68, 68)
+    if (nSE && nSE !== zId) pushEdge({ u: u + 1, v }, { u: u + 1, v: v + 1 }, 'partition', 'shaded', 68, 68)
+    if (nSW && nSW !== zId) pushEdge({ u, v: v + 1 }, { u: u + 1, v: v + 1 }, 'partition', 'sunlit', 68, 68)
 
     if (!nSE && !nSW && (zoneOf.has(cellKey(u + 1, v - 1)) || zoneOf.has(cellKey(u - 1, v + 1)))) {
-      pushEdge({ u: u + 1, v }, { u, v: v + 1 }, 'cutaway', 'exterior', 32, 32)
+      pushEdge({ u: u + 1, v }, { u, v: v + 1 }, 'cutaway', 'exterior', 34, 34)
     } else {
-      if (!nSE) pushEdge({ u: u + 1, v }, { u: u + 1, v: v + 1 }, 'cutaway', 'shaded', 32, 32)
+      if (!nSE) pushEdge({ u: u + 1, v }, { u: u + 1, v: v + 1 }, 'cutaway', 'shaded', 34, 34)
       if (!nSW) {
         const isPortal = v === buildingRows - 1 && u >= 9 && u <= 12
         const hasWin = !isPortal && v === buildingRows - 1 && u === 15
-        pushEdge({ u, v: v + 1 }, { u: u + 1, v: v + 1 }, isPortal ? 'portal' : 'cutaway', 'sunlit', isPortal ? 50 : 32, isPortal ? 50 : 32, hasWin)
+        pushEdge({ u, v: v + 1 }, { u: u + 1, v: v + 1 }, isPortal ? 'portal' : 'cutaway', 'sunlit', isPortal ? 54 : 34, isPortal ? 54 : 34, hasWin)
       }
     }
   }
-  return mergeCollinearBackWalls(raw)
+  return slopePartitionFrontEnds(mergeCollinearWalls(raw))
 }
 
-function mergeCollinearBackWalls(segs: readonly WallSegment3D[]): WallSegment3D[] {
+function mergeCollinearWalls(segs: readonly WallSegment3D[]): WallSegment3D[] {
   const out: WallSegment3D[] = [], used = new Uint8Array(segs.length)
+  const canMerge = (a: WallSegment3D, b: WallSegment3D) =>
+    a.tier === b.tier && a.shade === b.shade && !a.hasWindow && !b.hasWindow && a.startH === a.endH && b.startH === b.endH && a.startH === b.startH
+    && ((a.from.u === a.to.u && b.from.u === b.to.u && a.from.u === b.from.u) || (a.from.v === a.to.v && b.from.v === b.to.v && a.from.v === b.from.v))
   for (let i = 0; i < segs.length; i++) {
     if (used[i]) continue
     let cur = segs[i]!; used[i] = 1
-    if (cur.tier === 'back' && (cur.from.u === cur.to.u || cur.from.v === cur.to.v)) {
+    if (cur.from.u === cur.to.u || cur.from.v === cur.to.v) {
       let ext = true
       while (ext) {
         ext = false
         for (let j = 0; j < segs.length; j++) {
           const nxt = segs[j]!
-          if (!used[j] && nxt.tier === 'back' && nxt.shade === cur.shade && cur.to.u === nxt.from.u && cur.to.v === nxt.from.v
-            && ((cur.from.u === cur.to.u && nxt.from.u === nxt.to.u) || (cur.from.v === cur.to.v && nxt.from.v === nxt.to.v))) {
-            cur = { ...cur, to: nxt.to }; used[j] = 1; ext = true
-          }
+          if (used[j] || !canMerge(cur, nxt)) continue
+          if (cur.to.u === nxt.from.u && cur.to.v === nxt.from.v) { cur = { ...cur, to: nxt.to }; used[j] = 1; ext = true }
+          else if (nxt.to.u === cur.from.u && nxt.to.v === cur.from.v) { cur = { ...cur, from: nxt.from }; used[j] = 1; ext = true }
         }
       }
     }
     out.push(cur)
+  }
+  return out
+}
+
+function slopePartitionFrontEnds(segs: readonly WallSegment3D[]): WallSegment3D[] {
+  const fronts = segs.filter((s) => s.tier === 'cutaway' || s.tier === 'portal')
+  const hitsFront = (pt: GridPoint) => fronts.some((c) => {
+    if (c.from.u === c.to.u && c.from.u === pt.u) return pt.v >= Math.min(c.from.v, c.to.v) && pt.v <= Math.max(c.from.v, c.to.v)
+    if (c.from.v === c.to.v && c.from.v === pt.v) return pt.u >= Math.min(c.from.u, c.to.u) && pt.u <= Math.max(c.from.u, c.to.u)
+    return (c.from.u === pt.u && c.from.v === pt.v) || (c.to.u === pt.u && c.to.v === pt.v)
+  })
+  const out: WallSegment3D[] = []
+  for (const s of segs) {
+    if (s.tier !== 'partition' || !hitsFront(s.to)) { out.push(s); continue }
+    const isVert = s.from.u === s.to.u, len = isVert ? s.to.v - s.from.v : s.to.u - s.from.u
+    if (len <= 1) { out.push({ ...s, startH: 68, endH: 34 }); continue }
+    const mid: GridPoint = isVert ? { u: s.to.u, v: s.to.v - 1 } : { u: s.to.u - 1, v: s.to.v }
+    out.push({ ...s, to: mid }, { ...s, from: mid, startH: 68, endH: 34 })
   }
   return out
 }
