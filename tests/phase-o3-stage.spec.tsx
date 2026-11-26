@@ -69,11 +69,11 @@ describe('Phase O3 Pixel Office Stage', () => {
       onload: (() => void) | null = null
       set src(_v: string) { queueMicrotask(() => this.onload?.()) }
     })
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((() => ({
       imageSmoothingEnabled: false, clearRect: vi.fn(), fillRect: vi.fn(), strokeRect: vi.fn(),
       fillText: vi.fn(), drawImage: vi.fn(), save: vi.fn(), restore: vi.fn(), translate: vi.fn(), scale: vi.fn(),
       fillStyle: '', strokeStyle: '', lineWidth: 1, font: '',
-    } as unknown as CanvasRenderingContext2D)
+    })) as unknown as typeof HTMLCanvasElement.prototype.getContext)
 
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       const path = String(url).replace(/^\/orchestrator\/api\//, '').split('?')[0]!

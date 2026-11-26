@@ -154,7 +154,7 @@ function computeL2List(world: OfficeWorldPlan, actors: readonly OfficeActor[], c
 function renderL0ToL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, sprites: OfficeSprites, cam: OfficeCamera, l2: L2Item[]): void {
   const { world } = state, z = cam.zoom, cw = ctx.canvas?.width || 1440, ch = ctx.canvas?.height || 900
   ctx.fillStyle = '#201A18'; ctx.fillRect(0, 0, cw, ch)
-  ctx.fillStyle = '#2B221E'; ctx.fillRect(Math.round(cw * 0.08), Math.round(ch * 0.08), Math.round(cw * 0.84), Math.round(ch * 0.84))
+  ctx.fillStyle = '#302722'; ctx.fillRect(Math.round(cw * 0.08), Math.round(ch * 0.08), Math.round(cw * 0.84), Math.round(ch * 0.84))
   for (let v = -1; v <= world.buildingRows + 2; v++) for (let u = -1; u <= world.buildingCols; u++) {
     const kind = tileKindAt(u, v, world), img = kind ? sprites.images[kind] : undefined; if (!img) continue
     const p = worldIsoToScreen(u + 0.5, v + 0.5, world, cam); ctx.drawImage(img, Math.round(p.x - 16 * z), Math.round(p.y - 8 * z), 32 * z, 16 * z)
@@ -182,10 +182,8 @@ function renderL0ToL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, spr
     const steps = Math.max(1, Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y) / (2 * z)))
     for (let i = 0; i <= steps; i++) {
       const wx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - 2 * z), wy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - 20 * z)
-      ctx.fillStyle = '#1A1412'; ctx.fillRect(wx - z, wy - z, 5 * z, 21 * z)
-      ctx.fillStyle = '#6B4A32'; ctx.fillRect(wx, wy, 3 * z, 4 * z)
-      ctx.fillStyle = pw.axis === 'u' ? '#BFA48C' : '#D9C4A8'; ctx.fillRect(wx, wy + 4 * z, 3 * z, 10 * z)
-      ctx.fillStyle = '#4A3428'; ctx.fillRect(wx, wy + 14 * z, 3 * z, 5 * z)
+      ctx.fillStyle = '#1A1412'; ctx.fillRect(wx - z, wy - z, 5 * z, 21 * z); ctx.fillStyle = '#6B4A32'; ctx.fillRect(wx, wy, 3 * z, 4 * z)
+      ctx.fillStyle = pw.axis === 'u' ? '#BFA48C' : '#D9C4A8'; ctx.fillRect(wx, wy + 4 * z, 3 * z, 10 * z); ctx.fillStyle = '#4A3428'; ctx.fillRect(wx, wy + 14 * z, 3 * z, 5 * z)
     }
   }
   for (const d of world.interiorDoors ?? []) if (sprites.images.door_wood) {
@@ -196,14 +194,20 @@ function renderL0ToL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, spr
     const steps = Math.max(1, Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y) / (2 * z))), fh = f.heightPx * z
     for (let i = 0; i <= steps; i++) {
       const fx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - z), fy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - fh)
-      ctx.fillStyle = '#1A1412'; ctx.fillRect(fx - z, fy - z, 4 * z, fh + 2 * z); ctx.fillStyle = '#4A3428'; ctx.fillRect(fx, fy, 3 * z, 4 * z); ctx.fillStyle = '#8C6D56'; ctx.fillRect(fx, fy + 4 * z, 3 * z, fh - 4 * z)
+      ctx.fillStyle = '#1A1412'; ctx.fillRect(fx - z, fy - z, 4 * z, fh + 2 * z); ctx.fillStyle = '#4A3428'; ctx.fillRect(fx, fy, 3 * z, 4 * z); ctx.fillStyle = '#7A6150'; ctx.fillRect(fx, fy + 4 * z, 3 * z, fh - 4 * z)
     }
-    if (f.hasWindow && sprites.images.facade_window) { const wp = worldIsoToScreen((f.from.u + f.to.u) / 2, (f.from.v + f.to.v) / 2, world, cam); ctx.drawImage(sprites.images.facade_window, Math.round(wp.x - 32 * z), Math.round(wp.y - 36 * z), 64 * z, 40 * z) }
+    if (f.hasWindow && sprites.images.facade_window) { const wp = worldIsoToScreen((f.from.u + f.to.u) / 2, (f.from.v + f.to.v) / 2, world, cam); ctx.save(); ctx.translate(Math.round(wp.x + 32 * z), Math.round(wp.y - 36 * z)); ctx.scale(-1, 1); ctx.drawImage(sprites.images.facade_window, 0, 0, 64 * z, 40 * z); ctx.restore() }
   }
-  if (sprites.images.door_glass) { const dp = worldIsoToScreen(11, world.buildingRows, world, cam); ctx.drawImage(sprites.images.door_glass, Math.round(dp.x - 40 * z), Math.round(dp.y - 52 * z), 80 * z, 56 * z) }
-  for (const m of world.lobby.wallMounts) { const img = sprites.images[m.assetId]; if (img) { const b = getMountBox(m, world, cam, 0, 0); ctx.drawImage(img, b.x, b.y, b.w, b.h) } }
+  if (sprites.images.door_glass) { const dp = worldIsoToScreen(11, world.buildingRows, world, cam); ctx.save(); ctx.translate(Math.round(dp.x + 40 * z), Math.round(dp.y - 52 * z)); ctx.scale(-1, 1); ctx.drawImage(sprites.images.door_glass, 0, 0, 80 * z, 56 * z); ctx.restore() }
+  const drawMount = (m: RoomWallMount, bu: number, bv: number) => {
+    const img = sprites.images[m.assetId]; if (!img) return
+    const b = getMountBox(m, world, cam, bu, bv)
+    if (m.wall === 'back') { ctx.save(); ctx.translate(b.x + b.w, b.y); ctx.scale(-1, 1); ctx.drawImage(img, 0, 0, b.w, b.h); ctx.restore() }
+    else ctx.drawImage(img, b.x, b.y, b.w, b.h)
+  }
+  for (const m of world.lobby.wallMounts) drawMount(m, 0, 0)
   for (const w of world.wings) {
-    for (const m of w.wallMounts.filter((wm) => wm.propKind !== 'doorplate')) { const img = sprites.images[m.assetId]; if (img) { const b = getMountBox(m, world, cam, w.rect.u, w.rect.v); ctx.drawImage(img, b.x, b.y, b.w, b.h) } }
+    for (const m of w.wallMounts.filter((wm) => wm.propKind !== 'doorplate')) drawMount(m, w.rect.u, w.rect.v)
     if (w.kind === 'studio' && w.workspaceId && sprites.images.doorplate) { const db = getDoorplateBox(w, world, cam); ctx.drawImage(sprites.images.doorplate, db.x, db.y, db.w, db.h) }
   }
 }
@@ -217,9 +221,8 @@ function renderL5LightingAndUi(ctx: CanvasRenderingContext2D, state: WorldSceneS
   }
   for (const w of world.wings) {
     const sb = getWingSignBox(w, world, cam)
-    ctx.fillStyle = '#201A18'; ctx.fillRect(sb.x, sb.y, sb.w, sb.h)
+    ctx.fillStyle = '#201A18'; ctx.fillRect(sb.x, sb.y, sb.w, sb.h); ctx.fillStyle = '#E8DCCB'; ctx.font = `${10 * z}px monospace`; ctx.fillText(w.title, sb.x + 6 * z, sb.y + 12 * z)
     ctx.strokeStyle = w.workspaceId && w.workspaceId === state.activeWorkspaceId ? HIGHLIGHT_GOLD : '#6B4A32'; ctx.lineWidth = z; ctx.strokeRect(sb.x, sb.y, sb.w, sb.h)
-    ctx.fillStyle = '#E8DCCB'; ctx.font = `${10 * z}px monospace`; ctx.fillText(w.title, sb.x + 6 * z, sb.y + 12 * z)
   }
   for (const suite of allSuites(world)) {
     const meta = WORLD_ASSET_CATALOG[suite.assetId], st = screenStates[suite.id]

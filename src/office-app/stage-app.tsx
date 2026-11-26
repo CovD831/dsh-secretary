@@ -5,13 +5,15 @@ import type { FourWayAttribution, RulingDecision, RulingItem } from '../app/ruli
 import type { SecretaryFeedEntry } from '../app/tools/secretary-core.ts'
 import type { SettingsView } from '../app/views/settings.ts'
 import type { TicketListView } from '../app/views/tickets.ts'
-import { OFFICE_CATALOG, type StatusKind } from './catalog.ts'
+import { type StatusKind } from './catalog.ts'
+import { WORLD_ASSET_CATALOG } from './diorama-catalog.ts'
 import { GameHud, type RoomHudStat } from './game-hud.tsx'
 import { HandoverSheet } from './handover-sheet.tsx'
 import type { OfficeActor, OfficeSprites } from './iso-engine.ts'
 import { CANVAS_H, CANVAS_W } from './layout-solver.ts'
 import { NpcDialog, resolveSecretaryMood } from './npc-dialog.tsx'
 import { OFFICE_THEME, officeCall, subscribeOfficeStream } from './office-api.tsx'
+import { mountPixiDioramaStage } from './pixi-diorama.ts'
 import { PropsDrawer, type GovernancePropKind } from './props-drawer.tsx'
 import { WorkerDrawer, type WorkerDrawerMode } from './worker-drawer.tsx'
 import { cameraForGridPoint, solveWorldFloorplan } from './world-layout.ts'
@@ -19,7 +21,8 @@ import { createInitialWorldActors, pickWorldTarget, renderWorldFrame, spawnWorld
 import type { OfficeCamera, OfficeWorldPlan, WorkspaceWingSpec, WorldPickResult, WorldWingPlan } from './world-types.ts'
 
 type TicketItem = TicketListView['items'][number]
-const WORLD_CENTER = { u: 16, v: 12 } as const
+const WORLD_CENTER = { u: 11, v: 9 } as const
+const defaultZoomFor = (w: number): 1 | 2 => (w >= 1100 ? 2 : 1)
 
 const getInitialViewport = () => typeof window === 'undefined'
   ? { w: CANVAS_W, h: CANVAS_H }
@@ -57,7 +60,7 @@ function syncWorldActors(prev: OfficeActor[], tickets: readonly TicketItem[], wo
 export function StageApp() {
   const [viewport, setViewport] = useState(getInitialViewport)
   const [workspaceId, setWorkspaceId] = useState('default')
-  const [camera, setCamera] = useState<OfficeCamera>(() => { const vp = getInitialViewport(); return cameraForGridPoint(WORLD_CENTER, solveWorldFloorplan([{ id: 'default', title: 'default' }], 1), 1, vp.w, vp.h) })
+  const [camera, setCamera] = useState<OfficeCamera>(() => { const vp = getInitialViewport(); return cameraForGridPoint(WORLD_CENTER, solveWorldFloorplan([{ id: 'default', title: 'default' }], 1), defaultZoomFor(vp.w), vp.w, vp.h) })
   const [dialogCollapsed, setDialogCollapsed] = useState(true)
   const [feed, setFeed] = useState<SecretaryFeedEntry[]>([])
   const [activeRuling, setActiveRuling] = useState<RulingItem | null>(null)
@@ -132,8 +135,8 @@ export function StageApp() {
     } catch { setOnline(false) }
   }, [])
 
-  useEffect(() => { for (const m of Object.values(OFFICE_CATALOG)) loadSprite(m.spriteUrl, img => { spritesRef.current.images[m.id] = img }) }, [])
-  useEffect(() => { loadSprite(avatar?.spriteUrl || OFFICE_CATALOG.char_secretary!.spriteUrl, img => { spritesRef.current.images.char_secretary = img }) }, [avatar?.spriteUrl])
+  useEffect(() => { for (const m of Object.values(WORLD_ASSET_CATALOG)) loadSprite(m.spriteUrl, img => { spritesRef.current.images[m.id] = img }) }, [])
+  useEffect(() => { loadSprite(avatar?.spriteUrl || WORLD_ASSET_CATALOG.char_secretary!.spriteUrl, img => { spritesRef.current.images.char_secretary = img }) }, [avatar?.spriteUrl])
 
   useEffect(() => {
     void refreshAll()
@@ -180,32 +183,50 @@ export function StageApp() {
   }, [pendingBoss, activeRuling, latestSayId])
   useEffect(() => { if (!secretaryThinking) return; const fast = setInterval(() => { void refreshAll() }, 1200); return () => clearInterval(fast) }, [secretaryThinking, refreshAll])
   useEffect(() => {
-    const onResize = () => { const vp = getInitialViewport(); setViewport(vp); setCamera(c => c.zoom === 1 ? cameraForGridPoint(WORLD_CENTER, world, 1, vp.w, vp.h) : c) }
+    const onResize = () => { const vp = getInitialViewport(); setViewport(vp); setCamera(c => cameraForGridPoint(WORLD_CENTER, world, c.zoom, vp.w, vp.h)) }
     window.addEventListener('resize', onResize); return () => window.removeEventListener('resize', onResize)
   }, [world])
 
+  const liveRef = useRef({ world, screenStates, workspaceId, hoverTarget, gateUntil, secretaryThinking, camera, viewport })
+  liveRef.current = { world, screenStates, workspaceId, hoverTarget, gateUntil, secretaryThinking, camera, viewport }
+  const usePixiWebGL = typeof WebGLRenderingContext !== 'undefined'
+  const buildFrameState = (dt: number, elapsed: number) => {
+    const s = liveRef.current
+    actorsRef.current = stepWorldActors(actorsRef.current, s.world, dt)
+    const gateId = actorsRef.current.find(a => a.ticketId && a.ticketId === gateTicketRef.current)?.id
+      ?? actorsRef.current.find(a => a.id === `lead-${s.workspaceId}`)?.id ?? actorsRef.current.find(a => a.role === 'lead')?.id ?? 'secretary'
+    return {
+      camera: s.camera, viewport: s.viewport, images: spritesRef.current.images,
+      scene: {
+        world: s.world, actors: actorsRef.current, screenStates: s.screenStates, activeWorkspaceId: s.workspaceId,
+        hoverTarget: s.hoverTarget, secretaryThinking: s.secretaryThinking, elapsedMs: elapsed,
+        ...(s.gateUntil > Date.now() ? { gateIntercept: { targetActorId: gateId, frame: Math.floor(elapsed / 200) % 3 } } : {}),
+      },
+    }
+  }
+
   useEffect(() => {
+    if (!usePixiWebGL || !canvasRef.current) return
+    let last = performance.now(), elapsed = 0
+    const handle = mountPixiDioramaStage(canvasRef.current, () => {
+      const now = performance.now(), dt = Math.min(100, Math.max(0, now - last)); last = now; elapsed += dt
+      return buildFrameState(dt, elapsed)
+    })
+    return () => handle.destroy()
+  }, [usePixiWebGL])
+
+  useEffect(() => {
+    if (usePixiWebGL) return
     let raf = 0, last = performance.now(), elapsed = 0
     const tick = (now: number) => {
       const dt = Math.min(100, Math.max(0, now - last)); last = now; elapsed += dt
-      actorsRef.current = stepWorldActors(actorsRef.current, world, dt)
-      const ctx = canvasRef.current?.getContext('2d')
-      if (ctx) {
-        ctx.clearRect(0, 0, viewport.w, viewport.h)
-        const gateActorId = actorsRef.current.find(a => a.ticketId && a.ticketId === gateTicketRef.current)?.id
-          ?? actorsRef.current.find(a => a.id === `lead-${workspaceId}`)?.id
-          ?? actorsRef.current.find(a => a.role === 'lead')?.id
-          ?? 'secretary'
-        renderWorldFrame(ctx, {
-          world, actors: actorsRef.current, screenStates, activeWorkspaceId: workspaceId, hoverTarget, secretaryThinking, elapsedMs: elapsed,
-          ...(gateUntil > Date.now() ? { gateIntercept: { targetActorId: gateActorId, frame: Math.floor(elapsed / 200) % 3 } } : {}),
-        }, spritesRef.current, camera)
-      }
+      const ctx = canvasRef.current?.getContext('2d'), f = buildFrameState(dt, elapsed)
+      if (ctx) { ctx.clearRect(0, 0, f.viewport.w, f.viewport.h); renderWorldFrame(ctx, f.scene, spritesRef.current, f.camera) }
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [world, screenStates, workspaceId, hoverTarget, gateUntil, secretaryThinking, camera, viewport])
+  }, [usePixiWebGL])
 
   const toCanvasCoords = (clientX: number, clientY: number) => {
     const rect = canvasRef.current?.getBoundingClientRect()
@@ -258,16 +279,16 @@ export function StageApp() {
     await refreshAll()
   }
 
-  const resetCam = () => setCamera(cameraForGridPoint(WORLD_CENTER, world, 1, viewport.w, viewport.h))
+  const resetCam = () => setCamera(cameraForGridPoint(WORLD_CENTER, world, defaultZoomFor(viewport.w), viewport.w, viewport.h))
 
   return (
-    <div style={{ position: 'fixed', inset: 0, width: '100vw', height: '100vh', background: '#3E4A44', color: OFFICE_THEME.inkCream, overflow: 'hidden' }}>
+    <div style={{ position: 'fixed', inset: 0, width: '100vw', height: '100vh', background: OFFICE_THEME.bgDeep, color: OFFICE_THEME.inkCream, overflow: 'hidden' }}>
       <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
         <GameHud online={online} activeWorkspaceId={workspaceId} world={world} actors={actorSnap.length > 0 ? actorSnap : actorsRef.current} roomStats={roomStats}
           workingCount={tickets.filter(t => t.stage === 'working').length} camera={camera} dialogCollapsed={effectiveCollapsed}
           secretaryMood={secretaryMood} secretaryPortraitSrc={secretaryPortraitSrc} gateBlocked={gateBlocked}
           onOpenProp={p => { if (p === 'doorplate') setDrawerMode('doorplate'); else setActiveProp(p) }}
-          onZoomChange={zoom => setCamera(zoom === 1 ? cameraForGridPoint(WORLD_CENTER, world, 1, viewport.w, viewport.h) : cameraForGridPoint((world.wings.find(w => w.workspaceId === workspaceId) ?? world.lobby).focusPoint, world, 2, viewport.w, viewport.h))}
+          onZoomChange={zoom => setCamera(cameraForGridPoint(WORLD_CENTER, world, zoom, viewport.w, viewport.h))}
           onResetCamera={resetCam}
           onFocusLobby={() => { setCamera(c => cameraForGridPoint(world.lobby.focusPoint, world, c.zoom, viewport.w, viewport.h)); setDialogCollapsed(false) }}
           onSelectWing={focusWing}

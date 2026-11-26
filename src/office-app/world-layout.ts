@@ -1,4 +1,4 @@
-/** V2 非对称紧凑微缩沙盘平面布局求解器（零 node: 依赖）。 */
+/** V2 非对称紧凑微缩沙盘平面布局求解器（纯浏览器端无服务端依赖）。 */
 import { WORLD_ASSET_CATALOG } from './diorama-catalog.ts'
 import { CANVAS_H, CANVAS_W, TILE_H, TILE_W, type Facing, type GridPoint, type RoomEntity, type RoomWallMount, type SuiteKind, type WallSide } from './layout-solver.ts'
 import type { FacadeSegmentSpec, InteriorDoorSpec, LightSourceSpec, OfficeCamera, OfficeWorldPlan, PartitionWallSegment, WorkspaceWingSpec, WorldWingPlan } from './world-types.ts'
@@ -64,7 +64,8 @@ function buildLeftPrimaryStudio(ws: WorkspaceWingSpec): WorldWingPlan {
       makeEntity(`plant-${ws.id}`, 'plant_pot', 'shared', 7, 1, 'SW'),
     ],
     wallMounts: [
-      { id: `wb-${ws.id}`, assetId: 'whiteboard_wall', wall: 'left', at: 6.5, h: 10, span: 3 },
+      { id: `wb-${ws.id}`, assetId: 'whiteboard_wall', wall: 'left', at: 5.5, h: 10, span: 3 },
+      { id: `win-left-${ws.id}`, assetId: 'window_wide', wall: 'left', at: 11.2, h: 10, span: 3 },
       { id: `art-${ws.id}`, assetId: 'wall_painting', wall: 'back', at: 4.5, h: 14, span: 2 },
       { id: `doorplate-${ws.id}`, assetId: 'doorplate', wall: 'left', at: 5.2, h: 24, span: 1, propKind: 'doorplate' },
     ],
@@ -116,7 +117,7 @@ function buildLowerRightWing(ws?: WorkspaceWingSpec): WorldWingPlan {
         makeEntity('lounge-bookshelf', 'bookshelf', 'shared', 17, 9, 'SE', undefined, 'back'),
         makeEntity('lounge-plant', 'plant_pot', 'shared', 14, 16, 'SW'),
       ]
-  const wallMounts: RoomWallMount[] = [{ id: `win-${id}`, assetId: 'window_wide', wall: 'back', at: 16.5, h: 10, span: 3 }]
+  const wallMounts: RoomWallMount[] = []
   if (ws) wallMounts.push({ id: `doorplate-${ws.id}`, assetId: 'doorplate', wall: 'back', at: 13.5, h: 24, span: 1, propKind: 'doorplate' })
   return {
     id, workspaceId: ws?.id, title: ws?.title ?? '茶歇与阅览室', repository: ws?.repository, kind: 'studio',
@@ -130,7 +131,7 @@ function buildCourtyardSlot(): WorldWingPlan {
   return {
     id: 'courtyard-3', title: '待扩建庭院地块', kind: 'courtyard',
     rect: { u: 0, v: 15, w: 9, h: 3 }, focusPoint: { u: 4.5, v: 16.5 }, doorway: { u: 8, v: 16 },
-    floorStyle: 'courtyard', themeHex: '#5A7848', suites: [], wallMounts: [],
+    floorStyle: 'courtyard', themeHex: '#4A6A50', suites: [], wallMounts: [],
     shared: [
       makeEntity('cy-tree-a', 'courtyard_tree', 'shared', 1, 15, 'SE'),
       makeEntity('cy-tree-b', 'courtyard_tree', 'shared', 6, 15, 'SW'),
