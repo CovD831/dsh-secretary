@@ -5,7 +5,6 @@ import type { Assignment, DomainEvent, OutboundMessage, Ticket } from '../core/i
 import { prepareLaunchCapsule, type PreparedLaunchCapsule } from '../executor/capsule-hook.ts'
 import { adaptiveDispatchGate, verifyChangedPathsGate, verifyRerunGate } from '../judgement/gates/index.ts'
 import { createJudgementRegistry, loadPlaybookCandidates, lockTicketGeneration, type ActionClass, type ExtendedJudgementRegistry, type Verdict } from '../judgement/index.ts'
-import { KV } from '../kv.ts'
 import { MemoryFtsIndex, MemoryWriter, loadWorkspacePitfallNotes } from '../memory/index.ts'
 import { domainEventToSpineDraft } from '../rsi/trace-bridge.ts'
 import {
@@ -216,7 +215,7 @@ export class GovernanceRuntime {
   async prepareLaunchCapsule(input: { ticket: Ticket; assignment: Assignment; workspaceDir: string; triggerText?: string }): Promise<PreparedLaunchCapsule | undefined> {
     const wsKey = input.ticket.execution?.workspace
     const gen = lockTicketGeneration(this.store, this.registry, input.ticket.id, input.assignment.id, this.now())
-    const playbooks = await loadPlaybookCandidates(depositDirsOf(this.stateDir), this.registry, this.store.get(KV.governance.depositStages))
+    const playbooks = await loadPlaybookCandidates(depositDirsOf(this.stateDir), this.registry)
     const pitfallNotes = wsKey
       ? await this.memoryRepoLock.run(() => loadWorkspacePitfallNotes(this.memoryDir, wsKey, this.now())).catch(() => [])
       : undefined

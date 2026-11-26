@@ -3,9 +3,9 @@ import { createHash } from 'node:crypto'
 import { lstat, readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { KV, type Key, type PersistedTicketGeneration } from '../kv.ts'
+import { admitDeposit } from './deposit.ts'
 import type { ExtendedJudgementRegistry } from './registry.ts'
 import type { PlaybookSpec, PlaybookWhen, Point, PointCatalog, PointEvaluation, RunEntry, Stage, Verdict } from './types.ts'
-import { parseFrontmatterData } from './yaml.ts'
 
 const FORBIDDEN_PLAYBOOK_KEYS = new Set(['shell', 'command', 'exec', 'bash', 'pwsh', 'script', 'eval', 'code'])
 const PLAYBOOK_HEADINGS = new Set(['操作手册', 'playbook', 'sop'])
@@ -146,12 +146,12 @@ export async function evaluatePointAtGeneration<P extends Point>(
   generation?: Pick<RegistryGeneration, 'stages' | 'versions'>,
 ): Promise<PointEvaluation> {
   const ev = await registry.evaluate(point, ctx)
-  if (!generation || ev.verdict.kind === 'allow') return ev
+  if (!generation) return ev
   const blockers: string[] = [], unmeasured: string[] = [], observed: RunEntry[] = [...ev.observed]
-  const obsIds = new Set(observed.map(o => o.id))
+  const origObsIds = new Set(ev.observed.map(o => o.id)), obsIds = new Set(origObsIds)
   let enforcingRegistered = 0, enforcingEvaluated = 0
   for (const r of ev.ran) {
-    if (generation.stages[r.id] === 'enforce') {
+    if (generation.stages[r.id] === 'enforce' && !origObsIds.has(r.id)) {
       enforcingRegistered += 1
       if (r.outcome !== 'skipped') enforcingEvaluated += 1
       if (r.outcome === 'deny') blockers.push(r.detail ?? `[${r.id}] denied`)
@@ -160,15 +160,15 @@ export async function evaluatePointAtGeneration<P extends Point>(
       observed.push(r); obsIds.add(r.id)
     }
   }
-  const verdict: Verdict = enforcingRegistered > 0 && enforcingEvaluated === 0 && ev.verdict.kind === 'unmeasured' && ev.verdict.cause === 'all-skipped'
-    ? ev.verdict
+  const verdict: Verdict = enforcingRegistered > 0 && enforcingEvaluated === 0
+    ? { kind: 'unmeasured', cause: 'all-skipped', detail: `插入点 "${point}" 在锁定代际下有 ${enforcingRegistered} 条强制判据，但本轮全部被跳过` }
     : blockers.length > 0 ? { kind: 'deny', blockers: blockers as [string, ...string[]] }
       : unmeasured.length > 0 ? { kind: 'unmeasured', cause: ev.verdict.kind === 'unmeasured' ? ev.verdict.cause : 'missing-input', detail: unmeasured.join('; ') }
         : { kind: 'allow' }
   return { ...ev, verdict, observed }
 }
 
-/** 为工单当前活跃 assignment 锁定注册表代际快照并写入 `KV.governance.ticketGenerations`（FIFO 上限 500）。 */
+/** 为工单当前活跃 assignment 锁定注册表代际快照并写入 `KV.governance.ticketGenerations`（同 assignmentId 幂等复用，FIFO 上限 500）。 */
 export function lockTicketGeneration(
   store: { get?: <V>(k: Key<V>) => V | undefined; set?: <V>(k: Key<V>, v: V) => void },
   registry: Pick<ExtendedJudgementRegistry, 'list'>,
@@ -176,9 +176,14 @@ export function lockTicketGeneration(
   assignmentId: string,
   now = new Date(),
 ): RegistryGeneration {
+  const prev = store.get?.(KV.governance.ticketGenerations) ?? {}
+  const existing = prev[ticketId]
+  if (existing && existing.assignmentId === assignmentId) {
+    return { hash: existing.hash, capturedAt: existing.capturedAt, stages: existing.stages, versions: existing.versions }
+  }
   const gen = captureRegistryGeneration(registry, now.toISOString())
   if (typeof store.set === 'function') {
-    const prev = store.get?.(KV.governance.ticketGenerations) ?? {}, next: Record<string, PersistedTicketGeneration> = {}
+    const next: Record<string, PersistedTicketGeneration> = {}
     for (const k of Object.keys(prev).filter(k => k !== ticketId).slice(-(MAX_GENERATIONS - 1))) next[k] = prev[k]!
     next[ticketId] = { assignmentId, ...gen }
     store.set(KV.governance.ticketGenerations, next)
@@ -186,11 +191,10 @@ export function lockTicketGeneration(
   return gen
 }
 
-/** 从沉淀包目录读取含 `playbook` 的候选条目，并结合注册表实时阶段解析生效阶段。 */
+/** 从沉淀包目录读取经 `admitDeposit` 准入且已在注册表激活（`observe`/`enforce`）的 `playbook` 候选条目。 */
 export async function loadPlaybookCandidates(
   dirs: readonly string[],
   registry: Pick<ExtendedJudgementRegistry, 'list'>,
-  stageOverrides: Readonly<Record<string, Stage>> = {},
 ): Promise<PlaybookCandidate[]> {
   const liveStages = new Map(registry.list().map(e => [e.id, e.stage] as const))
   const seen = new Set<string>(), out: PlaybookCandidate[] = []
@@ -202,38 +206,42 @@ export async function loadPlaybookCandidates(
       const st = await lstat(mdPath).catch(() => undefined)
       if (!st?.isFile() || st.isSymbolicLink()) continue
       try {
-        const m = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n([\s\S]*))?$/.exec((await readFile(mdPath, 'utf8')).trimStart())
-        if (!m) continue
-        const fm = parseFrontmatterData(m[1]!), id = typeof fm['id'] === 'string' ? fm['id'].trim() : ''
-        if (!id || seen.has(id)) continue
+        const res = admitDeposit(await readFile(mdPath, 'utf8'))
+        if (!res.admitted || !res.manifest.playbook) continue
+        const id = res.manifest.id
+        if (seen.has(id)) continue
         seen.add(id)
-        const { playbook, issues } = validateAndNormalizePlaybook(fm['playbook'], (m[2] ?? '').trim())
-        if (!playbook || issues.length > 0) continue
-        const fmStage = typeof fm['stage'] === 'string' ? (fm['stage'] as Stage) : 'shadow'
-        out.push({ id, stage: liveStages.get(id) ?? stageOverrides[id] ?? fmStage, playbook })
+        const stage = liveStages.get(id)
+        if (!stage || stage === 'shadow' || stage === 'retired') continue
+        out.push({ id, stage, playbook: res.manifest.playbook })
       } catch { continue }
     }
   }
   return out
 }
 
-/** 校验 `workflow_sop` 声明式规则的 `enforceOrder` 与 `dependsOn` 合法性（含存在性与无环检查）。 */
+/** 校验 `workflow_sop` 声明式规则的 `enforceOrder` 与 `dependsOn` 合法性（含存在性、无环与 `checklistField` 必填检查）。 */
 export function validateWorkflowSopDeps(raw: Record<string, unknown>, push: (field: string, reason: string) => void): void {
   if (raw['enforceOrder'] !== undefined && typeof raw['enforceOrder'] !== 'boolean') push('rule.enforceOrder', 'enforceOrder 必须为布尔值')
   if (!Array.isArray(raw['steps']) || raw['steps'].length === 0) { push('rule.steps', 'workflow_sop 至少需 1 个检查步骤'); return }
   const stepIds = new Set(raw['steps'].map(s => (isRec(s) && typeof s['id'] === 'string' ? s['id'].trim() : '')).filter(Boolean))
   const depsMap = new Map<string, string[]>()
+  let hasDeps = false
   raw['steps'].forEach((s, i) => {
     if (!isRec(s) || typeof s['id'] !== 'string' || !s['id'].trim()) { push(`rule.steps[${i}].id`, 'SOP 步骤缺少非空 id'); return }
     const sid = s['id'].trim()
     if (s['dependsOn'] === undefined) return
     if (!isStrArr(s['dependsOn'])) { push(`rule.steps[${i}].dependsOn`, 'dependsOn 必须为非空字符串数组'); return }
+    if (s['dependsOn'].length > 0) hasDeps = true
     for (const dep of s['dependsOn']) {
       if (dep === sid) push(`rule.steps[${i}].dependsOn`, `步骤 "${sid}" 不得依赖自身`)
       else if (!stepIds.has(dep)) push(`rule.steps[${i}].dependsOn`, `dependsOn 引用了未知步骤 "${dep}"`)
     }
     depsMap.set(sid, s['dependsOn'].map(d => d.trim()))
   })
+  if ((raw['enforceOrder'] === true || hasDeps) && (typeof raw['checklistField'] !== 'string' || !raw['checklistField'].trim())) {
+    push('rule.checklistField', '声明了 enforceOrder 或 dependsOn 时必须提供非空 checklistField')
+  }
   const visiting = new Set<string>(), visited = new Set<string>()
   const hasCycle = (id: string): boolean => visiting.has(id) || (!visited.has(id) && (visiting.add(id), (depsMap.get(id) ?? []).some(hasCycle) ? true : (visiting.delete(id), visited.add(id), false)))
   for (const id of depsMap.keys()) if (hasCycle(id)) { push('rule.steps', `dependsOn 存在循环依赖: ${id}`); break }
