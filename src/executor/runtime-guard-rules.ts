@@ -14,12 +14,11 @@ export const SAFE_READ_TOOLS = new Set([
 export const SHELL_TOOLS = new Set(['bash', 'pwsh', 'shell', 'bash_persistent', 'pwsh_persistent'])
 export const FILE_WRITE_TOOLS = new Set(['write', 'edit', 'str_replace_editor', 'fs_write', 'fs_edit', 'fs_delete'])
 
+const GH_WRITE_RE = /\bgh\s+(?:(?:-R|--repo)(?:=|\s+)\S+\s+)*(?:(?:pr|issue|release)\s+(?:(?:-R|--repo)(?:=|\s+)\S+\s+)*(?:create|merge|close|reopen|comment|edit|review|delete|ready|lock|unlock|transfer|pin|unpin)|repo\s+(?:create|delete|archive|edit|rename|fork|sync)|api\b[^;&|\n]*(?:(?:-X|--method)(?:=|\s*)(?:POST|PUT|PATCH|DELETE)\b|(?:-f|-F|--field|--raw-field|--input)(?:=|\s|$)))/i
+
 export const HARM_SHELL_PATTERNS: readonly [RegExp, string][] = [
   [/\bgit\s+push\b/i, '外部推送 git push'],
-  [
-    /\bgh\s+(?:(?:pr|issue|release)\s+(?:create|merge|close|reopen|comment|edit|review|delete|ready|lock|unlock|transfer|pin|unpin)|repo\s+(?:create|delete|archive|edit|rename|fork|sync)|api\b[^\n;|]*(?:(?:-X|--method)\s*(?:POST|PUT|PATCH|DELETE)|(?:-f|-F|--field|--raw-field|--input)\b))/i,
-    'GitHub 远端写操作',
-  ],
+  [GH_WRITE_RE, 'GitHub 远端写操作'],
   [/\blark(?:-cli)?\b.*\b(?:send|reply|create|update|delete)\b/i, '飞书远端发送操作'],
   [/\brm\s+-[a-zA-Z]*r[a-zA-Z]*f\b|\brm\s+-[a-zA-Z]*f[a-zA-Z]*r\b/i, '破坏性删除 rm -rf'],
   [/\bgit\s+(?:reset\s+--hard|clean\s+-[a-zA-Z]*f)/i, '破坏性覆写工作树'],
@@ -29,7 +28,7 @@ export const HARM_SHELL_PATTERNS: readonly [RegExp, string][] = [
   [/\bsudo\b/, '提权命令 sudo'],
 ]
 
-const EXTERNAL_SIDE_EFFECT_RE = /\b(?:git\s+push|gh\s+(?:pr|issue|release)\s+(?:create|merge|comment|close|edit)|lark(?:-cli)?\s+.*(?:send|reply))\b/i
+const EXTERNAL_SIDE_EFFECT_RE = new RegExp(`(?:\\b(?:git\\s+push|lark(?:-cli)?\\s+.*(?:send|reply))\\b|${GH_WRITE_RE.source})`, 'i')
 const PROTECTED_PATH_RE = /(?:^|\/)(?:\.git|\.github|\.env(?:\.[^/]+)?|.*(?:secret|credential|private[_-]?key).*|.*\.(?:pem|key))(?=$|\/)/i
 
 const isRec = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === 'object' && !Array.isArray(v))
@@ -59,13 +58,14 @@ export function classifySmartAutoRisk(
   }
   if (SHELL_TOOLS.has(toolName)) {
     const cmd = extractStringArg(args, ['command', 'cmd', 'script']) ?? ''
-    const sideEffect = EXTERNAL_SIDE_EFFECT_RE.exec(cmd)?.[0]
+    const normCmd = cmd.replace(/\\\r?\n/g, ' ')
+    const sideEffect = EXTERNAL_SIDE_EFFECT_RE.exec(normCmd)?.[0]
     for (const [pattern, label] of HARM_SHELL_PATTERNS) {
-      if (pattern.test(cmd)) {
+      if (pattern.test(normCmd)) {
         return {
           rawScore: 0.9,
           needsAsk: true,
-          reason: `命令命中高风险规则（${label}）: ${cmd.slice(0, 120)}`,
+          reason: `命令命中高风险规则（${label}）: ${normCmd.slice(0, 120)}`,
           ...(sideEffect ? { externalSideEffect: sideEffect } : {}),
         }
       }

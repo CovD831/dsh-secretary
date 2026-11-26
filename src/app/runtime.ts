@@ -191,12 +191,17 @@ export class Runtime extends Service implements SourceHost {
             })
           })
         },
-        onMasterTurnSettled: () => {
+        onMasterTurnSettled: turnBossFeedId => {
           const feed = (store.get(KV.governance.feed) ?? []).slice(-30)
+          const turnBossIdx = turnBossFeedId ? feed.findIndex(f => f.id === turnBossFeedId) : -1
           for (let i = 0; i < feed.length; i++) {
             const boss = feed[i]!
             if (boss.role !== 'boss' || boss.kind !== 'boss_message' || !boss.triggerId) continue
-            const replied = feed.some((s, j) => s.role === 'secretary' && (j > i || s.triggerId === boss.triggerId))
+            const replied = feed.some((s, j) => {
+              if (s.role !== 'secretary') return false
+              if (s.triggerId) return s.triggerId === boss.triggerId
+              return j > i && (turnBossIdx < 0 || i <= turnBossIdx)
+            })
             if (!replied) continue
             const trig = store.triggers.get(boss.triggerId)
             if (trig?.source !== 'secretary-bus' || store.triggers.disposition(boss.triggerId)?.decisionId) continue

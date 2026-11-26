@@ -43,7 +43,7 @@ export interface SessionsHost {
   /** Optional fallback called when the main Session finishes a turn idle with plain assistant text. */
   onMasterTurnIdleReply?(text: string, expectedBossFeedId: string): void
   /** Optional hook called when the main Session settles into idle (after any fallback reply). */
-  onMasterTurnSettled?(): void
+  onMasterTurnSettled?(expectedBossFeedId?: string): void
 }
 
 /**
@@ -157,7 +157,7 @@ export class Sessions {
           const bossId = this.pendingBossFeedId
           this.masterTurnText = ''; this.pendingBossFeedId = undefined
           if (text && bossId) this.host.onMasterTurnIdleReply?.(text, bossId)
-          this.host.onMasterTurnSettled?.()
+          this.host.onMasterTurnSettled?.(bossId)
         }
       }
     })

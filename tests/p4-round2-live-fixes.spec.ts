@@ -124,6 +124,33 @@ describe('Wave 4: 第 2 轮真机实测后端修复与护栏重构', () => {
       const disp2 = h.runtime.store.triggers.disposition(workMsg.trigger.id)
       expect(disp2?.decisionId).toBeTruthy()
       expect(h.runtime.store.decisions.get(disp2!.decisionId!)?.kind).toBe('accept')
+
+      // 并发插话边界 1：显式带 msgA.triggerId 的回复，不误结案更早未回复的 msgEarly
+      const msgEarly = ingestBossDesktopMessage(host, '早先那条还没回')
+      const msgA = ingestBossDesktopMessage(host, '先记下这条偏好')
+      await h.runtime.idle()
+      await h.runTool(h.runtime.masterId, 'secretary_say', {
+        text: '已记下偏好。',
+        expression: 'happy',
+        trigger_id: msgA.trigger.id,
+      })
+      h.ctx.emit('agent/status', { agent: masterAgent, status: 'idle' } as never)
+      expect(h.runtime.store.triggers.disposition(msgA.trigger.id)?.decisionId).toBeTruthy()
+      expect(h.runtime.store.triggers.disposition(msgEarly.trigger.id)?.decisionId).toBeUndefined()
+
+      // 并发插话边界 2：主会话 turn/start 处理 msgC 期间老板又插话 msgB，无 triggerId 的回复只结案 msgC 不误结案 msgB
+      const msgC = ingestBossDesktopMessage(host, '再记一条偏好')
+      await h.runtime.idle()
+      const masterSession = (masterAgent as unknown as { session: unknown }).session
+      h.ctx.emit('session/event', masterSession as never, { type: 'turn/start', data: { turn: 2 } } as never)
+      const msgB = ingestBossDesktopMessage(host, '等下再顺便查个问题')
+      await h.runTool(h.runtime.masterId, 'secretary_say', {
+        text: '好的，已记下。',
+        expression: 'happy',
+      })
+      h.ctx.emit('agent/status', { agent: masterAgent, status: 'idle' } as never)
+      expect(h.runtime.store.triggers.disposition(msgC.trigger.id)?.decisionId).toBeTruthy()
+      expect(h.runtime.store.triggers.disposition(msgB.trigger.id)?.decisionId).toBeUndefined()
     } finally {
       await h.stop()
     }
@@ -139,6 +166,7 @@ describe('Wave 4: 第 2 轮真机实测后端修复与护栏重构', () => {
       'gh issue list',
       'gh issue view 5',
       'gh api repos/a/b/pulls',
+      'gh api repos/a/b/pulls && grep -f pat file',
     ]) {
       const r = classifySmartAutoRisk('bash', { command: cmd }, '/tmp/wt')
       expect(r.needsAsk, cmd).toBe(false)
@@ -147,13 +175,18 @@ describe('Wave 4: 第 2 轮真机实测后端修复与护栏重构', () => {
     for (const cmd of [
       'gh issue create --title bug --body detail',
       'gh pr create --title feat --body desc',
+      'gh pr -R a/b create --title x',
       'gh pr comment 12 --body lgtm',
       'gh api repos/a/b/issues -f title=x',
       'gh api -X POST repos/a/b/issues',
+      'gh api --method=DELETE repos/a/b/issues/1',
+      'gh api repos/a/b/issues \\\n  -X POST',
+      "gh api graphql -f query='mutation { addComment }'",
     ]) {
       const r = classifySmartAutoRisk('bash', { command: cmd }, '/tmp/wt')
       expect(r.needsAsk, cmd).toBe(true)
       expect(r.rawScore).toBeGreaterThanOrEqual(0.8)
+      expect(r.externalSideEffect, cmd).toBeTruthy()
     }
 
     // 端到端验证 RuntimeGuard -> RulingQueue 高风险推荐项为 reject
