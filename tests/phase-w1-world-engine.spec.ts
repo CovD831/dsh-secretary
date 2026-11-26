@@ -156,6 +156,8 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
       expect(tiers.get('cutaway')).toBe(34)
       expect(tiers.get('portal')).toBe(54)
       const partSegs = world.wallSegments!.filter((s) => s.tier === 'partition')
+      expect(partSegs.every((s) => s.startH === 68)).toBe(true)
+      expect(partSegs.filter((s) => s.startH === s.endH).every((s) => s.endH === 68)).toBe(true)
       expect(partSegs.length).toBeLessThanOrEqual(14)
       expect(world.interiorDoors?.some((d) => d.id === 'door-right-link')).toBe(true)
 
@@ -166,6 +168,11 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
           for (const fc of ent.footprint) expect(cellSet.has(`${fc.u},${fc.v}`)).toBe(true)
           if (ent.seatCell) expect(cellSet.has(`${ent.seatCell.u},${ent.seatCell.v}`)).toBe(true)
         }
+        if (wing.rugRect) {
+          for (let dv = 0; dv < wing.rugRect.h; dv++) for (let du = 0; du < wing.rugRect.w; du++) {
+            expect(cellSet.has(`${wing.rugRect.u + du},${wing.rugRect.v + dv}`)).toBe(true)
+          }
+        }
       }
 
       sigs.add(world.wings.slice(0, 3).map((w) => `${w.shapeKind}:${w.comboKind}:${w.doorway.v}`).join('|'))
@@ -175,6 +182,42 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
       expect(actors.find((a) => a.id === 'w-test')?.lifecycle).toBe('working')
     }
     expect(sigs.size).toBeGreaterThanOrEqual(3)
+
+    const multiWs = [{ id: 'default', title: 'default' }, { id: 'demo-repo', title: 'demo-repo' }, { id: 'third', title: 'third' }]
+    for (let seed = 1; seed <= 20; seed++) {
+      const w = solveWorldFloorplan(multiWs, seed)
+      const segs = w.wallSegments!
+      for (const s of segs) {
+        if (s.startH !== s.endH) {
+          const continues = segs.some((o) => o !== s && o.startH === 68
+            && (o.to.u - o.from.u) * (s.to.v - s.from.v) === (o.to.v - o.from.v) * (s.to.u - s.from.u)
+            && ((o.from.u === s.to.u && o.from.v === s.to.v) || (o.to.u === s.to.u && o.to.v === s.to.v)))
+          expect(continues, `seed=${seed} sloped wall must not continue into 68px wall`).toBe(false)
+        }
+        if ((s.tier === 'back' || s.tier === 'cutaway') && (s.from.u === s.to.u || s.from.v === s.to.v)) {
+          const segLen = Math.max(Math.abs(s.to.u - s.from.u), Math.abs(s.to.v - s.from.v))
+          expect(segLen, `seed=${seed} ${s.tier} (${s.from.u},${s.from.v})->(${s.to.u},${s.to.v})`).toBeGreaterThanOrEqual(3)
+        }
+      }
+      const zone = new Map<string, string>()
+      for (const c of [...(w.corridorCells ?? []), ...(w.lobby.cells ?? [])]) zone.set(`${c.u},${c.v}`, 'corr')
+      for (const wg of w.wings) if (wg.kind === 'studio') for (const c of wg.cells ?? []) zone.set(`${c.u},${c.v}`, wg.id)
+      for (const d of w.interiorDoors ?? []) {
+        const pairs = d.axis === 'u'
+          ? [[d.u - 1, d.v, d.u, d.v], [d.u - 1, d.v + 1, d.u, d.v + 1]] as const
+          : [[d.u, d.v - 1, d.u, d.v], [d.u + 1, d.v - 1, d.u + 1, d.v]] as const
+        for (const [u1, v1, u2, v2] of pairs) {
+          const z1 = zone.get(`${u1},${v1}`), z2 = zone.get(`${u2},${v2}`)
+          expect(Boolean(z1 && z2 && z1 !== z2), `seed=${seed} door ${d.id} valid zones`).toBe(true)
+        }
+        const onFlat68 = segs.some((s) => s.tier === 'partition' && s.startH === 68 && s.endH === 68 && (
+          d.axis === 'u'
+            ? s.from.u === d.u && s.to.u === d.u && Math.min(s.from.v, s.to.v) <= d.v && Math.max(s.from.v, s.to.v) >= d.v + 2
+            : s.from.v === d.v && s.to.v === d.v && Math.min(s.from.u, s.to.u) <= d.u && Math.max(s.from.u, s.to.u) >= d.u + 2
+        ))
+        expect(onFlat68, `seed=${seed} door ${d.id} on flat 68px partition`).toBe(true)
+      }
+    }
   })
 
   it('round-trips worldIsoToScreen and screenToWorldIso at 1x and 2x zoom with pan', () => {

@@ -43,29 +43,21 @@ function isWallBlocked(world: OfficeWorldPlan, u1: number, v1: number, u2: numbe
 
 function buildWalkableSet(world: OfficeWorldPlan): Set<string> {
   const walkable = new Set<string>()
-  for (const c of world.corridorCells ?? []) walkable.add(`${c.u},${c.v}`)
-  for (const c of world.lobby.cells ?? []) walkable.add(`${c.u},${c.v}`)
-  for (const w of world.wings) if (w.kind === 'studio') for (const c of w.cells ?? []) walkable.add(`${c.u},${c.v}`)
+  for (const c of [...(world.corridorCells ?? []), ...(world.lobby.cells ?? []), ...world.wings.filter((w) => w.kind === 'studio').flatMap((w) => w.cells ?? [])]) walkable.add(`${c.u},${c.v}`)
   return walkable
 }
 
 function findWorldPath(world: OfficeWorldPlan, from: GridPoint, to: GridPoint): GridPoint[] {
-  const walkable = buildWalkableSet(world)
-  const blocked = new Set<string>()
-  for (const e of [...world.lobby.suites, ...world.lobby.shared, ...world.wings.flatMap((w) => [...w.suites, ...w.shared])]) {
-    for (const c of e.footprint) blocked.add(`${c.u},${c.v}`)
-  }
-  const su = Math.round(from.u), sv = Math.round(from.v), tu = Math.round(to.u), tv = Math.round(to.v)
-  const startKey = `${su},${sv}`, goalKey = `${tu},${tv}`
+  const walkable = buildWalkableSet(world), blocked = new Set<string>()
+  for (const e of [...world.lobby.suites, ...world.lobby.shared, ...world.wings.flatMap((w) => [...w.suites, ...w.shared])]) for (const c of e.footprint) blocked.add(`${c.u},${c.v}`)
+  const su = Math.round(from.u), sv = Math.round(from.v), tu = Math.round(to.u), tv = Math.round(to.v), startKey = `${su},${sv}`, goalKey = `${tu},${tv}`
   if (startKey === goalKey) return []
   const queue: GridPoint[] = [{ u: su, v: sv }], parent = new Map<string, GridPoint | null>([[startKey, null]])
   while (queue.length > 0) {
-    const cur = queue.shift()!
-    if (`${cur.u},${cur.v}` === goalKey) break
+    const cur = queue.shift()!; if (`${cur.u},${cur.v}` === goalKey) break
     for (const [du, dv] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
       const nu = cur.u + du, nv = cur.v + dv, nk = `${nu},${nv}`
-      if (parent.has(nk) || (!walkable.has(nk) && nk !== goalKey)) continue
-      if (isWallBlocked(world, cur.u, cur.v, nu, nv) || (blocked.has(nk) && nk !== goalKey)) continue
+      if (parent.has(nk) || (!walkable.has(nk) && nk !== goalKey) || isWallBlocked(world, cur.u, cur.v, nu, nv) || (blocked.has(nk) && nk !== goalKey)) continue
       parent.set(nk, cur); queue.push({ u: nu, v: nv })
     }
   }
@@ -90,6 +82,14 @@ export function spawnWorldWorker(world: OfficeWorldPlan, actorId: string, worksp
   const wing = world.wings.find((w) => w.workspaceId === workspaceId) ?? world.wings.find((w) => w.suites.some((s) => s.id === suiteId))
   const seat = wing?.suites.find((s) => s.id === suiteId)?.seatCell ?? wing?.doorway ?? world.mainEntrance
   return { id: actorId, role: 'worker', u: world.mainEntrance.u, v: world.mainEntrance.v, facing: 'NW', pose: 'idle', lifecycle: 'entering', ticketId, assignedSuiteId: suiteId, path: findWorldPath(world, world.mainEntrance, seat), animMs: 0 }
+}
+
+export function reSeatWorkerOnWorld(actor: OfficeActor, world: OfficeWorldPlan, roomId?: string): OfficeActor {
+  if (actor.pose !== 'sit' || actor.lifecycle === 'leaving') return actor
+  const wing = roomId ? world.wings.find((w) => w.workspaceId === roomId) : undefined
+  const s = allSuites(world).find((x) => x.id === actor.assignedSuiteId) ?? wing?.suites.find((x) => x.suiteKind === 'workstation')
+  if (!s) return actor
+  const ch = makeWorldChair(s); return { ...actor, assignedSuiteId: s.id, u: ch.anchor.u + 0.1, v: ch.anchor.v + 0.1, facing: ch.facing }
 }
 
 export function stepWorldActors(actors: OfficeActor[], world: OfficeWorldPlan, dtMs: number): OfficeActor[] {
@@ -181,7 +181,7 @@ function renderL0ToL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, spr
   if (sprites.images.welcome_mat) { const mp = worldIsoToScreen(11, world.buildingRows + 1, world, cam); ctx.drawImage(sprites.images.welcome_mat, Math.round(mp.x - 32 * z), Math.round(mp.y - 16 * z), 64 * z, 32 * z) }
   for (const w of world.wings) if (w.kind === 'studio' && w.rugRect) {
     const rugImg = sprites.images[`rug_${w.rugStyle ?? 'woven'}`] ?? sprites.images.rug_woven
-    if (rugImg) { const p = worldIsoToScreen(w.rugRect.u + w.rugRect.w / 2, w.rugRect.v + w.rugRect.h / 2, world, cam); ctx.drawImage(rugImg, Math.round(p.x - 64 * z), Math.round(p.y - 32 * z), 128 * z, 64 * z) }
+    if (rugImg) { const rw = Math.round(((w.rugRect.w + w.rugRect.h) / 2) * 32 * z), rh = Math.round(rw / 2), p = worldIsoToScreen(w.rugRect.u + w.rugRect.w / 2, w.rugRect.v + w.rugRect.h / 2, world, cam); ctx.drawImage(rugImg, Math.round(p.x - rw / 2), Math.round(p.y - rh / 2), rw, rh) }
   }
   ctx.fillStyle = 'rgba(26, 20, 18, 0.30)'
   for (const it of l2) {
@@ -199,7 +199,7 @@ function renderL0ToL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, spr
       ctx.fillRect(wx, wy + 5 * z, 4 * z, Math.max(1, h - 15 * z)); ctx.fillStyle = '#6B4A32'; ctx.fillRect(wx, wy + h - 10 * z, 4 * z, 10 * z)
     }
   }
-  for (const seg of sortedWalls) if (seg.hasWindow && sprites.images.facade_window) { const wp = worldIsoToScreen(seg.from.u + 1, seg.from.v, world, cam); ctx.drawImage(sprites.images.facade_window, Math.round(wp.x - 27 * z), Math.round(wp.y - 28 * z), 54 * z, 24 * z) }
+  for (const seg of sortedWalls) if (seg.hasWindow && sprites.images.facade_window) { const wu = Math.max(Math.min(seg.from.u, seg.to.u) + 1.5, Math.min(Math.max(seg.from.u, seg.to.u) - 1.5, 15.5)), wp = worldIsoToScreen(wu, seg.from.v, world, cam); ctx.drawImage(sprites.images.facade_window, Math.round(wp.x - 27 * z), Math.round(wp.y - 28 * z), 54 * z, 24 * z) }
   for (const d of world.interiorDoors ?? []) if (sprites.images.door_wood) { const dp = worldIsoToScreen(d.axis === 'u' ? d.u : d.u + 1, d.axis === 'u' ? d.v + 1 : d.v, world, cam); ctx.drawImage(sprites.images.door_wood, Math.round(dp.x - 19 * z), Math.round(dp.y - 50 * z), 38 * z, 52 * z) }
   if (sprites.images.door_glass) { const dp = worldIsoToScreen(11, world.buildingRows, world, cam); ctx.drawImage(sprites.images.door_glass, Math.round(dp.x - 38 * z), Math.round(dp.y - 49 * z), 76 * z, 50 * z) }
   const drawMount = (m: RoomWallMount, bu: number, bv: number) => {
