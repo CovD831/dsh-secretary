@@ -40,6 +40,8 @@ export interface SessionsHost {
   secretaryMemorySection?(): string
   /** Optional pre-turn refresher updating the main Session's M2/M6 memory block and M6 attention lifecycle. */
   refreshSecretaryMemory?(query: string): Promise<void>
+  /** Optional fallback called when the main Session finishes a turn idle with plain assistant text. */
+  onMasterTurnIdleReply?(text: string): void
 }
 
 /**
@@ -57,8 +59,13 @@ interface SessionBinding {
 
 const SECRETARY_CHINESE_PROTOCOL = `## 中文私人秘书协议（主入口规范）
 - 你是老板唯一的中文私人秘书入口，永不亲自读写业务代码、跑命令或排障；一切执行工作派给独立工作区会话。
-- 对老板说话优先使用结构化说话工具：\`secretary_say\`（≤40 字带表情）、\`secretary_ask\`（≤3 选项写清后果与推荐项，进入单件待裁队列）、\`secretary_handover\`（结论/理由/影响三段式带证据引用）；跨会话派活使用 \`secretary_dispatch\`（写明可独立复查的验收标准、验证命令与稳定 dispatch_key）；查进度使用 \`secretary_status\`（没查到如实说「没查到」）。
+- 对老板说话优先使用结构化说话工具：\`secretary_say\`（≤240 字，结论先行带表情）、\`secretary_ask\`（≤3 选项写清后果与推荐项，进入单件待裁队列）、\`secretary_handover\`（结论/理由/影响三段式带证据引用）；跨会话派活优先使用 \`secretary_dispatch\`（写明可独立复查的验收标准、验证命令与稳定 dispatch_key）；查进度使用 \`secretary_status\`（没查到如实说「没查到」）。
 - 分清老板原话、你的推断与未查明事实，一次只问最关键的一件事。`
+
+const SECRETARY_BUS_FOOTER = `## 老板桌面总线强制纪律（最高优先级覆盖）
+- 凡 \`source="secretary-bus"\` 的老板桌面消息，老板界面只显示 \`secretary_say\` / \`secretary_ask\` / \`secretary_handover\` / \`secretary_dispatch\` 的输出；**每轮处理老板消息必须调用说话工具给出结论先行回复，严禁只调 \`ignore\` 沉默不语**。
+- 老板追问工单进度时，调 \`secretary_status\` 查实后**必须直接向老板如实汇报**（不受英文 \`Keep progress internal\` 限制）。
+- 派单优先用 \`secretary_dispatch\`；记偏好调 \`orchestrator_memory_propose\` 时直接传 \`trigger_id\`（不必猜 \`source_ref.seq\`）；立规矩调 \`orchestrator_deposit_author\` 若为自定义 \`gate\` 必须传声明式 \`rule\`（如 \`command_check\` 配合 \`ctx.commands\`）。`
 
 /** The agent presets Executor Sessions and the main Session are created with, which the bundle's patch defines. */
 export const WORKER_PRESET = 'dsh-superagent-worker', ROUTER_PRESET = 'dsh-superagent-router'
@@ -90,6 +97,7 @@ export class Sessions {
   private readonly bindings = new Map<Agent, SessionBinding>()
   private readonly inFlight = new Map<Agent, Promise<void>>()
   private readonly retryHealth = new RetryHealth()
+  private masterTurnText = ''
   private readonly ctx: Context
   /** Registers ordered `relay` and `notice` effect handlers that deliver to the main Session. */
   constructor(private readonly host: SessionsHost) {
@@ -105,6 +113,7 @@ export class Sessions {
     ctx.on('agent/disposed', ({ agent }) => {
       this.release(agent)
       this.retryHealth.clear(agent.id); this.updateModelHealth()
+      if (agent.id === this.host.masterId) this.masterTurnText = ''
     })
     ctx.on('session/event', (session, event) => {
       const agent = ctx.agents.get(session.id)
@@ -112,6 +121,15 @@ export class Sessions {
       if (!agent || !binding || binding.subagent) return
       this.retryHealth.observe(agent.id, event)
       this.updateModelHealth()
+      if (agent.id === this.host.masterId) {
+        if (event.type === 'turn/start') this.masterTurnText = ''
+        else if (event.type === 'assistant/message' && event.data.interrupted !== true) {
+          const text = event.data.message.content
+            .filter((b): b is { type: 'text'; text: string } => b.type === 'text' && typeof (b as { text?: unknown }).text === 'string')
+            .map(b => b.text).join('\n').trim()
+          if (text) this.masterTurnText = text
+        }
+      }
     })
     ctx.on('agent/created', async ({ agent }) => { await this.decorate(agent); return undefined })
     // Opening a Session in DSH's Web UI before its first turn may select the default preset for it: select ours again. After
@@ -126,7 +144,14 @@ export class Sessions {
       })
     })
     ctx.on('agent/status', ({ agent, status }) => {
-      if (status === 'idle' && !this.host.closing()) { this.retryHealth.clear(agent.id); this.updateModelHealth() }
+      if (status === 'idle' && !this.host.closing()) {
+        this.retryHealth.clear(agent.id); this.updateModelHealth()
+        if (agent.id === this.host.masterId) {
+          const text = this.masterTurnText.trim()
+          this.masterTurnText = ''
+          if (text) this.host.onMasterTurnIdleReply?.(text)
+        }
+      }
     })
   }
   /** Resolves or creates session `id` in workspace `cwd`, initializes its role model, decorates it with prompts/skills/tools, sets `danger-full-access` permissions, and renames it to `title`. */
@@ -302,7 +327,8 @@ export class Sessions {
       const composed = host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)
       const secretaryHead = master ? `${SECRETARY_CHINESE_PROTOCOL}\n\n` : ''
       const memoryTail = master ? (host.secretaryMemorySection?.() ?? '') : ''
-      return `[dsh-superagent prompt revision ${version.revision}]\n${secretaryHead}${composed}${memoryTail}\n${current ? mandateInstructions(current.mandate) : ''}`
+      const footer = master ? `\n\n${SECRETARY_BUS_FOOTER}` : ''
+      return `[dsh-superagent prompt revision ${version.revision}]\n${secretaryHead}${composed}${memoryTail}${footer}\n${current ? mandateInstructions(current.mandate) : ''}`
     }, ...(master ? { complete: true } : {}) }))
     const register = this.registerTool(agent, binding)
     for (const tool of host.tools(agent, ticket)) register(tool.name, tool.description, tool.schema, tool.execute)

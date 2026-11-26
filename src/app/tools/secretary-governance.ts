@@ -2,80 +2,63 @@
 import { randomUUID } from 'node:crypto'
 import { lstat, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { z } from 'zod'
 import { telemetryToSpineInput, validateDepositDraft, writeDepositDraftPackage, type DepositDraft } from '../../authoring/index.ts'
 import { createAdaptiveDispatchGate, createChangedPathsGate, createVerifyRerunGate } from '../../judgement/gates/index.ts'
 import {
   RESERVED_BUILTIN_DEPOSIT_IDS, auditRequires, compileDeclarativeEntry, evaluateCompiledEntry, loadDepositPackage, parseDepositMarkdown,
-  validateDeclarativeRule, type AnyGateDef, type DeclarativeRule, type DepositManifest, type MandateBinding,
+  runDepositCases, validateDeclarativeRule, type AnyGateDef, type DeclarativeRule, type DepositManifest, type MandateBinding,
   type ParamSpec, type Point, type Verdict,
 } from '../../judgement/index.ts'
 import { assembleMemoryPrompt, memoryTaintOf, readMemoryPage, resolveMemoryRelPath, type MemoryScope } from '../../memory/index.ts'
-import { runHistoricalReplay, type ReplayCase, type ReplayGateFn } from '../../rsi/index.ts'
+import { readM0Events, runHistoricalReplay, type ReplayCase, type ReplayGateFn } from '../../rsi/index.ts'
 import { redactValue } from '../../spine/redact.ts'
+import type { SourceRef, SpineEnvelope } from '../../spine/index.ts'
 import { listDepositDrafts } from '../governance-drafts.ts'
 import type { GovernanceRuntime } from '../governance.ts'
+import { DepositSchema, LedgerSchema, ProposeSchema, RecallSchema, ruleCtxHint, type RawDraft } from './secretary-governance-schemas.ts'
 import { tool, type Tool } from './tool.ts'
 
-const SourceRefSchema = z.object({ seq: z.number(), id: z.string() }).strict()
-const RecallSchema = z.object({
-  query: z.string().default(''), recent_messages: z.array(z.string()).optional(),
-  budgets: z.object({ residentMaxChars: z.number().optional(), triggeredMaxChars: z.number().optional(),
-    retrievedMaxChars: z.number().optional(), attentionMaxChars: z.number().optional() }).strict().optional(),
-}).strict()
-
-// 移除 user_ruling/user_direct、override_tombstone 与自由 author，防止提示注入伪造老板权威。
-const ProposeSchema = z.object({
-  mode: z.enum(['propose', 'tombstone']).default('propose'), layer: z.enum(['m1', 'm2', 'm3']),
-  slug: z.string().optional(), workspace_key: z.string().optional(), source_ref: SourceRefSchema,
-  statement: z.string().optional(), scope: z.string().optional(), source_type: z.enum(['session', 'inference']).optional(),
-  topic_key: z.string().optional(), clearance: z.enum(['public', 'workspace', 'private']).optional(),
-  m2_kind: z.enum(['preference', 'veto', 'shared_event', 'internal_moniker', 'correction_repair']).optional(),
-  resident: z.boolean().optional(), importance: z.number().optional(),
-  verbatim_quote: z.string().optional(), evidence_text: z.string().optional(),
-  trigger_keys: z.object({ primary: z.array(z.string()), secondary: z.array(z.string()).optional(),
-    logic: z.enum(['AND_ANY', 'AND_ALL', 'NOT_ANY', 'NOT_ALL']).optional() }).strict().optional(),
-  entry_id: z.string().optional(), reason: z.string().optional(),
-}).strict()
-
-const LedgerSchema = z.object({
-  mode: z.enum(['list', 'transition']).default('list'),
-  status: z.enum(['pending', 'asked', 'approved', 'dismissed', 'expired']).optional(),
-  id: z.string().optional(), next_status: z.enum(['asked', 'approved', 'dismissed']).optional(), source_ref: SourceRefSchema.optional(),
-}).strict()
-
-const MandateSchema = z.object({
-  strength: z.enum(['explicit', 'delegated', 'inferred']), scope: z.string(), policyVersion: z.string(),
-  ceiling: z.enum(['read', 'draft', 'local-write', 'remote-write', 'external-effect']), isolation: z.enum(['I1', 'I2', 'I3', 'I4', 'I5']),
-}).strict()
-
-const DraftSchema = z.object({
-  id: z.string(), name: z.string().optional(), version: z.number().optional(), author: z.string().optional(), scope: z.string().optional(),
-  kind: z.enum(['gate', 'standing-order', 'evaluator', 'counter-rule']).optional(), level: z.enum(['object', 'meta']).optional(),
-  point: z.string().optional(), requires: z.array(z.string()).optional(), params: z.record(z.string(), z.unknown()).optional(),
-  exceptions: z.array(z.string()).optional(), repairHint: z.string().optional(), intent: z.string().optional(), rubricBody: z.string().optional(),
-  enforce: z.boolean().optional(), stage: z.enum(['shadow', 'observe', 'enforce', 'retired']).optional(),
-  mandateCeiling: z.enum(['L0', 'L1', 'L2', 'L3']).optional(), actionClass: z.enum(['observe', 'block', 'side-effecting']).optional(),
-  mandateRef: z.string().optional(), action: z.object({ name: z.string(), params: z.unknown().optional() }).strict().optional(),
-  trigger: z.object({ on: z.string().optional(), workspace: z.string().optional(), globs: z.array(z.string()).optional(),
-    mode: z.enum(['always', 'on-event', 'scheduled-sweep']).optional(), signal: z.string().optional(), match: z.record(z.string(), z.unknown()).optional() }).strict().optional(),
-  origin: z.object({ kind: z.enum(['user-authored', 'friction-mined', 'forked']), refs: z.array(z.string()).optional() }).strict().optional(),
-  cases: z.array(z.object({ name: z.string(), expected: z.enum(['allow', 'deny', 'unmeasured']), ctx: z.unknown(),
-    expectedCause: z.string().optional(), note: z.string().optional() }).strict()).optional(),
-  unansweredSlots: z.array(z.string()).optional(),
-  rule: z.record(z.string(), z.unknown()).optional(), measures: z.string().optional(), mandate: MandateSchema.optional(),
-}).strict()
-
-const DepositSchema = z.object({
-  mode: z.enum(['list_drafts', 'validate', 'replay', 'install_shadow']), draft: DraftSchema.optional(),
-  include_online_candidates: z.boolean().optional(),
-  cases: z.array(z.object({ id: z.string(), family: z.string(), input: z.unknown(),
-    expectedOutcome: z.enum(['defect', 'clean', 'unknown']), tokens: z.number().optional(), durationMs: z.number().optional() }).strict()).optional(),
-}).strict()
-
+const BUILTIN_EXECUTABLE_IDS = new Set(['ticket.adaptive-dispatch', 'verify.changed-paths', 'verify.rerun'])
 const stripUndefined = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
-function normalizeDraft(raw: z.infer<typeof DraftSchema>): DepositDraft {
+function normalizeMemoryScope(layer: 'm1' | 'm2' | 'm3', rawScope?: string, workspaceKey?: string): MemoryScope {
+  const trimmed = rawScope?.trim()
+  if (trimmed === 'global' || trimmed?.startsWith('person:') || trimmed?.startsWith('workspace:')) return trimmed as MemoryScope
+  if (layer === 'm3' && workspaceKey?.trim()) return `workspace:${workspaceKey.trim()}`
+  if (trimmed === 'boss') return 'person:boss'
+  return 'global'
+}
+
+async function resolveTriggerSpineEnvelope(
+  gov: GovernanceRuntime,
+  triggerId: string,
+): Promise<{ ref: SourceRef; env: SpineEnvelope<Record<string, unknown>> } | undefined> {
+  if (gov.storeRef?.db) {
+    try {
+      const rows = gov.storeRef.db.prepare("SELECT value FROM event_spine WHERE type = 'trigger.received' ORDER BY seq DESC LIMIT 200").all() as { value?: string }[]
+      for (const row of rows) {
+        if (!row.value) continue
+        const env = JSON.parse(row.value) as SpineEnvelope<Record<string, unknown>>
+        if (env.payload?.['triggerId'] === triggerId) return { ref: { seq: env.seq, id: env.id }, env }
+      }
+    } catch { /* fall through to M0 shard scan */ }
+  }
+  const events = await readM0Events({ db: gov.storeRef?.db, memoryDir: gov.memoryDir }).catch(() => [])
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i]!
+    if (ev.type === 'trigger.received' && (ev.payload as Record<string, unknown> | undefined)?.['triggerId'] === triggerId) {
+      return { ref: { seq: ev.seq, id: ev.id }, env: ev as SpineEnvelope<Record<string, unknown>> }
+    }
+  }
+  return undefined
+}
+
+function normalizeDraft(raw: RawDraft): DepositDraft {
+  const cases = (raw.cases ?? []).map(c => {
+    if (c.expected === 'unmeasured') return c
+    const { expectedCause: _drop, ...rest } = c
+    return rest
+  }) as DepositDraft['cases']
   return {
     id: raw.id, name: raw.name ?? raw.id, version: raw.version ?? 1, author: 'secretary',
     scope: (raw.scope as DepositDraft['scope']) ?? 'private', kind: raw.kind ?? 'gate', level: raw.level ?? 'object',
@@ -85,8 +68,7 @@ function normalizeDraft(raw: z.infer<typeof DraftSchema>): DepositDraft {
       ...(raw.trigger?.globs ? { globs: raw.trigger.globs } : {}), ...(raw.trigger?.signal ? { signal: raw.trigger.signal } : {}) },
     requires: raw.requires ?? [], params: (raw.params ?? {}) as DepositDraft['params'], exceptions: raw.exceptions ?? [],
     repairHint: raw.repairHint ?? '', intent: raw.intent ?? '', rubricBody: raw.rubricBody ?? '',
-    actionClass: raw.actionClass ?? 'observe', origin: raw.origin ?? { kind: 'user-authored' },
-    cases: (raw.cases ?? []) as DepositDraft['cases'],
+    actionClass: raw.actionClass ?? 'observe', origin: raw.origin ?? { kind: 'user-authored' }, cases,
     ...(raw.enforce !== undefined ? { enforce: raw.enforce } : {}), ...(raw.stage ? { stage: raw.stage } : {}),
     ...(raw.mandateCeiling ? { mandateCeiling: raw.mandateCeiling } : {}), ...(raw.mandateRef ? { mandateRef: raw.mandateRef } : {}),
     ...(raw.action ? { action: raw.action } : {}), ...(raw.unansweredSlots ? { unansweredSlots: raw.unansweredSlots } : {}),
@@ -100,8 +82,6 @@ function extractDefaultParams(specs: Readonly<Record<string, ParamSpec>> | undef
   }
   return out
 }
-
-type RawDraft = z.infer<typeof DraftSchema>
 
 function draftToManifest(draft: DepositDraft, raw?: RawDraft): DepositManifest {
   const rawScope: string = raw?.scope ?? draft.scope
@@ -149,13 +129,34 @@ function buildReplayGate(gov: GovernanceRuntime, draft: DepositDraft, raw?: RawD
   return buildStandaloneGateFn(draft, raw)
 }
 
-function checkDeclarativeDraft(draft: DepositDraft, raw: RawDraft) {
-  if (raw.rule === undefined) return []
+async function checkDeclarativeDraft(draft: DepositDraft, raw: RawDraft) {
+  if (raw.rule === undefined) {
+    if ((draft.kind === 'gate' || draft.kind === 'counter-rule' || draft.kind === 'evaluator') && !BUILTIN_EXECUTABLE_IDS.has(draft.id)) {
+      return [{
+        ruleId: 'missing-declarative-rule', field: 'rule',
+        reason: `自定义 ${draft.kind} "${draft.id}" 缺少声明式 rule 配置`,
+        repairHint: '请提供声明式 rule，例如命令检查: { "kind": "command_check", "requiredCommands": ["tsc --noEmit"] }，对应正反例 ctx 形如 { "commands": [{ "command": "tsc --noEmit", "exitCode": 0 }] } 与 exitCode: 1',
+      }]
+    }
+    return []
+  }
   const ruleIssues = validateDeclarativeRule(raw.rule).map(i => ({ ruleId: 'invalid-declarative-rule', field: i.field, reason: i.reason, repairHint: '修正零代码声明式 rule 配置' }))
   if (redactValue(raw.rule).redacted.length > 0) ruleIssues.push({ ruleId: 'secret-in-deposit', field: 'rule', reason: 'rule 配置疑似包含密钥或敏感字段', repairHint: '移除敏感字符串后再提交' })
-  if (ruleIssues.length === 0) {
-    try { compileDeclarativeEntry(draftToManifest(draft, raw)) }
-    catch (err) { ruleIssues.push({ ruleId: 'declarative-compile-failed', field: 'rule', reason: err instanceof Error ? err.message : String(err), repairHint: '核对 kind、trigger.signal、action.name 与 rule 配置' }) }
+  if (ruleIssues.length > 0) return ruleIssues
+  try {
+    const compiled = compileDeclarativeEntry(draftToManifest(draft, raw), extractDefaultParams(draft.params))
+    if (draft.cases.length > 0) {
+      const report = await runDepositCases(compiled, draft.cases)
+      if (!report.ok || !report.mutationPassed) {
+        ruleIssues.push({
+          ruleId: 'case-check-failed', field: 'cases',
+          reason: report.error ?? `红绿或变异用例未通过 (${report.passed}/${report.total} passed, mutationPassed=${report.mutationPassed})`,
+          repairHint: ruleCtxHint(raw.rule['kind']),
+        })
+      }
+    }
+  } catch (err) {
+    ruleIssues.push({ ruleId: 'declarative-compile-failed', field: 'rule', reason: err instanceof Error ? err.message : String(err), repairHint: '核对 kind、trigger.signal、action.name 与 rule 配置' })
   }
   return ruleIssues
 }
@@ -192,23 +193,32 @@ export function secretaryGovernanceTools(gov: GovernanceRuntime): Tool[] {
     tool({
       name: 'orchestrator_memory_propose', description: 'Propose or tombstone M1-M3 memory with M0 source_ref.', schema: ProposeSchema,
       execute: async args => {
-        const env = await gov.readSpineEnvelope(args.source_ref)
-        if (!env) return { kind: 'rejected', reason: 'unknown-source-ref', detail: `source_ref 未在事件脊中确认: seq=${args.source_ref.seq}` }
+        let sourceRef = args.source_ref
+        let env = sourceRef ? await gov.readSpineEnvelope(sourceRef) : undefined
+        if (!env && args.trigger_id) {
+          const resolved = await resolveTriggerSpineEnvelope(gov, args.trigger_id)
+          if (resolved) { sourceRef = resolved.ref; env = resolved.env }
+        }
+        if (!env || !sourceRef) {
+          return { kind: 'rejected', reason: 'unknown-source-ref',
+            detail: args.trigger_id ? `未在 M0 事件脊中找到 trigger_id=${args.trigger_id} 对应的 trigger.received` : `source_ref 未在事件脊中确认: seq=${args.source_ref?.seq ?? 'missing'}` }
+        }
         if (args.mode === 'tombstone') {
           if (!args.entry_id?.trim() || !args.reason?.trim()) throw new Error('tombstone mode requires entry_id and reason')
           if (args.layer === 'm2') return { kind: 'rejected', reason: 'forbidden', detail: '禁止秘书工具对 M2 条目打墓碑' }
           const rel = resolveMemoryRelPath({ layer: args.layer, ...(args.slug ? { slug: args.slug } : {}), ...(args.workspace_key ? { workspaceKey: args.workspace_key } : {}) })
           const page = await gov.memoryRepoLock.run(() => readMemoryPage(gov.memoryDir, rel)), hit = page?.layer !== 'm6' ? page?.entries.find(e => e.id === args.entry_id) : undefined
           if (hit && (hit.sourceType === 'user_ruling' || hit.sourceType === 'user_direct')) return { kind: 'rejected', reason: 'forbidden', detail: '禁止秘书工具对老板直述或裁决条目打墓碑' }
-          const tombRes = await gov.memory.tombstone({ target: { layer: args.layer, ...(args.slug ? { slug: args.slug } : {}), ...(args.workspace_key ? { workspaceKey: args.workspace_key } : {}) }, entryId: args.entry_id, reason: args.reason, sourceRef: args.source_ref, author: 'secretary' })
+          const tombRes = await gov.memory.tombstone({ target: { layer: args.layer, ...(args.slug ? { slug: args.slug } : {}), ...(args.workspace_key ? { workspaceKey: args.workspace_key } : {}) }, entryId: args.entry_id, reason: args.reason, sourceRef, author: 'secretary' })
           await gov.ftsIndex.rebuild().catch(() => undefined)
           return stripUndefined({ kind: 'tombstoned', ...tombRes })
         }
-        if (!args.statement?.trim() || !args.scope?.trim()) throw new Error('propose mode requires statement and scope')
+        if (!args.statement?.trim()) throw new Error('propose mode requires statement')
         if (args.layer === 'm2' && env.taint === 'untrusted') return { kind: 'rejected', reason: 'forbidden', detail: '禁止使用 untrusted 来源事件写入 M2 记忆' }
+        const resolvedScope = normalizeMemoryScope(args.layer, args.scope, args.workspace_key)
         const propRes = await gov.memory.propose({
           layer: args.layer, ...(args.slug ? { slug: args.slug } : {}), ...(args.workspace_key ? { workspaceKey: args.workspace_key } : {}),
-          statement: args.statement, scope: args.scope as MemoryScope, sourceType: args.source_type ?? 'session', sourceRef: args.source_ref, author: 'secretary',
+          statement: args.statement, scope: resolvedScope, sourceType: args.source_type ?? 'session', sourceRef, author: 'secretary',
           taint: memoryTaintOf(env.taint), overrideTombstone: false, ...(args.topic_key ? { topicKey: args.topic_key } : {}), ...(args.clearance ? { clearance: args.clearance } : {}),
           ...(args.m2_kind ? { m2Kind: args.m2_kind } : {}), ...(args.resident !== undefined ? { resident: args.resident } : {}), ...(args.importance !== undefined ? { importance: args.importance } : {}),
           ...(args.verbatim_quote ? { verbatimQuote: args.verbatim_quote } : {}), ...(args.evidence_text ? { evidenceText: args.evidence_text } : {}), ...(args.trigger_keys ? { triggerKeys: args.trigger_keys } : {}),
@@ -246,7 +256,7 @@ export function secretaryGovernanceTools(gov: GovernanceRuntime): Tool[] {
         const emit = (ev: Parameters<typeof telemetryToSpineInput>[0]) => gov.appender.append(telemetryToSpineInput(ev))
         if (args.mode === 'validate') {
           const res = validateDepositDraft(draft)
-          const ruleIssues = checkDeclarativeDraft(draft, args.draft)
+          const ruleIssues = await checkDeclarativeDraft(draft, args.draft)
           if (res.ok && ruleIssues.length > 0) {
             emit({ id: `authoring:admission_rejected:${draftId}:${randomUUID().slice(0, 8)}`, kind: 'admission_rejected', draftId, at: nowIso, actorId: 'secretary', ruleId: ruleIssues[0]!.ruleId, field: ruleIssues[0]!.field, reason: ruleIssues[0]!.reason })
             return stripUndefined({ ok: false, gate: 'machine', draft, violations: ruleIssues })
@@ -263,7 +273,7 @@ export function secretaryGovernanceTools(gov: GovernanceRuntime): Tool[] {
           emit({ id: `authoring:replay_viewed:${draftId}:${randomUUID().slice(0, 8)}`, kind: 'replay_viewed', draftId, at: nowIso, actorId: 'secretary', catches: report.catches, falseBlocks: report.falseBlocks, misses: report.misses, totalCases: report.totalCases })
           return stripUndefined(report)
         }
-        const check = validateDepositDraft(draft), ruleIssues = checkDeclarativeDraft(draft, args.draft)
+        const check = validateDepositDraft(draft), ruleIssues = await checkDeclarativeDraft(draft, args.draft)
         if (!check.ok || ruleIssues.length > 0) {
           const v = !check.ok && check.gate === 'machine' ? check.violations[0]! : ruleIssues[0]
           if (v) emit({ id: `authoring:admission_rejected:${draftId}:${randomUUID().slice(0, 8)}`, kind: 'admission_rejected', draftId, at: nowIso, actorId: 'secretary', ruleId: v.ruleId, field: v.field, reason: v.reason })

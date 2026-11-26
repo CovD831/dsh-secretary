@@ -1,4 +1,5 @@
 /** Main Session tools for routing triggers, assessing candidates, sending replies, and updating settings and prompts. */
+import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { z } from 'zod'
@@ -13,7 +14,7 @@ import type { GovernanceRuntime } from '../governance.ts'
 import type { Sessions } from '../sessions.ts'
 import type { Settings } from '../settings.ts'
 import type { Store } from '../store.ts'
-import { secretaryCoreTools } from './secretary-core.ts'
+import { appendSecretaryFeed, secretaryCoreTools } from './secretary-core.ts'
 import { secretaryGovernanceTools } from './secretary-governance.ts'
 import { AcknowledgementSchema, readTool, tool, type Tool } from './tool.ts'
 
@@ -64,7 +65,7 @@ const fromDecision = (decision: Decision) => ({ decision: decision.kind, reason:
  * runs (`FIELDS`), so an item that lacks one, or whose value breaks a limit, is refused alone.
  */
 const RouteItemSchema = z.object({
-  kind: z.enum(['accept', 'attach', 'ignore', 'stop']),
+  kind: z.enum(['accept', 'attach', 'ignore', 'stop']).describe('Routing kind and required fields: accept requires trigger_id, title, worktree_name, acknowledgement; attach requires trigger_id, ticket_id; stop requires trigger_id, ticket_id; ignore requires trigger_id, reason.'),
   trigger_id: z.string().describe('The candidate card\'s trigger_id; deciding it decides its batch.'),
   ticket_id: z.string().nullish().describe('attach and stop: the ticket.'),
   title: z.string().nullish().describe('accept: a short label of at most 200 characters describing the original request; no added requirements or implementation advice.'),
@@ -85,19 +86,20 @@ const FIELDS: Record<Field, { check: z.ZodType; reads: readonly Kind[]; needs: r
   note: { check: RoutingNoteSchema, reads: ['accept', 'attach'], needs: [] },
   reason: { check: z.string().max(500), reads: ['ignore', 'stop'], needs: ['ignore'] },
 }
-/** Why an item cannot run: a field its kind needs is missing, or one it reads breaks its limit. */
+/** Why an item cannot run: collects every missing required field or limit violation. */
 function invalid(item: RouteItem): string | undefined {
+  const issues: string[] = []
   for (const [field, { check, reads, needs }] of Object.entries(FIELDS) as [Field, typeof FIELDS[Field]][]) {
     const value = item[field]
     if (!reads.includes(item.kind)) continue
     if (value === undefined || value === null || value.trim() === '') {
-      if (needs.includes(item.kind)) return `${item.kind} needs ${field}`
+      if (needs.includes(item.kind)) issues.push(`${item.kind} needs ${field}`)
       continue
     }
     const checked = check.safeParse(value)
-    if (!checked.success) return `${field}: ${checked.error.issues[0]?.message ?? 'invalid'}`
+    if (!checked.success) issues.push(`${field}: ${checked.error.issues[0]?.message ?? 'invalid'}`)
   }
-  return undefined
+  return issues.length > 0 ? issues.join('; ') : undefined
 }
 type Routed = { decision?: DecisionKind; reason: string; ticketId?: string | undefined; triggerIds?: readonly string[] }
 /**
@@ -157,6 +159,20 @@ function routeTool(host: MainToolsHost): Tool {
           if ('refused' in result) return { ...head, ...result }
           for (const id of result.triggerIds ?? []) if (!decided.has(id)) decided.set(id, item.trigger_id)
           const ticket = result.ticketId ? host.store.tickets.get(result.ticketId) : undefined
+          if (item.kind === 'accept' && result.decision === 'accept' && result.ticketId && !result.reason.startsWith('Already accepted')) {
+            const originTrigger = host.store.triggers.get(item.trigger_id)
+            if (originTrigger?.source === 'secretary-bus') {
+              const title = ticket?.title ?? result.ticketId
+              const ack = item.acknowledgement?.trim()
+              appendSecretaryFeed(host.store, {
+                id: `feed-disp-${result.ticketId}`,
+                at: host.governance?.nowDate().toISOString() ?? new Date().toISOString(),
+                role: 'secretary', kind: 'dispatch',
+                text: ack ? `${ack}（工单：${title}）` : `已派发工单「${title}」(${result.ticketId})`,
+                ticketId: result.ticketId, triggerId: item.trigger_id,
+              })
+            }
+          }
           return { ...head, ...(result.decision ? { decision: result.decision } : {}), reason: result.reason,
             ...(ticket ? { ticket: ticketCard(ticket) } : {}) }
         } catch (error) {
@@ -255,6 +271,39 @@ export function mainTools(host: MainToolsHost, agent: Agent): Tool[] {
         text: z.string().min(1).max(20000),
       }).strict(),
       execute: async args => {
+        const trigger = args.trigger_id
+          ? host.store.triggers.get(args.trigger_id)
+          : args.ticket_id
+            ? (() => {
+                const tk = host.store.tickets.get(args.ticket_id)
+                return tk ? host.store.triggers.get(tk.origin.triggerId) : undefined
+              })()
+            : undefined
+        if (trigger && trigger.source === 'secretary-bus' && !trigger.channel) {
+          const id = `reply-${randomUUID().slice(0, 10)}`
+          const at = host.governance?.nowDate().toISOString() ?? new Date().toISOString()
+          host.store.atomic(() => {
+            const sourceRef = host.governance?.appender.append({
+              id: `secretary:say:${id}`, at, stream: args.ticket_id ? `ticket:${args.ticket_id}` : 'secretary:dialog',
+              type: 'secretary.say', source: { kind: 'secretary', ref: 'orchestrator_reply' }, evidence: [], taint: 'trusted',
+              payload: { text: args.text, purpose: args.purpose, ...(args.ticket_id ? { ticketId: args.ticket_id } : {}) },
+            })
+            appendSecretaryFeed(host.store, {
+              id, at, role: 'secretary', kind: args.purpose === 'attention' ? 'ask' : 'say', text: args.text,
+              ...(args.ticket_id ? { ticketId: args.ticket_id } : {}), triggerId: trigger.id,
+              ...(sourceRef ? { sourceRef } : {}),
+            })
+            if (args.purpose === 'answer' && args.ticket_id) {
+              const tk = host.store.tickets.get(args.ticket_id)
+              if (tk?.answers?.includes(trigger.id)) {
+                const remaining = tk.answers.filter(item => item !== trigger.id)
+                const { answers: _old, ...rest } = tk
+                host.store.tickets.save(remaining.length ? { ...rest, answers: remaining } : rest)
+              }
+            }
+          })
+          return { status: 'sent' as const }
+        }
         const reply = host.engine.reply({ purpose: args.purpose, text: args.text, ...(args.trigger_id ? { triggerId: args.trigger_id } : {}),
           ...(args.ticket_id ? { ticketId: args.ticket_id } : {}), ...(args.human_action ? { question: args.human_action } : {}) })
         await host.sendReplies()

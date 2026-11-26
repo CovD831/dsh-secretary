@@ -10,6 +10,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-subprocess'
+import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { lockSync } from 'proper-lockfile'
@@ -51,6 +52,7 @@ import { Settings } from './settings.ts'
 import { sourceContextOf, type SourceContextDeps } from './source-context.ts'
 import type { ResourceHost } from './resources.ts'
 import { mainTools, type MainToolsHost } from './tools/main.ts'
+import { appendSecretaryFeed } from './tools/secretary-core.ts'
 import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 
 // Source plugins interact with dsh-superagent exclusively through the `SourceHost` service interface.
@@ -169,6 +171,24 @@ export class Runtime extends Service implements SourceHost {
           const block = await refreshSecretaryMemoryBlock(governance, query, true)
           governance.secretaryMemoryCache = block
           this.secretaryMemoryBlock = block
+        },
+        onMasterTurnIdleReply: text => {
+          const feed = store.get(KV.governance.feed) ?? []
+          const last = feed.at(-1)
+          if (!last || last.role !== 'boss') return
+          const id = `say-fallback-${randomUUID().slice(0, 10)}`
+          const at = governance.nowDate().toISOString()
+          store.atomic(() => {
+            const sourceRef = governance.appender.append({
+              id: `secretary:say:${id}`, at, stream: 'secretary:dialog', type: 'secretary.say',
+              source: { kind: 'secretary', ref: 'assistant_fallback' }, evidence: [], taint: 'trusted',
+              payload: { text, expression: 'neutral' },
+            })
+            appendSecretaryFeed(store, {
+              id, at, role: 'secretary', kind: 'say', text, expression: 'neutral', sourceRef,
+              ...(last.triggerId ? { triggerId: last.triggerId } : {}),
+            })
+          })
         } })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
       this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, lifetime: this.lifetime, sessions,

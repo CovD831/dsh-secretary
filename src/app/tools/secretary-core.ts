@@ -42,8 +42,11 @@ const EXPRESSION_BADGE: Readonly<Record<SecretaryExpression, string>> = {
   concerned: '⚠️',
 }
 
-function appendFeed(store: Pick<Store, 'get' | 'set'>, entry: SecretaryFeedEntry): void {
-  const current = [...(store.get(KV.governance.feed) ?? []), entry]
+/** 追加一条桌面端秘书动态并按 id 幂等去重，最多保留最近 200 条。 */
+export function appendSecretaryFeed(store: Pick<Store, 'get' | 'set'>, entry: SecretaryFeedEntry): void {
+  const prev = store.get(KV.governance.feed) ?? []
+  if (prev.some(item => item.id === entry.id)) return
+  const current = [...prev, entry]
   store.set(KV.governance.feed, current.length > 200 ? current.slice(current.length - 200) : current)
 }
 
@@ -72,15 +75,17 @@ function forwardToThinAdapter(host: SecretaryCoreHost, id: string, text: string,
 export function ingestBossDesktopMessage(
   host: Pick<SecretaryCoreHost, 'store' | 'engine' | 'governance' | 'requestPass'>,
   text: string,
-  threadId = 'desk-main',
+  threadId?: string,
 ): { trigger: Trigger; received: string } {
   const trimmed = text.trim()
   if (!trimmed) throw new Error('消息内容不能为空')
+  const id = `desk-${randomUUID().slice(0, 12)}`
+  const resolvedThreadId = threadId?.trim() ? threadId.trim() : id
   const at = host.governance.nowDate().toISOString()
   const trigger: Trigger = {
-    id: `desk-${randomUUID().slice(0, 12)}`,
+    id,
     source: 'secretary-bus',
-    threads: [{ source: 'secretary-bus', id: threadId }],
+    threads: [{ source: 'secretary-bus', id: resolvedThreadId }],
     actor: { source: 'secretary-bus', id: 'boss' },
     human: true,
     addressed: 'direct',
@@ -89,13 +94,13 @@ export function ingestBossDesktopMessage(
     meta: { localAuthenticated: true },
   }
   const received = host.engine.receive(trigger)
-  appendFeed(host.store, { id: trigger.id, at, role: 'boss', kind: 'boss_message', text: trimmed, triggerId: trigger.id })
+  appendSecretaryFeed(host.store, { id: trigger.id, at, role: 'boss', kind: 'boss_message', text: trimmed, triggerId: trigger.id })
   host.requestPass()
   return { trigger, received }
 }
 
 const SaySchema = z.object({
-  text: z.string().trim().min(1).max(40).describe('不超过 40 字的一句话回复。'),
+  text: z.string().trim().min(1).max(240).describe('不超过 240 字的简短直接回复，第一句先给结论。'),
   expression: z.enum(['neutral', 'working', 'happy', 'concerned']).default('neutral'),
   trigger_id: z.string().optional(),
   ticket_id: z.string().optional(),
@@ -149,7 +154,7 @@ export function secretaryCoreTools(host: SecretaryCoreHost): Tool[] {
   return [
     tool({
       name: 'secretary_say',
-      description: '一句话对老板说话（不超过 40 字，带表情），日常确认与简短回应专用。',
+      description: '对老板说话（不超过 240 字，带表情），日常确认与简短直接回复专用。',
       schema: SaySchema,
       execute: async args => {
         const id = `say-${randomUUID().slice(0, 10)}`
@@ -160,7 +165,7 @@ export function secretaryCoreTools(host: SecretaryCoreHost): Tool[] {
             source: { kind: 'secretary', ref: 'secretary_say' }, evidence: [], taint: 'trusted',
             payload: { text: args.text, expression: args.expression, ...(args.ticket_id ? { ticketId: args.ticket_id } : {}) },
           })
-          appendFeed(host.store, {
+          appendSecretaryFeed(host.store, {
             id, at, role: 'secretary', kind: 'say', text: args.text, expression: args.expression, sourceRef: ref,
             ...(args.ticket_id ? { ticketId: args.ticket_id } : {}), ...(args.trigger_id ? { triggerId: args.trigger_id } : {}),
           })
@@ -182,7 +187,7 @@ export function secretaryCoreTools(host: SecretaryCoreHost): Tool[] {
           ...(args.workspace ? { workspace: args.workspace } : {}),
         })
         host.store.atomic(() => {
-          appendFeed(host.store, {
+          appendSecretaryFeed(host.store, {
             id: item.id, at: item.createdAt, role: 'secretary', kind: 'ask', text: args.question,
             rulingId: item.id, options: args.options, ...(item.queuedRef ? { sourceRef: item.queuedRef } : {}),
             ...(args.ticket_id ? { ticketId: args.ticket_id } : {}), ...(args.trigger_id ? { triggerId: args.trigger_id } : {}),
@@ -209,7 +214,7 @@ export function secretaryCoreTools(host: SecretaryCoreHost): Tool[] {
             payload: { conclusion: args.conclusion, reason: args.reason, impact: args.impact, evidenceRefs: args.evidence_refs,
               ...(args.ticket_id ? { ticketId: args.ticket_id } : {}) },
           })
-          appendFeed(host.store, {
+          appendSecretaryFeed(host.store, {
             id, at, role: 'secretary', kind: 'handover', text, sourceRef: ref,
             handover: { conclusion: args.conclusion, reason: args.reason, impact: args.impact, evidenceRefs: args.evidence_refs },
             ...(args.ticket_id ? { ticketId: args.ticket_id } : {}), ...(args.trigger_id ? { triggerId: args.trigger_id } : {}),
@@ -259,7 +264,7 @@ export function secretaryCoreTools(host: SecretaryCoreHost): Tool[] {
           return { ok: false, refused: `派单未创建成功: ${reasonText(decision.reason)}` }
         }
         const created = host.store.tickets.get(decision.ticketId)!
-        appendFeed(host.store, {
+        appendSecretaryFeed(host.store, {
           id: `feed-disp-${created.id}`, at: gov.nowDate().toISOString(), role: 'secretary', kind: 'dispatch',
           text: `已派发工单「${created.title}」(${created.id})`, ticketId: created.id, triggerId,
         })
