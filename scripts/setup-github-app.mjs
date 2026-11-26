@@ -24,7 +24,8 @@ function parseArgs(argv) {
   const opts = { outDir: resolve(process.cwd(), '.local', 'github-app'), port: 0, apiBase: 'https://api.github.com', githubBase: 'https://github.com' }
   for (let i = 0; i < own.length; i++) {
     const arg = own[i]
-    if (arg === '--gh-app') opts.ghApp = true
+    if (arg === '--help' || arg === '-h') opts.help = true
+    else if (arg === '--gh-app') opts.ghApp = true
     else if (arg === '--verify') opts.verify = true
     else if (arg === '--repo') opts.repo = own[++i]
     else if (arg === '--org') opts.org = own[++i]
@@ -148,6 +149,8 @@ if (opts.ghApp) {
   const result = await runGhAppProxy(opts.outDir, passthrough, { repo: opts.repo, stdinText })
   if (result.stdout) process.stdout.write(result.stdout)
   process.exit(result.code)
+} else if (opts.help) {
+  console.log('用法: node scripts/setup-github-app.mjs --repo <owner/name> [--org <org>] [--app-name <name>] [--out-dir <dir>] [--verify]')
 } else if (opts.verify) {
   await runVerify(opts)
 } else {
