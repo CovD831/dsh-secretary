@@ -1,0 +1,168 @@
+{
+  "version": 2,
+  "paletteSize": 38,
+  "assets": {
+    "armchair_green": {
+      "file": "armchair_green.png",
+      "width": 56,
+      "height": 52,
+      "opaquePixels": 1469,
+      "uniqueColors": 30,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "collab_table": {
+      "file": "collab_table.png",
+      "width": 128,
+      "height": 96,
+      "opaquePixels": 6723,
+      "uniqueColors": 34,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "courtyard_tree": {
+      "file": "courtyard_tree.png",
+      "width": 64,
+      "height": 72,
+      "opaquePixels": 2809,
+      "uniqueColors": 22,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "desk_cluster": {
+      "file": "desk_cluster.png",
+      "width": 128,
+      "height": 96,
+      "opaquePixels": 6271,
+      "uniqueColors": 36,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "door_wood": {
+      "file": "door_wood.png",
+      "width": 40,
+      "height": 64,
+      "opaquePixels": 1559,
+      "uniqueColors": 19,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "facade_window": {
+      "file": "facade_window.png",
+      "width": 64,
+      "height": 40,
+      "opaquePixels": 885,
+      "uniqueColors": 23,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "idea_board": {
+      "file": "idea_board.png",
+      "width": 88,
+      "height": 64,
+      "opaquePixels": 1951,
+      "uniqueColors": 35,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "lamp_table": {
+      "file": "lamp_table.png",
+      "width": 40,
+      "height": 52,
+      "opaquePixels": 1085,
+      "uniqueColors": 30,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "printer_copier": {
+      "file": "printer_copier.png",
+      "width": 64,
+      "height": 64,
+      "opaquePixels": 1976,
+      "uniqueColors": 33,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "rug_indigo": {
+      "file": "rug_indigo.png",
+      "width": 128,
+      "height": 64,
+      "opaquePixels": 3261,
+      "uniqueColors": 14,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "rug_persian": {
+      "file": "rug_persian.png",
+      "width": 128,
+      "height": 64,
+      "opaquePixels": 3264,
+      "uniqueColors": 27,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "rug_sage": {
+      "file": "rug_sage.png",
+      "width": 128,
+      "height": 64,
+      "opaquePixels": 3245,
+      "uniqueColors": 16,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "runner_navy": {
+      "file": "runner_navy.png",
+      "width": 64,
+      "height": 32,
+      "opaquePixels": 812,
+      "uniqueColors": 20,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "wall_painting": {
+      "file": "wall_painting.png",
+      "width": 72,
+      "height": 56,
+      "opaquePixels": 1490,
+      "uniqueColors": 34,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "wall_sconce": {
+      "file": "wall_sconce.png",
+      "width": 24,
+      "height": 36,
+      "opaquePixels": 578,
+      "uniqueColors": 28,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "welcome_mat": {
+      "file": "welcome_mat.png",
+      "width": 64,
+      "height": 32,
+      "opaquePixels": 844,
+      "uniqueColors": 21,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "whiteboard_wall": {
+      "file": "whiteboard_wall.png",
+      "width": 88,
+      "height": 64,
+      "opaquePixels": 2077,
+      "uniqueColors": 37,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "window_wide": {
+      "file": "window_wide.png",
+      "width": 80,
+      "height": 60,
+      "opaquePixels": 1971,
+      "uniqueColors": 28,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    }
+  }
+}

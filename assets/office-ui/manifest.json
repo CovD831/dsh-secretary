@@ -1,0 +1,150 @@
+{
+  "version": 2,
+  "paletteSize": 38,
+  "assets": {
+    "icon_calendar": {
+      "file": "icon_calendar.png",
+      "width": 24,
+      "height": 24,
+      "opaquePixels": 479,
+      "uniqueColors": 17,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "icon_chart": {
+      "file": "icon_chart.png",
+      "width": 24,
+      "height": 24,
+      "opaquePixels": 353,
+      "uniqueColors": 9,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "icon_checklist": {
+      "file": "icon_checklist.png",
+      "width": 24,
+      "height": 24,
+      "opaquePixels": 414,
+      "uniqueColors": 20,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "icon_coin": {
+      "file": "icon_coin.png",
+      "width": 24,
+      "height": 24,
+      "opaquePixels": 451,
+      "uniqueColors": 16,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "icon_compass_n": {
+      "file": "icon_compass_n.png",
+      "width": 20,
+      "height": 20,
+      "opaquePixels": 175,
+      "uniqueColors": 14,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "icon_compass_star": {
+      "file": "icon_compass_star.png",
+      "width": 24,
+      "height": 24,
+      "opaquePixels": 279,
+      "uniqueColors": 22,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "icon_gear": {
+      "file": "icon_gear.png",
+      "width": 24,
+      "height": 24,
+      "opaquePixels": 379,
+      "uniqueColors": 24,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "icon_sprout": {
+      "file": "icon_sprout.png",
+      "width": 24,
+      "height": 24,
+      "opaquePixels": 210,
+      "uniqueColors": 8,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "icon_star": {
+      "file": "icon_star.png",
+      "width": 24,
+      "height": 24,
+      "opaquePixels": 317,
+      "uniqueColors": 16,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "icon_sun": {
+      "file": "icon_sun.png",
+      "width": 24,
+      "height": 24,
+      "opaquePixels": 309,
+      "uniqueColors": 10,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "icon_team": {
+      "file": "icon_team.png",
+      "width": 24,
+      "height": 24,
+      "opaquePixels": 294,
+      "uniqueColors": 17,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "icon_zoom": {
+      "file": "icon_zoom.png",
+      "width": 24,
+      "height": 24,
+      "opaquePixels": 295,
+      "uniqueColors": 27,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "ui_btn_active": {
+      "file": "ui_btn_active.png",
+      "width": 48,
+      "height": 48,
+      "opaquePixels": 2292,
+      "uniqueColors": 5,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "ui_btn_idle": {
+      "file": "ui_btn_idle.png",
+      "width": 48,
+      "height": 48,
+      "opaquePixels": 2292,
+      "uniqueColors": 7,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "ui_panel_9slice": {
+      "file": "ui_panel_9slice.png",
+      "width": 60,
+      "height": 60,
+      "opaquePixels": 3588,
+      "uniqueColors": 8,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "ui_slot_9slice": {
+      "file": "ui_slot_9slice.png",
+      "width": 48,
+      "height": 48,
+      "opaquePixels": 2292,
+      "uniqueColors": 5,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    }
+  }
+}

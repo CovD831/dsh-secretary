@@ -10,6 +10,33 @@ export interface WorkspaceWingSpec {
 }
 
 export type WingKind = 'lobby' | 'studio' | 'courtyard'
+export type WingFloorStyle = 'honey_oak' | 'warm_parquet' | 'dark_walnut' | 'courtyard'
+export type WingRugStyle = 'sage' | 'indigo' | 'persian' | 'woven'
+
+export interface InteriorDoorSpec {
+  readonly id: string
+  readonly u: number
+  readonly v: number
+  readonly axis: 'u' | 'v'
+  readonly wingId?: string
+}
+
+export interface FacadeSegmentSpec {
+  readonly from: GridPoint
+  readonly to: GridPoint
+  readonly heightPx: number
+  readonly hasWindow?: boolean
+  readonly isEntrance?: boolean
+}
+
+export interface LightSourceSpec {
+  readonly id: string
+  readonly kind: 'sconce' | 'lamp' | 'window'
+  readonly u: number
+  readonly v: number
+  readonly radiusTiles: number
+  readonly intensity: number
+}
 
 export interface WorldWingPlan {
   readonly id: string
@@ -24,6 +51,10 @@ export interface WorldWingPlan {
   readonly shared: RoomEntity[]
   readonly wallMounts: RoomWallMount[]
   readonly rugRect?: { readonly u: number; readonly v: number; readonly w: number; readonly h: number }
+  readonly floorStyle?: WingFloorStyle
+  readonly rugStyle?: WingRugStyle
+  readonly chamferSE?: number
+  readonly themeHex?: string
 }
 
 export interface OfficeCamera {
@@ -50,6 +81,9 @@ export interface OfficeWorldPlan {
   readonly wings: WorldWingPlan[]
   readonly partitionWalls: PartitionWallSegment[]
   readonly exteriorProps: RoomEntity[]
+  readonly interiorDoors?: InteriorDoorSpec[]
+  readonly frontFacade?: FacadeSegmentSpec[]
+  readonly lightSources?: LightSourceSpec[]
 }
 
 export type WorldPickResult =
