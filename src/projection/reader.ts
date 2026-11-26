@@ -6,6 +6,7 @@ import { ticketStage } from '../core/stage.ts'
 import { packagePath } from '../infra/paths.ts'
 import { KV } from '../kv.ts'
 import { loadDepositPackage } from '../judgement/deposit.ts'
+import { OSS_SEEDED_GATE_IDS } from '../judgement/ledger-doc.ts'
 import { readMemoryPage } from '../memory/codec.ts'
 import type { AttentionItem, LedgerPage } from '../memory/types.ts'
 import type { SourceRef, SpineEnvelope } from '../spine/types.ts'
@@ -193,6 +194,7 @@ async function scanDepositRoot(rootDir: string, source: 'builtin' | 'state'): Pr
       const { admission, cases } = await loadDepositPackage(join(rootDir, entry.name))
       if (admission.admitted) {
         const m = admission.manifest
+        if (source === 'builtin' && OSS_SEEDED_GATE_IDS.has(m.id)) continue
         out.push({
           id: m.id, dirName: entry.name, source, admitted: true, version: m.version, kind: m.kind, trust: m.trust, params: m.params,
           casesCount: cases.length, stats: empty(),

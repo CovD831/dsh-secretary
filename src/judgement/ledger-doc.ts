@@ -1,5 +1,6 @@
 import { lstat, mkdir, readdir, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { packagePath } from '../infra/paths.ts'
 import type { SpineAppender, SourceRef } from '../spine/types.ts'
 import { compileDeclarativeEntry } from './declarative.ts'
 import { loadDepositPackage, runDepositCases, type DepositCase, type DepositCasesReport, type DepositViolation } from './deposit.ts'
@@ -114,7 +115,9 @@ export async function discoverAndRegisterDeposits(options: DiscoverDepositsOptio
   const failedCaseIds: string[] = []
   const seenIds = new Set<string>()
 
+  const builtinDepositsDir = resolve(packagePath('deposits'))
   for (const rootDir of dirs) {
+    const isBuiltinDir = resolve(rootDir) === builtinDepositsDir
     for (const { dirName, packageDir } of await listPackageDirs(rootDir)) {
       let loaded: Awaited<ReturnType<typeof loadDepositPackage>>
       try { loaded = await loadDepositPackage(packageDir) } catch (err) {
@@ -128,6 +131,7 @@ export async function discoverAndRegisterDeposits(options: DiscoverDepositsOptio
         continue
       }
       const m = loaded.admission.manifest
+      if (!registerSeededOssGates && isBuiltinDir && OSS_SEEDED_GATE_IDS.has(m.id)) continue
       if (seenIds.has(m.id)) {
         rejectedIds.push(m.id)
         records.push({ id: m.id, dirName, packageDir, kind: m.kind, ...(m.point ? { point: m.point } : {}), stage: 'shadow', enforce: false, trust: m.trust, casesCount: loaded.cases.length, status: 'rejected', error: `重复沉淀 ID "${m.id}"：后扫目录不得覆盖先注册判据`, manifest: m })
@@ -135,10 +139,6 @@ export async function discoverAndRegisterDeposits(options: DiscoverDepositsOptio
       }
       seenIds.add(m.id)
       const targetStage: Stage = stageOverrides[m.id] ?? m.stage ?? 'shadow'
-      if (!registerSeededOssGates && OSS_SEEDED_GATE_IDS.has(m.id)) {
-        records.push({ id: m.id, dirName, packageDir, kind: m.kind, ...(m.point ? { point: m.point } : {}), stage: targetStage, enforce: false, trust: m.trust, casesCount: loaded.cases.length, status: 'skipped-oss', manifest: m })
-        continue
-      }
       if (m.kind === 'counter-rule' && targetStage === 'enforce') {
         rejectedIds.push(m.id)
         records.push({ id: m.id, dirName, packageDir, kind: m.kind, ...(m.point ? { point: m.point } : {}), stage: targetStage, enforce: false, trust: m.trust, casesCount: loaded.cases.length, status: 'rejected', error: '宪法冲突（D5）：counter-rule 严禁覆盖注册为 enforce', manifest: m })

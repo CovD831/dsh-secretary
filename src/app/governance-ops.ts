@@ -88,7 +88,7 @@ export async function syncDepositsAndLedger(gov: GovernanceRuntime): Promise<{ r
     registry: gov.registry,
     dirs: depositDirsOf(gov.stateDir),
     stageOverrides,
-    registerSeededOssGates: true,
+    registerSeededOssGates: false,
   })
   const ledger = await renderDepositsLedgerMarkdown(report.records, {
     outPath: join(gov.stateDir, 'deposits', 'LEDGER.md'),
@@ -104,7 +104,7 @@ export async function changeDepositStage(
 ): Promise<TransitionDepositStageResult> {
   const currentOverrides = gov.storeRef.get(KV.governance.depositStages) ?? {}
   const synced = await discoverAndRegisterDeposits({
-    registry: gov.registry, dirs: depositDirsOf(gov.stateDir), stageOverrides: currentOverrides, registerSeededOssGates: true,
+    registry: gov.registry, dirs: depositDirsOf(gov.stateDir), stageOverrides: currentOverrides, registerSeededOssGates: false,
   })
   const hit = synced.records.find(r => r.id === input.id)
   let cases = undefined
