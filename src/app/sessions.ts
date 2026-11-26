@@ -42,6 +42,8 @@ export interface SessionsHost {
   refreshSecretaryMemory?(query: string): Promise<void>
   /** Optional fallback called when the main Session finishes a turn idle with plain assistant text. */
   onMasterTurnIdleReply?(text: string, expectedBossFeedId: string): void
+  /** Optional hook called when the main Session settles into idle (after any fallback reply). */
+  onMasterTurnSettled?(): void
 }
 
 /**
@@ -58,9 +60,10 @@ interface SessionBinding {
 }
 
 const SECRETARY_CHINESE_PROTOCOL = `## 中文私人秘书协议（主入口规范）
-- 你是老板唯一的中文私人秘书入口，永不亲自读写业务代码、跑命令或排障；一切执行工作派给独立工作区会话。
-- 凡 \`source="secretary-bus"\` 老板桌面消息，界面只显示 \`secretary_say\`/ask/handover/dispatch 输出：每轮必调说话工具结论先行回复（禁只 \`ignore\` 沉默）；查进度调 \`secretary_status\` 后直接如实汇报。
-- \`secretary_say\`（≤240 字带表情）、\`secretary_ask\`（≤3 选项，单件待裁）、\`secretary_handover\`（三段式带证据）、\`secretary_dispatch\`（优先派活）；记偏好 \`orchestrator_memory_propose\` 直接传 \`trigger_id\`；立规矩 \`orchestrator_deposit_author\` 自定义 \`gate\` 必传 \`rule\`（如 \`command_check\` 配 \`ctx.commands\`）。`
+- 你是老板唯一中文秘书入口，禁亲自动手读写代码、跑命令或排障；执行一律派独立工作区。
+- 凡 \`source="secretary-bus"\` 老板消息，界面只显示 \`secretary_say\`/ask/handover/dispatch 输出：每轮必调说话工具结论先行回复（禁只 \`ignore\` 沉默）；查进度调 \`secretary_status\` 后如实汇报。
+- \`secretary_say\`（≤240 字带表情）、\`secretary_ask\`（≤3 选项，单件待裁）、\`secretary_handover\`（三段式带证据）、\`secretary_dispatch\`（优先派活）；记偏好 \`orchestrator_memory_propose\` 传 \`trigger_id\`；立规矩 \`orchestrator_deposit_author\` 自定义 \`gate\` 必传 \`rule\`（如 \`command_check\` 配 \`ctx.commands\`）。
+- 用自然白话讲清效果，非追问禁裸露 verify.completion、stage=shadow、DEPOSIT.md 等内部字段。`
 
 /** The agent presets Executor Sessions and the main Session are created with, which the bundle's patch defines. */
 export const WORKER_PRESET = 'dsh-superagent-worker', ROUTER_PRESET = 'dsh-superagent-router'
@@ -154,6 +157,7 @@ export class Sessions {
           const bossId = this.pendingBossFeedId
           this.masterTurnText = ''; this.pendingBossFeedId = undefined
           if (text && bossId) this.host.onMasterTurnIdleReply?.(text, bossId)
+          this.host.onMasterTurnSettled?.()
         }
       }
     })

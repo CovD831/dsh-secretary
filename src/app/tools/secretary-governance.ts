@@ -33,7 +33,7 @@ async function resolveTriggerSpineEnvelope(
       for (const row of rows) {
         if (!row.value) continue
         const env = JSON.parse(row.value) as SpineEnvelope<Record<string, unknown>>
-        if (env.payload?.['triggerId'] === triggerId) return { ref: { seq: env.seq, id: env.id }, env }
+        if (env.type === 'trigger.received' && env.payload?.['triggerId'] === triggerId) return { ref: { seq: env.seq, id: env.id }, env }
       }
     } catch { /* fall through to M0 shard scan */ }
   }

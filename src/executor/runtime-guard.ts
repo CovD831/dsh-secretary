@@ -1,17 +1,20 @@
 /** 执行期三档权限门控、DSH 原生轨迹实时入脊、外部副作用记账与防烧钱/打转熔断护栏。 */
-import { isAbsolute, relative, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { PreToolDecision, ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { latestAssignment, liveTicket, runningAssignment, type EngineForExecutor, type Ticket } from '../core/index.ts'
-import type { ApprovalMode, Settings } from '../policy.ts'
 import type { Store } from '../app/store.ts'
 import type { ApprovalOutcome, RulingQueue } from '../app/ruling-queue.ts'
 import { KV, type PersistedRuntimeBudget } from '../kv.ts'
 import { calibrateProbability, classifyThresholdBand } from '../rsi/index.ts'
 import type { SpineAppender } from '../spine/types.ts'
-import { ticketOfSession } from './dsh.ts'
+import {
+  FILE_WRITE_TOOLS, SAFE_READ_TOOLS, SHELL_TOOLS, classifySmartAutoRisk,
+  effectiveApprovalMode, effectiveUsageTokens, resolveRootTicketId,
+} from './runtime-guard-rules.ts'
+
+export { classifySmartAutoRisk, effectiveApprovalMode, effectiveUsageTokens, resolveRootTicketId } from './runtime-guard-rules.ts'
 
 export interface HostApprovalRequest {
   readonly agent: Agent; readonly toolName: string; readonly callId?: unknown; readonly reason?: string; readonly signal?: AbortSignal
@@ -20,29 +23,8 @@ declare module '@deepseek-ai/cordis' {
   interface Events { 'approval/request'(req: HostApprovalRequest, next: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome> }
 }
 
-const SAFE_READ_TOOLS = new Set([
-  'read', 'read_image', 'glob', 'grep', 'web_search', 'todo_write', 'skill', 'list_agents', 'list_subagent_models', 'wait_agent',
-  'job_list', 'job_output', 'orchestrator_read', 'orchestrator_report', 'orchestrator_ack', 'orchestrator_thread_follow',
-  'orchestrator_thread_unrelated', 'orchestrator_trigger_handback', 'team_task_list', 'team_task_get',
-])
-const SHELL_TOOLS = new Set(['bash', 'pwsh', 'shell', 'bash_persistent', 'pwsh_persistent'])
-const FILE_WRITE_TOOLS = new Set(['write', 'edit', 'str_replace_editor', 'fs_write', 'fs_edit', 'fs_delete'])
-const HARM_SHELL_PATTERNS: readonly [RegExp, string][] = [
-  [/\bgit\s+push\b/i, '外部推送 git push'],
-  [/\bgh\s+(?:pr|issue|release|api\s+-X\s*(?:POST|PUT|PATCH|DELETE))\b/i, 'GitHub 远端写操作'],
-  [/\blark(?:-cli)?\b.*\b(?:send|reply|create|update|delete)\b/i, '飞书远端发送操作'],
-  [/\brm\s+-[a-zA-Z]*r[a-zA-Z]*f\b|\brm\s+-[a-zA-Z]*f[a-zA-Z]*r\b/i, '破坏性删除 rm -rf'],
-  [/\bgit\s+(?:reset\s+--hard|clean\s+-[a-zA-Z]*f)/i, '破坏性覆写工作树'],
-  [/(?:^|[\s"'=/])\.env(?:\.[a-zA-Z0-9_-]+)?(?=$|[\s"'])/, '触碰敏感凭据文件 .env'],
-  [/(?:~|\$HOME)\/\.dsh\b/, '触碰生产 ~/.dsh 目录'],
-  [/\bcurl\b.*(?:-d\b|--data|-X\s*(?:POST|PUT|DELETE))/i, '外部网络写请求'],
-  [/\bsudo\b/, '提权命令 sudo'],
-]
-const EXTERNAL_SIDE_EFFECT_RE = /\b(?:git\s+push|gh\s+(?:pr|issue|release)\s+(?:create|merge|comment|close|edit)|lark(?:-cli)?\s+.*(?:send|reply))\b/i
-const PROTECTED_PATH_RE = /(?:^|\/)(?:\.git|\.github|\.env(?:\.[^/]+)?|.*(?:secret|credential|private[_-]?key).*|.*\.(?:pem|key))(?=$|\/)/i
-
 interface AssignmentBudgetState {
-  turns: number; stallTurns: number; totalTokens: number; turnHadProgress: boolean; turnHadFailure: boolean; tripped: boolean
+  turns: number; stallTurns: number; totalTokens: number; turnHadProgress: boolean; turnHadFailure: boolean; tripped: boolean; warned80?: boolean
 }
 
 export interface RuntimeGuardDeps {
@@ -53,66 +35,11 @@ export interface RuntimeGuardDeps {
 
 const isRec = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === 'object' && !Array.isArray(v))
 
-export function resolveRootTicketId(ctx: Context, sessionOrId: Session | string): string | undefined {
-  const startId = typeof sessionOrId === 'string' ? sessionOrId : sessionOrId.id
-  const direct = ticketOfSession(startId)
-  if (direct) return direct
-  let parent = typeof sessionOrId === 'string'
-    ? ctx.agents.get(sessionOrId as never)?.session?.header?.parentSession
-    : sessionOrId.header?.parentSession
-  for (let depth = 0; parent !== undefined && depth < 8; depth++) {
-    const hit = ticketOfSession(parent)
-    if (hit) return hit
-    parent = ctx.agents.get(parent as never)?.session?.header?.parentSession
-  }
-  return undefined
-}
-
-export function effectiveApprovalMode(settings: Settings, ticket: Ticket): ApprovalMode {
-  const wsId = ticket.execution?.workspace
-  const ws = wsId ? (settings.workspaces ?? []).find(w => w.id === wsId) : undefined
-  return ws?.approvalMode ?? settings.executor.approvalMode ?? 'smart-auto'
-}
-
-function extractStringArg(args: unknown, keys: readonly string[]): string | undefined {
-  if (!isRec(args)) return undefined
-  for (const k of keys) if (typeof args[k] === 'string' && args[k].trim()) return args[k].trim()
-  return undefined
-}
-
-export function classifySmartAutoRisk(
-  toolName: string,
-  args: unknown,
-  worktreeDir: string,
-): { rawScore: number; needsAsk: boolean; reason?: string; externalSideEffect?: string } {
-  if (SAFE_READ_TOOLS.has(toolName)) return { rawScore: 0.05, needsAsk: false }
-  if (FILE_WRITE_TOOLS.has(toolName)) {
-    const rawPath = extractStringArg(args, ['file_path', 'path', 'filePath', 'target'])
-    if (!rawPath) return { rawScore: 0.75, needsAsk: true, reason: `工具 ${toolName} 缺少可校验路径参数` }
-    const rel = worktreeDir ? relative(resolve(worktreeDir), resolve(worktreeDir, rawPath)).replace(/\\/g, '/') : '..'
-    if (!worktreeDir || rel.startsWith('..') || isAbsolute(rel)) {
-      return { rawScore: 0.95, needsAsk: true, reason: `写入路径越出当前工单 Worktree: ${rawPath}` }
-    }
-    if (PROTECTED_PATH_RE.test(rel)) return { rawScore: 0.92, needsAsk: true, reason: `触碰受保护高危路径: ${rel}` }
-    return { rawScore: 0.12, needsAsk: false }
-  }
-  if (SHELL_TOOLS.has(toolName)) {
-    const cmd = extractStringArg(args, ['command', 'cmd', 'script']) ?? ''
-    const sideEffect = EXTERNAL_SIDE_EFFECT_RE.exec(cmd)?.[0]
-    for (const [pattern, label] of HARM_SHELL_PATTERNS) {
-      if (pattern.test(cmd)) {
-        return { rawScore: 0.9, needsAsk: true, reason: `命令命中高风险规则（${label}）: ${cmd.slice(0, 120)}`, ...(sideEffect ? { externalSideEffect: sideEffect } : {}) }
-      }
-    }
-    return { rawScore: 0.18, needsAsk: false, ...(sideEffect ? { externalSideEffect: sideEffect } : {}) }
-  }
-  return { rawScore: 0.2, needsAsk: false }
-}
-
 /** 挂载在宿主 Cordis 上下文上的执行护栏：三档审批拦截、M0 轨迹采集与单工单熔断器。 */
 export class RuntimeGuard {
   private readonly disposers: (() => void)[] = []
   private readonly budgets = new Map<string, AssignmentBudgetState>()
+  private readonly callScores = new Map<string, number>()
   private seq = 0
 
   constructor(private readonly deps: RuntimeGuardDeps) {
@@ -122,16 +49,14 @@ export class RuntimeGuard {
 
   install(): void {
     const { context: ctx } = this.deps
-    this.disposers.push(ctx.on('tools/pre-execute', (exec, next) => this.onPreExecute(exec, next)))
-    this.disposers.push(ctx.on('approval/request', (req, next) => this.onApprovalRequest(req, next), { prepend: true }))
-    this.disposers.push(ctx.on('tools/result', (exec, result) => { this.onToolResult(exec, result); return undefined }))
-    this.disposers.push(ctx.on('session/event', (session, event) => { this.onSessionEvent(session, event); return undefined }))
+    this.disposers.push(
+      ctx.on('tools/pre-execute', (exec, next) => this.onPreExecute(exec, next)),
+      ctx.on('approval/request', (req, next) => this.onApprovalRequest(req, next), { prepend: true }),
+      ctx.on('tools/result', (exec, result) => { this.onToolResult(exec, result); return undefined }),
+      ctx.on('session/event', (session, event) => { this.onSessionEvent(session, event); return undefined }),
+    )
   }
-
-  dispose(): void {
-    for (const d of this.disposers.splice(0)) d()
-    this.budgets.clear()
-  }
+  dispose(): void { for (const d of this.disposers.splice(0)) d(); this.budgets.clear(); this.callScores.clear() }
 
   private stateOf(assignmentId: string): AssignmentBudgetState {
     let st = this.budgets.get(assignmentId)
@@ -156,14 +81,17 @@ export class RuntimeGuard {
 
     const mode = effectiveApprovalMode(this.deps.store.settings(), ticket)
     const risk = classifySmartAutoRisk(exec.name, exec.arguments, ticket.execution?.directory ?? '')
+    if (exec.callId !== undefined) {
+      if (this.callScores.size >= 500) { const oldest = this.callScores.keys().next().value; if (oldest !== undefined) this.callScores.delete(oldest) }
+      this.callScores.set(String(exec.callId), risk.rawScore)
+    }
     if (mode === 'smart-auto' && !SAFE_READ_TOOLS.has(exec.name)) {
       const scaler = this.deps.store.get(KV.governance.temperatureScaler)
       const calibratedProb = scaler?.fitted ? calibrateProbability(risk.rawScore, scaler) : risk.rawScore
       const bandDecision = classifyThresholdBand(calibratedProb, [0.2, 0.8])
       this.deps.appender.append({
-        id: `cal:smart-auto:${ticket.id}:${String(exec.callId)}:${++this.seq}`,
-        stream: `ticket:${ticket.id}`, type: 'gate.calibrated_pre_screen',
-        source: { kind: 'system', ref: 'runtime-guard.smart-auto' },
+        id: `cal:smart-auto:${ticket.id}:${String(exec.callId)}:${++this.seq}`, stream: `ticket:${ticket.id}`,
+        type: 'gate.calibrated_pre_screen', source: { kind: 'system', ref: 'runtime-guard.smart-auto' },
         evidence: [{ kind: 'event', ref: `session:${exec.agent.id}` }], taint: 'trusted',
         payload: {
           gateId: 'approval.smart-auto', ticketId: ticket.id, sessionId: exec.agent.id, toolName: exec.name, callId: String(exec.callId),
@@ -197,11 +125,16 @@ export class RuntimeGuard {
       kind: 'approval_pending', ticket_id: ticket.id, tool_name: req.toolName, reason: req.reason ?? '',
     }))
     const snapMode = effectiveApprovalMode(this.deps.store.settings(), ticket), snapAsg = runningAssignment(ticket)?.id
+    const callKey = req.callId !== undefined ? String(req.callId) : undefined
+    let rawScore = callKey !== undefined ? this.callScores.get(callKey) : undefined
+    if (callKey !== undefined) this.callScores.delete(callKey)
+    if (rawScore === undefined && req.reason && /命令命中高风险规则|越出当前工单|受保护高危路径/.test(req.reason)) rawScore = 0.9
     const outcome = await this.deps.rulings.requestDshApproval({
       question, ticketId: ticket.id, sessionId: req.agent.id, toolName: req.toolName,
       ...(ticket.execution?.workspace ? { workspace: ticket.execution.workspace } : {}),
-      ...(req.callId !== undefined ? { callId: String(req.callId) } : {}),
+      ...(callKey !== undefined ? { callId: callKey } : {}),
       ...(hostApprovalId ? { hostApprovalId } : {}),
+      ...(rawScore !== undefined ? { rawScore } : {}),
       ...(req.signal ? { signal: req.signal } : {}),
     })
     if (outcome === 'allowed-once') {
@@ -222,6 +155,7 @@ export class RuntimeGuard {
   }
 
   private onToolResult(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): void {
+    if (exec.callId !== undefined) this.callScores.delete(String(exec.callId))
     if (!exec.agent) return
     const ticketId = resolveRootTicketId(this.deps.context, exec.agent.id)
     const ticket = ticketId ? this.deps.store.tickets.get(ticketId) : undefined
@@ -245,14 +179,12 @@ export class RuntimeGuard {
       })
     }
     this.deps.appender.append({
-      id: `trace:tool:${ticket.id}:${String(exec.callId)}:${++this.seq}`,
-      stream: `ticket:${ticket.id}`, type: 'worker.tool_finished',
-      source: { kind: 'worker', ref: exec.agent.id },
-      evidence: [{ kind: 'event', ref: `session:${exec.agent.id}` }],
+      id: `trace:tool:${ticket.id}:${String(exec.callId)}:${++this.seq}`, stream: `ticket:${ticket.id}`, type: 'worker.tool_finished',
+      source: { kind: 'worker', ref: exec.agent.id }, evidence: [{ kind: 'event', ref: `session:${exec.agent.id}` }],
       taint: SHELL_TOOLS.has(exec.name) || exec.name === 'web_fetch' ? 'derived' : 'trusted',
       payload: {
-        ticketId: ticket.id, assignmentId: assignment.id, sessionId: exec.agent.id,
-        toolName: exec.name, callId: String(exec.callId), isError: result.isError, hasDiff,
+        ticketId: ticket.id, assignmentId: assignment.id, sessionId: exec.agent.id, toolName: exec.name,
+        callId: String(exec.callId), isError: result.isError, hasDiff,
         ...(risk.externalSideEffect ? { externalSideEffect: risk.externalSideEffect } : {}),
       },
     })
@@ -266,8 +198,7 @@ export class RuntimeGuard {
 
     const st = this.stateOf(assignment.id)
     if (event.type === 'assistant/message' && event.data.usage) {
-      const u = event.data.usage
-      st.totalTokens += u.totalTokens ?? (u.inputTokens + u.outputTokens + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0))
+      st.totalTokens += effectiveUsageTokens(event.data.usage)
       this.checkCircuitBreaker(ticket, assignment.id, st); this.persistBudgets(); return
     }
     const rawEv = event as { type: string; seq?: unknown }
@@ -290,7 +221,16 @@ export class RuntimeGuard {
 
   private checkCircuitBreaker(ticket: Ticket, assignmentId: string, st: AssignmentBudgetState): void {
     if (st.tripped) return
-    const { maxTurns = 40, maxStallTurns = 6, maxTokens = 2_000_000 } = this.deps.store.settings().executor
+    const { maxTurns = 40, maxStallTurns = 6, maxTokens = 5_000_000 } = this.deps.store.settings().executor
+    if (!st.warned80 && maxTokens >= 2000 && st.totalTokens >= Math.floor(maxTokens * 0.8) && st.totalTokens <= maxTokens) {
+      st.warned80 = true
+      this.deps.appender.append({
+        id: `budget-warn:${ticket.id}:${assignmentId}`, stream: `ticket:${ticket.id}`, type: 'ticket.budget_warning',
+        source: { kind: 'system', ref: 'runtime-guard.breaker' }, evidence: [{ kind: 'event', ref: `session:worker-${ticket.id}` }],
+        taint: 'trusted', payload: { ticketId: ticket.id, assignmentId, usedTokens: st.totalTokens, maxTokens },
+      })
+      this.deps.relayToMaster(`budget-warn:${ticket.id}:${assignmentId}`, JSON.stringify({ kind: 'budget_warning', ticket_id: ticket.id, used_tokens: st.totalTokens, max_tokens: maxTokens }))
+    }
     const reason = st.turns > maxTurns ? `单工单轮次超限 (${st.turns} > ${maxTurns})`
       : st.stallTurns >= maxStallTurns ? `连续无进展失败打转超限 (${st.stallTurns} >= ${maxStallTurns})`
         : st.totalTokens > maxTokens ? `单工单 Token 消耗超限 (${st.totalTokens} > ${maxTokens})` : undefined
@@ -303,9 +243,8 @@ export class RuntimeGuard {
       this.deps.engine.report(ticket.id, { state: 'blocked', summary: `触发执行熔断护栏：${reason}` })
       this.deps.appender.append({
         id: `breaker:${ticket.id}:${assignmentId}`, stream: `ticket:${ticket.id}`, type: 'ticket.circuit_broken',
-        source: { kind: 'system', ref: 'runtime-guard.breaker' },
-        evidence: [{ kind: 'event', ref: `session:worker-${ticket.id}` }], taint: 'trusted',
-        payload: { ticketId: ticket.id, assignmentId, reason, turns: st.turns, stallTurns: st.stallTurns, totalTokens: st.totalTokens },
+        source: { kind: 'system', ref: 'runtime-guard.breaker' }, evidence: [{ kind: 'event', ref: `session:worker-${ticket.id}` }],
+        taint: 'trusted', payload: { ticketId: ticket.id, assignmentId, reason, turns: st.turns, stallTurns: st.stallTurns, totalTokens: st.totalTokens },
       })
     })
     void this.deps.rulings.enqueue({

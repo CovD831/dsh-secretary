@@ -87,9 +87,9 @@ export interface RulingQueueDeps {
   readonly onDecided?: (item: RulingItem) => void
 }
 
-const DEFAULT_APPROVAL_OPTIONS: readonly RulingOption[] = [
-  { id: 'approve', label: '放行本次操作', consequence: '允许当前工具调用继续执行一次', recommended: true },
-  { id: 'reject', label: '拒绝并要求改方案', consequence: '拦截本次工具调用并将原因退回执行会话', recommended: false },
+const defaultApprovalOptions = (highRisk: boolean): readonly RulingOption[] => [
+  { id: 'approve', label: '放行本次操作', consequence: '允许当前工具调用继续执行一次', recommended: !highRisk },
+  { id: 'reject', label: '拒绝并要求改方案', consequence: '拦截本次工具调用并将原因退回执行会话', recommended: highRisk },
 ]
 
 const KIND_PRIORITY: Readonly<Record<RulingOrigin, number>> = {
@@ -152,7 +152,7 @@ export class RulingQueue {
   async enqueue(input: EnqueueRulingInput): Promise<RulingItem> {
     const id = input.id ?? `rul-${randomUUID().slice(0, 12)}`
     const createdAt = this.now().toISOString()
-    const options = input.options?.length ? input.options : DEFAULT_APPROVAL_OPTIONS
+    const options = input.options?.length ? input.options : defaultApprovalOptions((input.rawScore ?? 0) >= 0.8)
     const allowFreeText = input.allowFreeText ?? true
     const item = this.deps.store.atomic(() => {
       const existing = this.get(id)

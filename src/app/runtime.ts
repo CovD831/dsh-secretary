@@ -190,6 +190,21 @@ export class Runtime extends Service implements SourceHost {
               ...(last.triggerId ? { triggerId: last.triggerId } : {}),
             })
           })
+        },
+        onMasterTurnSettled: () => {
+          const feed = (store.get(KV.governance.feed) ?? []).slice(-30)
+          for (let i = 0; i < feed.length; i++) {
+            const boss = feed[i]!
+            if (boss.role !== 'boss' || boss.kind !== 'boss_message' || !boss.triggerId) continue
+            const replied = feed.some((s, j) => s.role === 'secretary' && (j > i || s.triggerId === boss.triggerId))
+            if (!replied) continue
+            const trig = store.triggers.get(boss.triggerId)
+            if (trig?.source !== 'secretary-bus' || store.triggers.disposition(boss.triggerId)?.decisionId) continue
+            this.quietly(() => {
+              try { this.engine.decide(boss.triggerId!, { kind: 'ignore', reason: 'Handled directly in secretary chat' }) }
+              catch { /* ignore if already settled */ }
+            })
+          }
         } })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
       this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, lifetime: this.lifetime, sessions,
