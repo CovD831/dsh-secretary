@@ -176,13 +176,13 @@ const STREAMS = [
   { id: 'review-comments', observed: (config: GithubConfig) => config.observeComments, path: 'pulls/comments?' },
 ] as const
 /** Polls repository-wide streams (new Issues/PRs, comments, default-branch CI); each stream reads from when it was switched on, resets when switched off, and fails independently. */
-async function pollRepository(ctx: SourceContext, round: Round): Promise<void> {
+async function pollRepository(ctx: SourceContext, round: Round, isApp = false): Promise<void> {
   const config = ctx.config<GithubConfig>(SOURCE)
   if (!config) return
   for (const stream of STREAMS) {
     if (stopped(ctx, round)) return
-    if (!stream.observed(config)) { ctx.state.set(KV.github.stream(stream.id), undefined); continue }
-    try { await readStream(ctx, round, stream.id, stream.path, config) }
+    if (!isApp && !stream.observed(config)) { ctx.state.set(KV.github.stream(stream.id), undefined); continue }
+    try { await readStream(ctx, round, stream.id, stream.path, config, isApp) }
     catch (error) { if (!stopped(ctx, round)) round.failures.push(`${stream.id}: ${String(error)}`) }
   }
   // When CI observation is turned off, clear the failure baseline but preserve the revision counter so future triggers have unique IDs.
@@ -200,10 +200,12 @@ async function pollRepository(ctx: SourceContext, round: Round): Promise<void> {
  * unchanged (including when clamped to the hourly horizon), sending the last page's ETag makes an unchanged list return
  * HTTP 304 and cost no rate limit. Items from before their kind was switched on or beyond the horizon are ignored.
  */
-async function readStream(ctx: SourceContext, round: Round, id: string, path: string, config: GithubConfig): Promise<void> {
+async function readStream(ctx: SourceContext, round: Round, id: string, path: string, config: GithubConfig, isApp = false): Promise<void> {
   const name = KV.github.stream(id)
   const stored = ctx.state.get(name)
-  const kinds = id === 'issues' ? [...config.observeIssues ? ['issues'] : [], ...config.observePulls ? ['pulls'] : []] : ['comments']
+  const kinds = id === 'issues'
+    ? (isApp ? ['issues', 'pulls'] : [...config.observeIssues ? ['issues'] : [], ...config.observePulls ? ['pulls'] : []])
+    : ['comments']
   const before = typeof stored?.started === 'object' ? stored.started : {}
   const started: Record<string, string> = Object.fromEntries(kinds.map(kind => [kind, before[kind] ?? round.started]))
   const horizon = Math.floor((Date.parse(round.started) - POLL_HORIZON_MS) / 3_600_000) * 3_600_000
@@ -279,8 +281,11 @@ async function pollBranchCi(ctx: SourceContext, round: Round): Promise<void> {
  */
 export async function pollRound(ctx: SourceContext, signal?: AbortSignal): Promise<number> {
   const round = newRound(signal)
-  const notified = await pollNotifications(ctx, round).then(value => ({ value }), (error: unknown) => ({ error }))
-  await pollRepository(ctx, round)
+  const isApp = ctx.deployment.github.app === true || ctx.deployment.github.login.endsWith('[bot]')
+  const notified = isApp
+    ? { value: { count: 0, interval: ctx.config<GithubConfig>(SOURCE)?.pollSeconds ?? 60 } }
+    : await pollNotifications(ctx, round).then(value => ({ value }), (error: unknown) => ({ error }))
+  await pollRepository(ctx, round, isApp)
   await pollTicketPulls(ctx, signal, round)
   await pollThreads(ctx, signal, round)
   if ('error' in notified) throw notified.error
@@ -291,7 +296,10 @@ export async function pollRound(ctx: SourceContext, signal?: AbortSignal): Promi
   const dropped = (round.dropped.length ? `; deleted on GitHub: ${named(round.dropped)}` : '')
     + (round.abandoned.length ? `; dropped after their reads kept failing: ${named(round.abandoned)}` : '')
     + (round.tally.skipped ? `; ${round.tally.skipped} unreadable items skipped` : '')
-  ctx.report('github', { state: 'ready', detail: `${count} notifications; next poll ≥ ${interval}s${dropped}`, at: round.started })
+  const detail = isApp
+    ? `GitHub App mode (repository streams); next poll ≥ ${interval}s${dropped}`
+    : `${count} notifications; next poll ≥ ${interval}s${dropped}`
+  ctx.report('github', { state: 'ready', detail, at: round.started })
   return interval
 }
 /** Reads notifications since the cursor and each Issue or PR they name, advancing the cursor atomically with the retry map for failed reads; deleted (410) Issues are dropped once their error is recorded. */
