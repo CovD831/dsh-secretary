@@ -87,10 +87,10 @@ describe('Phase W1: Multi-Room World Floorplan & 4-Layer Iso Renderer', () => {
     expect(world.wings).toHaveLength(4)
     expect(world.wings[0]).toMatchObject({ workspaceId: 'default', kind: 'studio' })
     expect(world.wings[1]).toMatchObject({ workspaceId: 'demo-repo', kind: 'studio' })
-    expect(world.wings[2]!.kind).toBe('courtyard')
+    expect(world.wings[2]).toMatchObject({ id: 'wing-lounge', kind: 'studio', title: '茶歇与阅览室' })
     expect(world.wings[3]!.kind).toBe('courtyard')
-    expect(world.wings[2]!.suites).toEqual([])
-    expect(world.wings[2]!.shared.filter((e) => e.assetId === 'tree_shrub')).toHaveLength(2)
+    expect(world.wings[3]!.suites).toEqual([])
+    expect(world.wings[3]!.shared.filter((e) => e.assetId === 'tree_shrub')).toHaveLength(2)
     expect(world.exteriorProps.length).toBeGreaterThanOrEqual(6)
 
     const large = solveWorldFloorplan([
@@ -203,8 +203,8 @@ describe('Phase W1: Multi-Room World Floorplan & 4-Layer Iso Renderer', () => {
       workspaceId: 'demo-repo',
     })
 
-    const signPos = worldIsoToScreen(demoWing.rect.u + demoWing.rect.w / 2, demoWing.rect.v + 0.2, world, cam)
-    expect(pickWorldTarget(signPos.x, signPos.y - 120, state, cam)).toMatchObject({
+    const signPos = worldIsoToScreen(demoWing.rect.u + demoWing.rect.w / 2, demoWing.rect.v + 2.2, world, cam)
+    expect(pickWorldTarget(signPos.x, signPos.y - 16, state, cam)).toMatchObject({
       type: 'wing',
       wingId: 'wing-demo-repo',
       workspaceId: 'demo-repo',

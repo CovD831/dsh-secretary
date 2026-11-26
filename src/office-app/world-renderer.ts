@@ -125,9 +125,9 @@ function getDoorplateBox(wing: WorldWingPlan, world: OfficeWorldPlan, cam: Offic
 }
 
 function getWingSignBox(wing: WorldWingPlan, world: OfficeWorldPlan, cam: OfficeCamera): Box {
-  const pos = worldIsoToScreen(wing.rect.u + wing.rect.w / 2, wing.rect.v + 0.2, world, cam)
-  const w = Math.max(84, wing.title.length * 10 + 18) * cam.zoom
-  return { x: Math.round(pos.x - w / 2), y: Math.round(pos.y - 68 * cam.zoom), w, h: 18 * cam.zoom }
+  const pos = worldIsoToScreen(wing.rect.u + wing.rect.w / 2, wing.rect.v + 2.2, world, cam)
+  const w = Math.max(76, wing.title.length * 10 + 16) * cam.zoom
+  return { x: Math.round(pos.x - w / 2), y: Math.round(pos.y - 16 * cam.zoom), w, h: 16 * cam.zoom }
 }
 
 function tileKindAt(u: number, v: number, world: OfficeWorldPlan): 'corridor_tile' | 'floor_wood' | 'stone_tile' | 'grass_tile' {
@@ -177,7 +177,7 @@ function renderL0AndL1(ctx: CanvasRenderingContext2D, state: WorldSceneState, sp
   }
   const leftC = worldIsoToScreen(0, world.buildingRows, world, cam), rightC = worldIsoToScreen(world.buildingCols, 0, world, cam)
   for (let s = 0; s < world.buildingCols * 8; s++) { ctx.fillStyle = s / 8 >= 14 && s / 8 <= 17 ? '#8C8478' : '#4A3428'; ctx.fillRect(Math.round(leftC.x + s * 2 * z), Math.round(leftC.y + s * z), 2 * z, 5 * z) }
-  ctx.fillStyle = '#3B2A22'; for (let s = 0; s < world.buildingRows * 8; s++) ctx.fillRect(Math.round(rightC.x - (step => step + 1)(s) * 2 * z), Math.round(rightC.y + s * z), 2 * z, 5 * z)
+  ctx.fillStyle = '#3B2A22'; for (let s = 0; s < world.buildingRows * 8; s++) ctx.fillRect(Math.round(rightC.x - (s + 1) * 2 * z), Math.round(rightC.y + s * z), 2 * z, 5 * z)
   const wallImg = sprites.images.wall_segment
   if (wallImg) {
     for (let u = 0; u < world.buildingCols; u += 2) if (!world.wings.some((w) => w.kind === 'courtyard' && w.rect.v === 0 && u >= w.rect.u && u < w.rect.u + w.rect.w)) {
@@ -190,15 +190,18 @@ function renderL0AndL1(ctx: CanvasRenderingContext2D, state: WorldSceneState, sp
   for (const pw of world.partitionWalls) {
     const p1 = pw.axis === 'u' ? worldIsoToScreen(pw.fixed, pw.start, world, cam) : worldIsoToScreen(pw.start, pw.fixed, world, cam)
     const p2 = pw.axis === 'u' ? worldIsoToScreen(pw.fixed, pw.end, world, cam) : worldIsoToScreen(pw.end, pw.fixed, world, cam)
-    const steps = Math.max(1, Math.round((pw.end - pw.start) * 4))
+    const steps = Math.max(1, Math.round(Math.abs(p2.x - p1.x) / (2 * z)))
+    ctx.fillStyle = '#1A1412'
+    for (let i = 0; i <= steps; i++) ctx.fillRect(Math.round(p1.x + (p2.x - p1.x) * (i / steps) - 3 * z), Math.round(p1.y + (p2.y - p1.y) * (i / steps) - 21 * z), 5 * z, 21 * z)
     for (let i = 0; i <= steps; i++) {
-      const wx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - 2 * z), wy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - 18 * z)
-      ctx.fillStyle = '#1A1412'; ctx.fillRect(wx - z, wy - z, 6 * z, 19 * z)
-      ctx.fillStyle = '#BFA48C'; ctx.fillRect(wx, wy + 3 * z, 4 * z, 8 * z)
-      ctx.fillStyle = '#4A3428'; ctx.fillRect(wx, wy, 4 * z, 3 * z); ctx.fillRect(wx, wy + 11 * z, 4 * z, 6 * z)
+      const wx = Math.round(p1.x + (p2.x - p1.x) * (i / steps) - 2 * z), wy = Math.round(p1.y + (p2.y - p1.y) * (i / steps) - 20 * z)
+      ctx.fillStyle = '#6B4A32'; ctx.fillRect(wx, wy, 3 * z, 3 * z); ctx.fillStyle = '#BFA48C'; ctx.fillRect(wx, wy + 3 * z, 3 * z, 10 * z); ctx.fillStyle = '#4A3428'; ctx.fillRect(wx, wy + 13 * z, 3 * z, 6 * z)
     }
   }
-  if (sprites.images.door_glass) { const dp = worldIsoToScreen(15.5, world.buildingRows, world, cam); ctx.drawImage(sprites.images.door_glass, Math.round(dp.x - 40 * z), Math.round(dp.y - 52 * z), 80 * z, 56 * z) }
+  if (sprites.images.door_glass) {
+    const dp = worldIsoToScreen(15.5, world.buildingRows, world, cam), dx = Math.round(dp.x - 40 * z), dy = Math.round(dp.y - 52 * z)
+    ctx.save(); ctx.translate(dx + 80 * z, dy); ctx.scale(-1, 1); ctx.drawImage(sprites.images.door_glass, 0, 0, 80 * z, 56 * z); ctx.restore()
+  }
   for (const m of [...world.lobby.wallMounts, ...world.wings.flatMap((w) => w.wallMounts.filter((wm) => wm.propKind !== 'doorplate'))]) {
     const img = sprites.images[m.assetId]; if (!img) continue
     const b = getMountBox(m, world, cam)
@@ -207,10 +210,10 @@ function renderL0AndL1(ctx: CanvasRenderingContext2D, state: WorldSceneState, sp
   }
   for (const w of world.wings) {
     const sb = getWingSignBox(w, world, cam)
-    ctx.fillStyle = '#302722'; ctx.fillRect(sb.x, sb.y, sb.w, sb.h)
-    ctx.strokeStyle = w.workspaceId === state.activeWorkspaceId ? HIGHLIGHT_GOLD : '#4A3C34'; ctx.lineWidth = z; ctx.strokeRect(sb.x, sb.y, sb.w, sb.h)
-    ctx.fillStyle = '#E8DCCB'; ctx.font = `${10 * z}px monospace`; ctx.fillText(w.title, sb.x + 6 * z, sb.y + 13 * z)
-    if (w.kind === 'studio' && sprites.images.doorplate) { const db = getDoorplateBox(w, world, cam); ctx.drawImage(sprites.images.doorplate, db.x, db.y, db.w, db.h) }
+    ctx.fillStyle = '#201A18'; ctx.fillRect(sb.x, sb.y, sb.w, sb.h)
+    ctx.strokeStyle = w.workspaceId && w.workspaceId === state.activeWorkspaceId ? HIGHLIGHT_GOLD : '#6B4A32'; ctx.lineWidth = z; ctx.strokeRect(sb.x, sb.y, sb.w, sb.h)
+    ctx.fillStyle = '#E8DCCB'; ctx.font = `${10 * z}px monospace`; ctx.fillText(w.title, sb.x + 6 * z, sb.y + 12 * z)
+    if (w.kind === 'studio' && w.workspaceId && sprites.images.doorplate) { const db = getDoorplateBox(w, world, cam); ctx.drawImage(sprites.images.doorplate, db.x, db.y, db.w, db.h) }
   }
 }
 
@@ -255,16 +258,13 @@ export function renderWorldFrame(ctx: CanvasRenderingContext2D, state: WorldScen
     if (item.kind === 'entity' && item.entity) {
       const img = sprites.images[item.entity.assetId]; if (!img) continue
       const b = getEntityBox(item.entity, state.world, camera)
-      ctx.save()
-      if (item.entity.mirrorX) { ctx.translate(b.x + b.w, b.y); ctx.scale(-1, 1); ctx.drawImage(img, 0, 0, b.w, b.h) }
+      if (item.entity.mirrorX) { ctx.save(); ctx.translate(b.x + b.w, b.y); ctx.scale(-1, 1); ctx.drawImage(img, 0, 0, b.w, b.h); ctx.restore() }
       else ctx.drawImage(img, b.x, b.y, b.w, b.h)
-      ctx.restore()
     } else if (item.kind === 'actor' && item.actor) {
       const img = sprites.images[`char_${item.actor.role}`]; if (!img) continue
       const col = item.actor.pose === 'idle' ? 0 : item.actor.pose === 'walkA' ? 1 : item.actor.pose === 'walkB' ? 2 : 3
-      const row = item.actor.facing === 'SW' || item.actor.facing === 'NW' ? 1 : 0
       const b = getActorBox(item.actor, state.world, camera)
-      ctx.drawImage(img, col * 32, row * 48, 32, 48, b.x, b.y, b.w, b.h)
+      ctx.drawImage(img, col * 32, item.actor.facing === 'SW' || item.actor.facing === 'NW' ? 48 : 0, 32, 48, b.x, b.y, b.w, b.h)
     }
   }
   renderL3(ctx, state, camera)
@@ -299,7 +299,7 @@ export function pickWorldTarget(px: number, py: number, state: WorldSceneState, 
     if (hitBox(px, py, b)) return { type: 'prop', prop: m.propKind, label: PROP_LABELS[m.propKind].zh, bounds: b }
   }
   for (const w of world.wings) {
-    if (w.kind === 'studio') { const db = getDoorplateBox(w, world, camera); if (hitBox(px, py, db)) return { type: 'prop', prop: 'doorplate', label: PROP_LABELS.doorplate.zh, workspaceId: w.workspaceId, bounds: db } }
+    if (w.kind === 'studio' && w.workspaceId) { const db = getDoorplateBox(w, world, camera); if (hitBox(px, py, db)) return { type: 'prop', prop: 'doorplate', label: PROP_LABELS.doorplate.zh, workspaceId: w.workspaceId, bounds: db } }
     const sb = getWingSignBox(w, world, camera)
     if (hitBox(px, py, sb)) return { type: 'wing', wingId: w.id, workspaceId: w.workspaceId, kind: w.kind, label: w.title, bounds: sb }
   }

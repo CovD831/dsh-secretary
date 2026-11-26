@@ -19,19 +19,17 @@ import { createInitialWorldActors, pickWorldTarget, renderWorldFrame, spawnWorld
 import type { OfficeCamera, OfficeWorldPlan, WorkspaceWingSpec, WorldPickResult, WorldWingPlan } from './world-types.ts'
 
 type TicketItem = TicketListView['items'][number]
-const DEFAULT_CAMERA: OfficeCamera = { panX: 0, panY: 36, zoom: 1 }
+const WORLD_CENTER = { u: 16, v: 13 } as const
 
+const getInitialViewport = () => typeof window === 'undefined'
+  ? { w: CANVAS_W, h: CANVAS_H }
+  : { w: Math.max(640, window.innerWidth || CANVAS_W), h: Math.max(480, window.innerHeight || CANVAS_H) }
 function loadSprite(url: string, onLoad: (img: HTMLImageElement) => void): void {
   if (typeof Image === 'undefined') return
-  const img = new Image()
-  img.onload = () => onLoad(img)
-  img.src = url
+  const img = new Image(); img.onload = () => onLoad(img); img.src = url
 }
-
-function resolveRoomId(ticket: TicketItem, settings: SettingsView | null): string {
-  if (ticket.workspace) return ticket.workspace
-  return settings?.blocks.workspaces.value?.find(w => w.repository && ticket.directory?.startsWith(w.repository))?.id ?? 'default'
-}
+const resolveRoomId = (t: TicketItem, s: SettingsView | null) =>
+  t.workspace || s?.blocks.workspaces.value?.find(w => w.repository && t.directory?.startsWith(w.repository))?.id || 'default'
 
 function syncWorldActors(prev: OfficeActor[], tickets: readonly TicketItem[], world: OfficeWorldPlan, settings: SettingsView | null): OfficeActor[] {
   const residents = createInitialWorldActors(world)
@@ -39,10 +37,7 @@ function syncWorldActors(prev: OfficeActor[], tickets: readonly TicketItem[], wo
   const openIds = new Set(tickets.map(t => t.id))
   const keptWorkers = prev.filter(a => a.role === 'worker' && a.lifecycle !== 'removed').map(a =>
     a.ticketId && !openIds.has(a.ticketId) && a.lifecycle !== 'leaving' ? { ...a, lifecycle: 'leaving' as const } : a)
-  const mergedResidents = residents.map(r => {
-    const existing = prev.find(p => p.id === r.id && residentIds.has(p.id))
-    return existing ? { ...r, animMs: existing.animMs } : r
-  })
+  const mergedResidents = residents.map(r => { const ex = prev.find(p => p.id === r.id && residentIds.has(p.id)); return ex ? { ...r, animMs: ex.animMs } : r })
   const usedSuites = new Set(keptWorkers.filter(a => a.lifecycle !== 'leaving').map(a => a.assignedSuiteId))
   const activeIds = new Set(keptWorkers.filter(a => a.lifecycle !== 'leaving').map(a => a.ticketId))
   const next: OfficeActor[] = [...mergedResidents, ...keptWorkers]
@@ -60,8 +55,9 @@ function syncWorldActors(prev: OfficeActor[], tickets: readonly TicketItem[], wo
 }
 
 export function StageApp() {
+  const [viewport, setViewport] = useState(getInitialViewport)
   const [workspaceId, setWorkspaceId] = useState('default')
-  const [camera, setCamera] = useState<OfficeCamera>(DEFAULT_CAMERA)
+  const [camera, setCamera] = useState<OfficeCamera>(() => { const vp = getInitialViewport(); return cameraForGridPoint(WORLD_CENTER, solveWorldFloorplan([{ id: 'default', title: 'default' }], 1), 1, vp.w, vp.h) })
   const [dialogCollapsed, setDialogCollapsed] = useState(true)
   const [feed, setFeed] = useState<SecretaryFeedEntry[]>([])
   const [activeRuling, setActiveRuling] = useState<RulingItem | null>(null)
@@ -108,19 +104,13 @@ export function StageApp() {
     return out
   }, [world, tickets, settings])
 
-  useEffect(() => {
-    const synced = syncWorldActors(actorsRef.current, tickets, world, settings)
-    actorsRef.current = synced
-    setActorSnap(synced)
-  }, [tickets, world, settings])
+  useEffect(() => { const synced = syncWorldActors(actorsRef.current, tickets, world, settings); actorsRef.current = synced; setActorSnap(synced) }, [tickets, world, settings])
 
   const refreshAll = useCallback(async () => {
     try {
       const [feedRes, ticketRes, settingsRes, avatarRes, spineRes] = await Promise.all([
-        officeCall('GET secretary/feed'),
-        officeCall('GET tickets', { query: { state: 'open', limit: 20 } }),
-        officeCall('GET settings'),
-        officeCall('GET avatars'),
+        officeCall('GET secretary/feed'), officeCall('GET tickets', { query: { state: 'open', limit: 20 } }),
+        officeCall('GET settings'), officeCall('GET avatars'),
         officeCall('GET projection/spine', { query: { type: 'gate.evaluated', limit: 10, tail: '1', ...(lastGateSeqRef.current > 0 ? { sinceSeq: lastGateSeqRef.current } : {}) } }),
       ])
       setFeed(feedRes.items); setActiveRuling(feedRes.activeRuling); setPendingCount(feedRes.pendingCount)
@@ -162,9 +152,7 @@ export function StageApp() {
     for (const wing of world.wings) {
       if (!wing.workspaceId) continue
       const roomList = tickets.filter(t => resolveRoomId(t, settings) === wing.workspaceId)
-      out[`exec-${wing.workspaceId}`] = activeRuling && wing.workspaceId === workspaceId
-        ? 'needsDecision'
-        : roomList.some(t => t.stage === 'working') ? 'working' : 'off'
+      out[`exec-${wing.workspaceId}`] = activeRuling && wing.workspaceId === workspaceId ? 'needsDecision' : roomList.some(t => t.stage === 'working') ? 'working' : 'off'
     }
     for (const actor of actorSnap) {
       if (actor.role !== 'worker' || !actor.assignedSuiteId || actor.lifecycle === 'leaving') continue
@@ -183,21 +171,18 @@ export function StageApp() {
   const secretaryPortraitSrc = avatar?.portraitUrls[secretaryMood] ?? `/assets/f1-proof/portrait_${secretaryMood}.png`
 
   useEffect(() => { if (activeRuling || gateBlocked || secretaryThinking) setDialogCollapsed(false) }, [activeRuling, gateBlocked, secretaryThinking])
-  useEffect(() => {
-    if (prevSayIdRef.current && latestSayId && prevSayIdRef.current !== latestSayId) setDialogCollapsed(false)
-    prevSayIdRef.current = latestSayId
-  }, [latestSayId])
+  useEffect(() => { if (prevSayIdRef.current && latestSayId && prevSayIdRef.current !== latestSayId) setDialogCollapsed(false); prevSayIdRef.current = latestSayId }, [latestSayId])
   useEffect(() => {
     if (!pendingBoss) return
     if (activeRuling || (latestSayId && latestSayId !== pendingBoss.baseSayId)) { setPendingBoss(null); return }
     const timer = setTimeout(() => setPendingBoss(null), Math.max(0, 45_000 - (Date.now() - pendingBoss.sentAt)))
     return () => clearTimeout(timer)
   }, [pendingBoss, activeRuling, latestSayId])
+  useEffect(() => { if (!secretaryThinking) return; const fast = setInterval(() => { void refreshAll() }, 1200); return () => clearInterval(fast) }, [secretaryThinking, refreshAll])
   useEffect(() => {
-    if (!secretaryThinking) return
-    const fast = setInterval(() => { void refreshAll() }, 1200)
-    return () => clearInterval(fast)
-  }, [secretaryThinking, refreshAll])
+    const onResize = () => { const vp = getInitialViewport(); setViewport(vp); setCamera(c => c.zoom === 1 ? cameraForGridPoint(WORLD_CENTER, world, 1, vp.w, vp.h) : c) }
+    window.addEventListener('resize', onResize); return () => window.removeEventListener('resize', onResize)
+  }, [world])
 
   useEffect(() => {
     let raf = 0, last = performance.now(), elapsed = 0
@@ -206,7 +191,7 @@ export function StageApp() {
       actorsRef.current = stepWorldActors(actorsRef.current, world, dt)
       const ctx = canvasRef.current?.getContext('2d')
       if (ctx) {
-        ctx.clearRect(0, 0, CANVAS_W, CANVAS_H)
+        ctx.clearRect(0, 0, viewport.w, viewport.h)
         const gateActorId = actorsRef.current.find(a => a.ticketId && a.ticketId === gateTicketRef.current)?.id
           ?? actorsRef.current.find(a => a.id === `lead-${workspaceId}`)?.id
           ?? actorsRef.current.find(a => a.role === 'lead')?.id
@@ -220,17 +205,17 @@ export function StageApp() {
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [world, screenStates, workspaceId, hoverTarget, gateUntil, secretaryThinking, camera])
+  }, [world, screenStates, workspaceId, hoverTarget, gateUntil, secretaryThinking, camera, viewport])
 
   const toCanvasCoords = (clientX: number, clientY: number) => {
     const rect = canvasRef.current?.getBoundingClientRect()
-    const scaleX = rect?.width ? CANVAS_W / rect.width : 1
-    const scaleY = rect?.height ? CANVAS_H / rect.height : 1
+    const scaleX = rect?.width ? viewport.w / rect.width : 1
+    const scaleY = rect?.height ? viewport.h / rect.height : 1
     return { x: (clientX - (rect?.left ?? 0)) * scaleX, y: (clientY - (rect?.top ?? 0)) * scaleY, scaleX, scaleY }
   }
   const focusWing = (wing: WorldWingPlan) => {
     if (wing.workspaceId) setWorkspaceId(wing.workspaceId)
-    setCamera(c => cameraForGridPoint(wing.focusPoint, world, c.zoom))
+    setCamera(c => cameraForGridPoint(wing.focusPoint, world, c.zoom, viewport.w, viewport.h))
   }
   const handleCanvasClick = (clientX: number, clientY: number) => {
     const { x, y } = toCanvasCoords(clientX, clientY)
@@ -273,25 +258,27 @@ export function StageApp() {
     await refreshAll()
   }
 
+  const resetCam = () => setCamera(cameraForGridPoint(WORLD_CENTER, world, 1, viewport.w, viewport.h))
+
   return (
-    <div style={{ minHeight: '100vh', background: OFFICE_THEME.bgDeep, color: OFFICE_THEME.inkCream, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-      <div style={{ position: 'relative', width: '100%', maxWidth: CANVAS_W, overflow: 'hidden' }}>
+    <div style={{ position: 'fixed', inset: 0, width: '100vw', height: '100vh', background: '#3E4A44', color: OFFICE_THEME.inkCream, overflow: 'hidden' }}>
+      <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
         <GameHud online={online} activeWorkspaceId={workspaceId} world={world} actors={actorSnap.length > 0 ? actorSnap : actorsRef.current} roomStats={roomStats}
           workingCount={tickets.filter(t => t.stage === 'working').length} camera={camera} dialogCollapsed={effectiveCollapsed}
           secretaryMood={secretaryMood} secretaryPortraitSrc={secretaryPortraitSrc} gateBlocked={gateBlocked}
           onOpenProp={p => { if (p === 'doorplate') setDrawerMode('doorplate'); else setActiveProp(p) }}
-          onZoomChange={zoom => setCamera(zoom === 1 ? DEFAULT_CAMERA : cameraForGridPoint((world.wings.find(w => w.workspaceId === workspaceId) ?? world.lobby).focusPoint, world, 2))}
-          onResetCamera={() => setCamera(DEFAULT_CAMERA)}
-          onFocusLobby={() => { setCamera(c => cameraForGridPoint(world.lobby.focusPoint, world, c.zoom)); setDialogCollapsed(false) }}
+          onZoomChange={zoom => setCamera(zoom === 1 ? cameraForGridPoint(WORLD_CENTER, world, 1, viewport.w, viewport.h) : cameraForGridPoint((world.wings.find(w => w.workspaceId === workspaceId) ?? world.lobby).focusPoint, world, 2, viewport.w, viewport.h))}
+          onResetCamera={resetCam}
+          onFocusLobby={() => { setCamera(c => cameraForGridPoint(world.lobby.focusPoint, world, c.zoom, viewport.w, viewport.h)); setDialogCollapsed(false) }}
           onSelectWing={focusWing}
           onOpenRoomDrawer={roomId => { setWorkspaceId(roomId); setSelectedTicketId(tickets.find(t => resolveRoomId(t, settings) === roomId)?.id ?? null); setDrawerMode('worker') }} />
-        <canvas ref={canvasRef} width={CANVAS_W} height={CANVAS_H} aria-label="像素办公室主舞台"
+        <canvas ref={canvasRef} width={viewport.w} height={viewport.h} aria-label="像素办公室主舞台"
           onMouseDown={e => { dragRef.current = { startX: e.clientX, startY: e.clientY, panX: camera.panX, panY: camera.panY, moved: false } }}
           onMouseMove={handleMouseMove}
           onMouseUp={() => { if (dragRef.current?.moved) suppressClickRef.current = true; dragRef.current = null }}
           onMouseLeave={() => { dragRef.current = null; setHoverTarget(null) }}
           onClick={e => { if (suppressClickRef.current) { suppressClickRef.current = false; return } handleCanvasClick(e.clientX, e.clientY) }}
-          style={{ width: '100%', height: 'auto', display: 'block', imageRendering: 'pixelated', cursor: hoverTarget ? 'pointer' : 'grab' }} />
+          style={{ width: '100%', height: '100%', display: 'block', imageRendering: 'pixelated', cursor: hoverTarget ? 'pointer' : 'grab' }} />
         <NpcDialog feed={feed} activeRuling={activeRuling} pendingCount={pendingCount} avatar={avatar}
           hasWorkingTickets={tickets.some(t => t.stage === 'working')} gateBlocked={gateBlocked}
           secretaryThinking={secretaryThinking} collapsed={dialogCollapsed}
@@ -303,7 +290,7 @@ export function StageApp() {
       <HandoverSheet entry={handoverEntry} onClose={() => setHandoverEntry(null)} />
       <WorkerDrawer mode={drawerMode} workspaceId={workspaceId} settings={settings} tickets={roomTickets} allTickets={tickets}
         selectedTicketId={selectedTicketId} streamTick={streamTick}
-        onSelectWorkspace={id => { setWorkspaceId(id); const w = world.wings.find(x => x.workspaceId === id); if (w) setCamera(c => cameraForGridPoint(w.focusPoint, world, c.zoom)) }}
+        onSelectWorkspace={id => { setWorkspaceId(id); const w = world.wings.find(x => x.workspaceId === id); if (w) setCamera(c => cameraForGridPoint(w.focusPoint, world, c.zoom, viewport.w, viewport.h)) }}
         onSelectTicket={id => setSelectedTicketId(id)} onChanged={() => { void refreshAll() }} onClose={() => setDrawerMode(null)} />
     </div>
   )

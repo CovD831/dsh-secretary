@@ -72,6 +72,7 @@ export function GameHud({
   onOpenProp, onZoomChange, onResetCamera, onFocusLobby, onSelectWing, onOpenRoomDrawer,
 }: GameHudProps) {
   const studioWings = world.wings.filter(w => w.kind === 'studio')
+  const workspaceWings = studioWings.filter(w => Boolean(w.workspaceId))
   const courtyardWings = world.wings.filter(w => w.kind === 'courtyard')
   const secColor = gateBlocked
     ? OFFICE_THEME.needsDecision
@@ -80,8 +81,8 @@ export function GameHud({
   return (
     <>
       <div style={{
-        position: 'absolute', top: 12, left: 12, right: 12, zIndex: 12,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, pointerEvents: 'none',
+        position: 'absolute', top: 10, left: 12, right: 12, zIndex: 12,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', pointerEvents: 'none',
       }}>
         <div style={{ ...PANEL_STYLE, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 8, pointerEvents: 'auto' }}>
           <span style={{
@@ -134,8 +135,8 @@ export function GameHud({
           <span style={{ width: 8, height: 8, borderRadius: '50%', background: secColor, flexShrink: 0 }} />
         </button>
 
-        {studioWings.map(wing => {
-          const roomId = wing.workspaceId ?? wing.id
+        {workspaceWings.map(wing => {
+          const roomId = wing.workspaceId!
           const active = roomId === activeWorkspaceId
           const stat = roomStats[roomId] ?? { count: 0, status: 'idle' }
           return (

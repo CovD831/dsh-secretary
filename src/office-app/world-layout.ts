@@ -89,7 +89,7 @@ function buildLobby(buildingRows: number): WorldWingPlan {
       makeEntity('lobby-cabinet', 'file_cabinet', 'shared', 16, 0, 'SE', undefined, 'back'),
       makeEntity('lobby-cooler', 'water_cooler', 'shared', 13, 5, 'SE', undefined, 'left'),
       makeEntity('lobby-plant-1', 'plant_pot', 'shared', 18, 0, 'SW', undefined, 'back'),
-      makeEntity('lobby-plant-2', 'plant_pot', 'shared', 13, buildingRows - 3, 'SE', undefined, 'left'),
+      makeEntity('lobby-plant-2', 'plant_pot', 'shared', 18, 15, 'SW'),
     ],
     wallMounts: [
       { id: 'lobby-clock', assetId: 'clock_wall', wall: 'back', at: 14.4, h: 32, span: 1 },
@@ -135,6 +135,44 @@ function buildStudioWing(ws: WorkspaceWingSpec, rowIdx: number, isLeft: boolean)
   }
 }
 
+function buildLoungeOrReserveWing(slotIdx: number, rowIdx: number, isLeft: boolean): WorldWingPlan {
+  const rowV = rowIdx * 14
+  const rect = { u: isLeft ? 0 : 19, v: rowV, w: 13, h: 12 }
+  const isReserve = slotIdx === 1
+  const wallMounts: RoomWallMount[] = []
+  if (rowIdx === 0) wallMounts.push({ id: `window-back-aux-${slotIdx}`, assetId: 'window_day', wall: 'back', at: rect.u + 7.5, h: 12, span: 2 })
+  if (isLeft) wallMounts.push({ id: `window-left-aux-${slotIdx}`, assetId: 'window_day', wall: 'left', at: rect.v + 6, h: 12, span: 2 })
+  return {
+    id: isReserve ? 'wing-reserve' : 'wing-lounge',
+    title: isReserve ? '预备研发工坊' : '茶歇与阅览室',
+    kind: 'studio',
+    rect,
+    focusPoint: { u: rect.u + 6, v: rect.v + 6 },
+    doorway: { u: isLeft ? 12 : 19, v: rowV + 6 },
+    suites: isReserve
+      ? [
+          makeEntity('aux-ws-1', 'worker_desk', 'workstation', rect.u + 8, rect.v + 3, 'SW', { u: rect.u + 9, v: rect.v + 2 }),
+          makeEntity('aux-ws-2', 'worker_desk', 'workstation', rect.u + 8, rect.v + 8, 'SW', { u: rect.u + 9, v: rect.v + 7 }),
+        ]
+      : [],
+    shared: isReserve
+      ? [
+          makeEntity('aux-bookshelf-1', 'bookshelf', 'shared', rect.u + 2, rect.v, 'SE', undefined, 'back'),
+          makeEntity('aux-sofa-1', 'sofa_lounge', 'shared', rect.u + 2, rect.v + 6, 'SE'),
+          makeEntity('aux-plant-1', 'plant_pot', 'shared', rect.u + 11, rect.v, 'SW', undefined, 'back'),
+        ]
+      : [
+          makeEntity('lounge-bookshelf', 'bookshelf', 'shared', rect.u + 2, rect.v + 1, 'SE'),
+          makeEntity('lounge-sofa-a', 'sofa_lounge', 'shared', rect.u + 2, rect.v + 5, 'SE', undefined, 'left'),
+          makeEntity('lounge-sofa-b', 'sofa_lounge', 'shared', rect.u + 7, rect.v + 8, 'SW'),
+          makeEntity('lounge-cooler', 'water_cooler', 'shared', rect.u + 1, rect.v + 2, 'SE', undefined, 'left'),
+          makeEntity('lounge-plant', 'plant_pot', 'shared', rect.u + 10, rect.v + 2, 'SW'),
+        ],
+    wallMounts,
+    rugRect: { u: rect.u + 4, v: rect.v + 4, w: 4, h: 4 },
+  }
+}
+
 function buildCourtyardWing(slotIdx: number, rowIdx: number, isLeft: boolean): WorldWingPlan {
   const rowV = rowIdx * 14
   const rect = { u: isLeft ? 0 : 19, v: rowV, w: 13, h: 12 }
@@ -173,13 +211,10 @@ function buildPartitionWalls(rowCount: number): PartitionWallSegment[] {
 }
 
 function buildExteriorProps(buildingRows: number): RoomEntity[] {
-  const frontUs = [3, 8, 12, 18, 22, 27]
-  const props: RoomEntity[] = frontUs.map((u, idx) =>
-    makeEntity(`ext-shrub-front-${idx}`, 'tree_shrub', 'shared', u, buildingRows + 1, u < 15 ? 'SE' : 'SW'),
+  const frontUs = [2, 7, 11, 19, 24, 29]
+  return frontUs.map((u, idx) =>
+    makeEntity(`ext-shrub-front-${idx}`, 'tree_shrub', 'shared', u, buildingRows + 2, u < 15 ? 'SE' : 'SW'),
   )
-  props.push(makeEntity('ext-shrub-west-0', 'tree_shrub', 'shared', -3, 5, 'SE'))
-  props.push(makeEntity('ext-shrub-west-1', 'tree_shrub', 'shared', -3, 17, 'SE'))
-  return props
 }
 
 export function cameraForGridPoint(
@@ -208,7 +243,9 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
     const rowIdx = Math.floor(i / 2)
     const isLeft = i % 2 === 0
     const ws = list[i]
-    wings.push(ws ? buildStudioWing(ws, rowIdx, isLeft) : buildCourtyardWing(i, rowIdx, isLeft))
+    if (ws) wings.push(buildStudioWing(ws, rowIdx, isLeft))
+    else if (i < 3) wings.push(buildLoungeOrReserveWing(i, rowIdx, isLeft))
+    else wings.push(buildCourtyardWing(i, rowIdx, isLeft))
   }
   return {
     seed,
