@@ -116,7 +116,7 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
     expect(world.buildingCols).toBe(WORLD_BUILDING_COLS)
     expect(world.buildingRows).toBe(WORLD_BUILDING_ROWS)
     expect(world.baseOrigin).toEqual(WORLD_BASE_ORIGIN)
-    expect(world.mainEntrance).toEqual({ u: 11, v: 17 })
+    expect(world.mainEntrance).toEqual({ u: 13, v: 17 })
     expect(world.lobby.suites.map((s) => s.id)).toEqual(['lobby-reception'])
     expect(world.wings).toHaveLength(4)
     expect(world.wings[0]).toMatchObject({ workspaceId: 'default', kind: 'studio', rugStyle: 'sage' })
@@ -151,14 +151,14 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
       expect(world.wings[0]!.doorway.v).not.toBe(world.wings[1]!.doorway.v)
 
       const tiers = new Map(world.wallSegments?.map((s) => [s.tier, s.startH]))
-      expect(tiers.get('back')).toBe(68)
-      expect(tiers.get('partition')).toBe(68)
-      expect(tiers.get('cutaway')).toBe(34)
-      expect(tiers.get('portal')).toBe(54)
+      expect(tiers.get('back')).toBe(56)
+      expect(world.wallSegments?.some((s) => s.tier === 'partition' && s.startH === 56 && s.endH === 56)).toBe(true)
+      expect(world.wallSegments?.some((s) => s.tier === 'partition' && s.startH === 38 && s.endH === 38)).toBe(true)
+      expect(tiers.get('cutaway')).toBe(32)
+      expect(tiers.get('portal')).toBe(50)
       const partSegs = world.wallSegments!.filter((s) => s.tier === 'partition')
-      expect(partSegs.every((s) => s.startH === 68)).toBe(true)
-      expect(partSegs.filter((s) => s.startH === s.endH).every((s) => s.endH === 68)).toBe(true)
-      expect(partSegs.length).toBeLessThanOrEqual(14)
+      expect(partSegs.every((s) => s.startH >= s.endH && (s.startH === 56 || s.startH === 38))).toBe(true)
+      expect(partSegs.length).toBeLessThanOrEqual(18)
       expect(world.interiorDoors?.some((d) => d.id === 'door-right-link')).toBe(true)
 
       for (const wing of world.wings.filter((w) => w.kind === 'studio')) {
@@ -183,16 +183,20 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
     }
     expect(sigs.size).toBeGreaterThanOrEqual(3)
 
+    const pixiSrc = readFileSync(join(ROOT, 'src', 'office-app', 'pixi-diorama.ts'), 'utf8')
+    expect(pixiSrc).not.toContain('bodyAlpha')
+    expect(pixiSrc).not.toContain('0.34')
+
     const multiWs = [{ id: 'default', title: 'default' }, { id: 'demo-repo', title: 'demo-repo' }, { id: 'third', title: 'third' }]
     for (let seed = 1; seed <= 20; seed++) {
       const w = solveWorldFloorplan(multiWs, seed)
       const segs = w.wallSegments!
       for (const s of segs) {
         if (s.startH !== s.endH) {
-          const continues = segs.some((o) => o !== s && o.startH === 68
+          const risesAfter = segs.some((o) => o !== s && o.startH > s.endH
             && (o.to.u - o.from.u) * (s.to.v - s.from.v) === (o.to.v - o.from.v) * (s.to.u - s.from.u)
-            && ((o.from.u === s.to.u && o.from.v === s.to.v) || (o.to.u === s.to.u && o.to.v === s.to.v)))
-          expect(continues, `seed=${seed} sloped wall must not continue into 68px wall`).toBe(false)
+            && o.from.u === s.to.u && o.from.v === s.to.v)
+          expect(risesAfter, `seed=${seed} sloped wall must not rise back up into V-notch`).toBe(false)
         }
         if ((s.tier === 'back' || s.tier === 'cutaway') && (s.from.u === s.to.u || s.from.v === s.to.v)) {
           const segLen = Math.max(Math.abs(s.to.u - s.from.u), Math.abs(s.to.v - s.from.v))
@@ -210,13 +214,46 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
           const z1 = zone.get(`${u1},${v1}`), z2 = zone.get(`${u2},${v2}`)
           expect(Boolean(z1 && z2 && z1 !== z2), `seed=${seed} door ${d.id} valid zones`).toBe(true)
         }
-        const onFlat68 = segs.some((s) => s.tier === 'partition' && s.startH === 68 && s.endH === 68 && (
+        const onFlat56 = segs.some((s) => s.tier === 'partition' && s.startH === 56 && s.endH === 56 && (
           d.axis === 'u'
             ? s.from.u === d.u && s.to.u === d.u && Math.min(s.from.v, s.to.v) <= d.v && Math.max(s.from.v, s.to.v) >= d.v + 2
             : s.from.v === d.v && s.to.v === d.v && Math.min(s.from.u, s.to.u) <= d.u && Math.max(s.from.u, s.to.u) >= d.u + 2
         ))
-        expect(onFlat68, `seed=${seed} door ${d.id} on flat 68px partition`).toBe(true)
+        expect(onFlat56, `seed=${seed} door ${d.id} on flat 56px partition`).toBe(true)
       }
+    }
+
+    const base = solveWorldFloorplan(multiWs, 1), cam1 = { panX: 0, panY: 0, zoom: 1 as const }
+    const inPoly = (px: number, py: number, pts: readonly { x: number; y: number }[]) => {
+      let c = false
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const a = pts[i]!, b = pts[j]!
+        if ((a.y > py) !== (b.y > py) && px < ((b.x - a.x) * (py - a.y)) / (b.y - a.y) + a.x) c = !c
+      }
+      return c
+    }
+    for (const ent of [...base.lobby.suites, ...base.wings.flatMap((w) => w.suites)]) {
+      const m = WORLD_ASSET_CATALOG[ent.assetId]!, cp = worldIsoToScreen(ent.anchor.u + ent.size[0] / 2, ent.anchor.v + ent.size[1] / 2, base, cam1)
+      const footY = worldIsoToScreen(ent.anchor.u + ent.size[0], ent.anchor.v + ent.size[1], base, cam1).y
+      let hit = 0, tot = 0
+      for (let yy = 0; yy < m.nativeSize[1]; yy += 4) for (let xx = 0; xx < m.nativeSize[0]; xx += 4) {
+        tot++; const px = cp.x - m.anchor[0] + xx, py = cp.y - m.anchor[1] + yy
+        let covered = false
+        for (const s of base.wallSegments!) {
+          if (s.tier === 'back') continue
+          const n = Math.max(1, Math.round(Math.max(Math.abs(s.to.u - s.from.u), Math.abs(s.to.v - s.from.v))))
+          for (let i = 0; i < n; i++) {
+            const t0 = i / n, t1 = (i + 1) / n
+            const a = worldIsoToScreen(s.from.u + (s.to.u - s.from.u) * t0, s.from.v + (s.to.v - s.from.v) * t0, base, cam1)
+            const b = worldIsoToScreen(s.from.u + (s.to.u - s.from.u) * t1, s.from.v + (s.to.v - s.from.v) * t1, base, cam1)
+            if ((a.y + b.y) / 2 <= footY) continue
+            const h0 = s.startH + (s.endH - s.startH) * t0, h1 = s.startH + (s.endH - s.startH) * t1
+            if (inPoly(px, py, [a, b, { x: b.x, y: b.y - h1 }, { x: a.x, y: a.y - h0 }])) { covered = true; break }
+          }
+          if (covered) { hit++; break }
+        }
+      }
+      expect(hit / tot, `${ent.id} foreground solid wall occlusion`).toBeLessThan(0.1)
     }
   })
 
@@ -238,9 +275,9 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
     expect(actors.map((a) => a.id)).toEqual(['secretary', 'lead-default', 'lead-demo-repo'])
 
     const worker = spawnWorldWorker(world, 'worker-1', 'demo-repo', 'T-42', 'ws-demo-repo-1')
-    expect(worker.u).toBe(11)
+    expect(worker.u).toBe(13)
     expect(worker.v).toBe(17)
-    expect(worker.path.some((p) => p.u === 13 && (p.v === 5 || p.v === 6))).toBe(true)
+    expect(worker.path.some((p) => p.u === 14 && (p.v === 5 || p.v === 6))).toBe(true)
 
     actors = [...actors, worker]
     for (let i = 0; i < 120; i++) actors = stepWorldActors(actors, world, 250)

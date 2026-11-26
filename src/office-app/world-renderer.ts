@@ -169,7 +169,7 @@ function renderL0ToL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, spr
   ctx.fillStyle = '#201A18'; ctx.fillRect(0, 0, cw, ch)
   ctx.fillStyle = '#302722'; ctx.fillRect(Math.round(cw * 0.08), Math.round(ch * 0.08), Math.round(cw * 0.84), Math.round(ch * 0.84))
   const tileMap = build2DTileMap(world)
-  const nearBld = (u: number, v: number) => (u >= 9 && u <= 12 && v >= world.buildingRows && v <= world.buildingRows + 2)
+  const nearBld = (u: number, v: number) => (u >= 11 && u <= 15 && v >= world.buildingRows && v <= world.buildingRows + 2)
     || [-1, 0, 1].some((dv) => [-1, 0, 1].some((du) => tileMap.has(`${u + du},${v + dv}`)))
   for (let v = -1; v <= world.buildingRows + 2; v++) for (let u = -1; u <= world.buildingCols + 1; u++) {
     const kind = tileMap.get(`${u},${v}`) ?? (nearBld(u, v) ? 'stone_tile' : null)
@@ -177,8 +177,8 @@ function renderL0ToL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, spr
     const p = worldIsoToScreen(u + 0.5, v + 0.5, world, cam); ctx.drawImage(img, Math.round(p.x - 16 * z), Math.round(p.y - 8 * z), 32 * z, 16 * z)
   }
   const runnerImg = sprites.images.runner_navy ?? sprites.images.corridor_runner
-  if (runnerImg) for (let v = 2; v < world.buildingRows - 1; v += 2) { const p = worldIsoToScreen(11, v + 1, world, cam); ctx.drawImage(runnerImg, Math.round(p.x - 32 * z), Math.round(p.y - 16 * z), 64 * z, 32 * z) }
-  if (sprites.images.welcome_mat) { const mp = worldIsoToScreen(11, world.buildingRows + 1, world, cam); ctx.drawImage(sprites.images.welcome_mat, Math.round(mp.x - 32 * z), Math.round(mp.y - 16 * z), 64 * z, 32 * z) }
+  if (runnerImg) for (let v = 9; v < world.buildingRows - 1; v += 2) { const p = worldIsoToScreen(13, v + 1, world, cam); ctx.drawImage(runnerImg, Math.round(p.x - 32 * z), Math.round(p.y - 16 * z), 64 * z, 32 * z) }
+  if (sprites.images.welcome_mat) { const mp = worldIsoToScreen(13.5, world.buildingRows + 1, world, cam); ctx.drawImage(sprites.images.welcome_mat, Math.round(mp.x - 32 * z), Math.round(mp.y - 16 * z), 64 * z, 32 * z) }
   for (const w of world.wings) if (w.kind === 'studio' && w.rugRect) {
     const rugImg = sprites.images[`rug_${w.rugStyle ?? 'woven'}`] ?? sprites.images.rug_woven
     if (rugImg) { const rw = Math.round(((w.rugRect.w + w.rugRect.h) / 2) * 32 * z), rh = Math.round(rw / 2), p = worldIsoToScreen(w.rugRect.u + w.rugRect.w / 2, w.rugRect.v + w.rugRect.h / 2, world, cam); ctx.drawImage(rugImg, Math.round(p.x - rw / 2), Math.round(p.y - rh / 2), rw, rh) }
@@ -199,9 +199,9 @@ function renderL0ToL3(ctx: CanvasRenderingContext2D, state: WorldSceneState, spr
       ctx.fillRect(wx, wy + 5 * z, 4 * z, Math.max(1, h - 15 * z)); ctx.fillStyle = '#6B4A32'; ctx.fillRect(wx, wy + h - 10 * z, 4 * z, 10 * z)
     }
   }
-  for (const seg of sortedWalls) if (seg.hasWindow && sprites.images.facade_window) { const wu = Math.max(Math.min(seg.from.u, seg.to.u) + 1.5, Math.min(Math.max(seg.from.u, seg.to.u) - 1.5, 15.5)), wp = worldIsoToScreen(wu, seg.from.v, world, cam); ctx.drawImage(sprites.images.facade_window, Math.round(wp.x - 27 * z), Math.round(wp.y - 28 * z), 54 * z, 24 * z) }
-  for (const d of world.interiorDoors ?? []) if (sprites.images.door_wood) { const dp = worldIsoToScreen(d.axis === 'u' ? d.u : d.u + 1, d.axis === 'u' ? d.v + 1 : d.v, world, cam); ctx.drawImage(sprites.images.door_wood, Math.round(dp.x - 19 * z), Math.round(dp.y - 50 * z), 38 * z, 52 * z) }
-  if (sprites.images.door_glass) { const dp = worldIsoToScreen(11, world.buildingRows, world, cam); ctx.drawImage(sprites.images.door_glass, Math.round(dp.x - 38 * z), Math.round(dp.y - 49 * z), 76 * z, 50 * z) }
+  for (const seg of sortedWalls) if (seg.hasWindow && sprites.images.facade_window) { const wu = Math.max(Math.min(seg.from.u, seg.to.u) + 1.5, Math.min(Math.max(seg.from.u, seg.to.u) - 1.5, 18.5)), wp = worldIsoToScreen(wu, seg.from.v, world, cam); ctx.drawImage(sprites.images.facade_window, Math.round(wp.x - 27 * z), Math.round(wp.y - 26 * z), 54 * z, 22 * z) }
+  for (const d of world.interiorDoors ?? []) if (sprites.images.door_wood) { const dp = worldIsoToScreen(d.axis === 'u' ? d.u : d.u + 1, d.axis === 'u' ? d.v + 1 : d.v, world, cam); ctx.drawImage(sprites.images.door_wood, Math.round(dp.x - 18 * z), Math.round(dp.y - 46 * z), 36 * z, 46 * z) }
+  if (sprites.images.door_glass) { const dp = worldIsoToScreen(13.5, world.buildingRows, world, cam); ctx.drawImage(sprites.images.door_glass, Math.round(dp.x - 36 * z), Math.round(dp.y - 44 * z), 72 * z, 44 * z) }
   const drawMount = (m: RoomWallMount, bu: number, bv: number) => {
     const img = sprites.images[m.assetId]; if (!img) return
     const b = getMountBox(m, world, cam, bu, bv)

@@ -1,4 +1,4 @@
-/** V2.6 规整建筑级肉鸽沙盘平面布局求解器（纯浏览器端无服务端依赖）。 */
+/** V2.7 零遮挡建筑级肉鸽沙盘平面布局求解器（开阔迎宾前厅 + 阶梯剖面墙，纯浏览器端）。 */
 import { CANVAS_H, CANVAS_W, TILE_H, TILE_W, type GridPoint, type RoomWallMount } from './layout-solver.ts'
 import {
   FURNITURE_COMBO_KINDS,
@@ -27,9 +27,9 @@ import type {
   WorldWingPlan,
 } from './world-types.ts'
 
-export const WORLD_BUILDING_COLS = 22
+export const WORLD_BUILDING_COLS = 24
 export const WORLD_BUILDING_ROWS = 18
-export const WORLD_BASE_ORIGIN = { x: 660, y: 168 } as const
+export const WORLD_BASE_ORIGIN = { x: 640, y: 168 } as const
 
 function normalizeWorkspaces(workspaces: readonly WorkspaceWingSpec[]): WorkspaceWingSpec[] {
   const seen = new Set<string>(), deduped: WorkspaceWingSpec[] = []
@@ -45,24 +45,27 @@ function rectCells(u0: number, v0: number, w: number, h: number): GridPoint[] {
 }
 
 function buildLobby(buildingRows: number, lobbyTopV: number): WorldWingPlan {
-  const rect = { u: 9, v: lobbyTopV, w: 4, h: buildingRows - lobbyTopV }
-  const recV = Math.max(lobbyTopV + 2, 4)
+  const cells: GridPoint[] = []
+  for (let v = lobbyTopV; v < buildingRows; v++) {
+    const uEnd = v < 9 ? 14 : 16
+    for (let u = 9; u < uEnd; u++) cells.push({ u, v })
+  }
+  const rect = { u: 9, v: lobbyTopV, w: 7, h: buildingRows - lobbyTopV }
   return {
-    id: 'lobby', title: '中央迎宾前厅', kind: 'lobby', rect,
-    cells: rectCells(rect.u, rect.v, rect.w, rect.h),
-    focusPoint: { u: 11, v: Math.max(lobbyTopV + 4, 8) }, doorway: { u: 11, v: buildingRows - 1 },
+    id: 'lobby', title: '中央迎宾前厅', kind: 'lobby', rect, cells,
+    focusPoint: { u: 12, v: 11 }, doorway: { u: 13, v: buildingRows - 1 },
     floorStyle: 'warm_parquet', themeHex: '#6B4A32',
-    suites: [makeWorldEntity('lobby-reception', 'reception_desk', 'reception', 10, recV, 'SE', { u: 9, v: recV + 1 })],
+    suites: [makeWorldEntity('lobby-reception', 'reception_desk', 'reception', 10, 11, 'SE', { u: 9, v: 12 })],
     shared: [
-      makeWorldEntity('lobby-bookshelf', 'bookshelf', 'shared', 11, lobbyTopV, 'SE', undefined, 'back'),
-      makeWorldEntity('lobby-cabinet', 'file_cabinet', 'shared', 9, lobbyTopV, 'SE', undefined, 'left'),
-      makeWorldEntity('lobby-lamp', 'lamp_table', 'shared', 9, 11, 'SE'),
-      makeWorldEntity('lobby-plant-1', 'plant_pot', 'shared', 9, 8, 'SW'),
-      makeWorldEntity('lobby-plant-2', 'plant_pot', 'shared', 12, buildingRows - 3, 'SW'),
+      makeWorldEntity('lobby-bookshelf', 'bookshelf', 'shared', 9, lobbyTopV, 'SE', undefined, 'back'),
+      makeWorldEntity('lobby-cabinet', 'file_cabinet', 'shared', 14, 9, 'SW', undefined, 'back'),
+      makeWorldEntity('lobby-lamp', 'lamp_table', 'shared', 9, 14, 'SE'),
+      makeWorldEntity('lobby-plant-1', 'plant_pot', 'shared', 9, 9, 'SW'),
+      makeWorldEntity('lobby-plant-2', 'plant_pot', 'shared', 15, buildingRows - 3, 'SW'),
     ],
     wallMounts: [
-      { id: 'lobby-clock', assetId: 'clock_wall', wall: 'back', at: 10.1, h: 22, span: 1 },
-      { id: 'lobby-corkboard', assetId: 'corkboard', wall: 'back', at: 11.6, h: 8, span: 2, propKind: 'corkboard' },
+      { id: 'lobby-clock', assetId: 'clock_wall', wall: 'back', at: 10.2, h: 18, span: 1 },
+      { id: 'lobby-corkboard', assetId: 'corkboard', wall: 'back', at: 11.8, h: 5, span: 2, propKind: 'corkboard' },
     ],
   }
 }
@@ -90,18 +93,18 @@ function buildWallMountsForWing(
   const cellSet = new Set(cells.map((c) => cellKey(c.u, c.v))), mounts: RoomWallMount[] = [], isOuterBack = rect.v <= 2
   const hasBackAt = (u: number) => isOuterBack && cellSet.has(cellKey(u, rect.v)) && !cellSet.has(cellKey(u, rect.v - 1))
   const hasLeftAt = (v: number) => isLeft && cellSet.has(cellKey(rect.u, v)) && !cellSet.has(cellKey(rect.u - 1, v))
-  if (hasBackAt(rect.u + 3) && hasBackAt(rect.u + 4)) mounts.push({ id: `art-${wingId}`, assetId: seedIdx % 2 === 0 ? 'wall_painting' : 'idea_board', wall: 'back', at: rect.u + 3.8, h: 6, span: 2 })
-  if (hasBackAt(rect.u + 4) && hasBackAt(rect.u + 5)) mounts.push({ id: `win-${wingId}`, assetId: 'window_wide', wall: 'back', at: rect.u + 5.0, h: 6, span: 2 })
-  if (hasLeftAt(rect.v + 4) && hasLeftAt(rect.v + 5)) mounts.push({ id: `wb-${wingId}`, assetId: 'whiteboard_wall', wall: 'left', at: rect.v + 4.8, h: 6, span: 3 })
-  if (hasLeftAt(rect.v + 8) && hasLeftAt(rect.v + 9)) mounts.push({ id: `winL-${wingId}`, assetId: 'window_wide', wall: 'left', at: rect.v + 8.8, h: 6, span: 2 })
-  if (wsId) mounts.push({ id: `doorplate-${wsId}`, assetId: 'doorplate', wall: isLeft ? 'left' : 'back', at: isLeft ? doorway.v - 0.8 : doorway.u + 0.5, h: 20, span: 1, propKind: 'doorplate' })
+  if (hasBackAt(rect.u + 2) && hasBackAt(rect.u + 3) && hasBackAt(rect.u + 4)) mounts.push({ id: `art-${wingId}`, assetId: seedIdx % 2 === 0 ? 'wall_painting' : 'idea_board', wall: 'back', at: rect.u + 3.2, h: 5, span: 2 })
+  if (hasBackAt(rect.u + 5) && hasBackAt(rect.u + 6) && hasBackAt(rect.u + 7)) mounts.push({ id: `win-${wingId}`, assetId: 'window_wide', wall: 'back', at: rect.u + 6.4, h: 5, span: 2 })
+  if (hasLeftAt(rect.v + 4) && hasLeftAt(rect.v + 5) && hasLeftAt(rect.v + 6)) mounts.push({ id: `wb-${wingId}`, assetId: 'whiteboard_wall', wall: 'left', at: rect.v + 5.2, h: 5, span: 3 })
+  if (hasLeftAt(rect.v + 8) && hasLeftAt(rect.v + 9) && hasLeftAt(rect.v + 10)) mounts.push({ id: `winL-${wingId}`, assetId: 'window_wide', wall: 'left', at: rect.v + 9.2, h: 5, span: 2 })
+  if (wsId) mounts.push({ id: `doorplate-${wsId}`, assetId: 'doorplate', wall: isLeft ? 'left' : 'back', at: isLeft ? doorway.v - 0.8 : doorway.u + 0.5, h: 18, span: 1, propKind: 'doorplate' })
   return mounts
 }
 
 function buildProceduralStudio(o: StudioBuildOpts): WorldWingPlan {
   const isLeft = o.slot === 'left'
   const cells = buildShapeCells(o.rect, o.shapeKind, o.slot, o.doorway)
-  const { suites, shared, rugRect } = populateWingFurniture(o.rect, cells, o.doorway, o.comboKind, o.ws?.id)
+  const { suites, shared, rugRect } = populateWingFurniture(o.rect, cells, o.doorway, o.comboKind, o.ws?.id, o.slot)
   const wallMounts: RoomWallMount[] = buildWallMountsForWing(o.id, o.rect, cells, o.doorway, o.ws?.id, isLeft, o.seedIdx)
   return {
     id: o.id, workspaceId: o.ws?.id, title: o.title, repository: o.ws?.repository, kind: 'studio',
@@ -133,10 +136,10 @@ export function cameraForGridPoint(pt: GridPoint, world: OfficeWorldPlan, zoom: 
 }
 
 const BUILDING_SKELETONS = [
-  { lobbyTopV: 2, leftV: 1, leftH: 14, rightTopV: 0, rightTopW: 9, rightBotW: 9 },
-  { lobbyTopV: 0, leftV: 0, leftH: 15, rightTopV: 1, rightTopW: 9, rightBotW: 9 },
-  { lobbyTopV: 1, leftV: 2, leftH: 13, rightTopV: 0, rightTopW: 9, rightBotW: 9 },
-  { lobbyTopV: 2, leftV: 0, leftH: 15, rightTopV: 2, rightTopW: 9, rightBotW: 9 },
+  { lobbyTopV: 2, leftV: 1, leftH: 14, rightTopV: 0 },
+  { lobbyTopV: 0, leftV: 0, leftH: 15, rightTopV: 1 },
+  { lobbyTopV: 1, leftV: 2, leftH: 13, rightTopV: 0 },
+  { lobbyTopV: 2, leftV: 0, leftH: 15, rightTopV: 2 },
 ] as const
 
 export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], seed = 1): OfficeWorldPlan {
@@ -150,9 +153,9 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
   const isBaseSeed = seed === 1
   const sk = BUILDING_SKELETONS[Math.abs(seed - 1) % BUILDING_SKELETONS.length]!
 
-  const leftDoorV = isBaseSeed ? 6 : Math.max(sk.leftV + 3, 4 + Math.floor(rng() * 6))
+  const leftDoorV = isBaseSeed ? 6 : Math.max(sk.leftV + 3, 4 + Math.floor(rng() * 3))
   const upperDoorV = isBaseSeed ? 5 : (leftDoorV === 5 ? 4 : 5)
-  const lowerDoorV = isBaseSeed ? 13 : 12 + Math.floor(rng() * 3)
+  const lowerDoorV = isBaseSeed ? 10 : 10 + Math.floor(rng() * 2)
 
   const wings: WorldWingPlan[] = [
     buildProceduralStudio({
@@ -164,14 +167,14 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
     }),
     buildProceduralStudio({
       ws: list[1], id: list[1] ? `wing-${list[1].id}` : 'wing-reserve', title: list[1]?.title ?? '预备研发工坊',
-      rect: { u: 13, v: sk.rightTopV, w: sk.rightTopW, h: 9 - sk.rightTopV }, doorway: { u: 13, v: upperDoorV }, slot: 'topRight',
+      rect: { u: 14, v: sk.rightTopV, w: 10, h: 9 - sk.rightTopV }, doorway: { u: 14, v: upperDoorV }, slot: 'topRight',
       floorStyle: isBaseSeed ? 'warm_parquet' : pick(floors), rugStyle: isBaseSeed ? 'indigo' : pick(rugs), themeHex: '#3F5A78',
       shapeKind: isBaseSeed ? 'bay-window' : pick(PREFAB_SHAPE_KINDS),
       comboKind: isBaseSeed ? 'war-room-collab' : pick(FURNITURE_COMBO_KINDS), seedIdx: seed + 1,
     }),
     buildProceduralStudio({
       ws: list[2], id: list[2] ? `wing-${list[2].id}` : 'wing-lounge', title: list[2]?.title ?? '茶歇与阅览室',
-      rect: { u: 13, v: 9, w: sk.rightBotW, h: 9 }, doorway: { u: 13, v: lowerDoorV }, slot: 'bottomRight',
+      rect: { u: 16, v: 9, w: 8, h: 9 }, doorway: { u: 16, v: lowerDoorV }, slot: 'bottomRight',
       floorStyle: isBaseSeed ? 'honey_oak' : pick(floors), rugStyle: isBaseSeed ? 'persian' : pick(rugs), themeHex: '#8A6242',
       shapeKind: isBaseSeed ? 'chamfer-octagon' : pick(PREFAB_SHAPE_KINDS),
       comboKind: isBaseSeed ? 'exec-library-lounge' : pick(FURNITURE_COMBO_KINDS), seedIdx: seed + 2, chamferSE: 2,
@@ -183,24 +186,24 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
     const idx = i - 3, isLeft = idx % 2 === 0, rowV = 18 + Math.floor(idx / 2) * 10
     wings.push(buildProceduralStudio({
       ws: list[i]!, id: `wing-${list[i]!.id}`, title: list[i]!.title,
-      rect: { u: isLeft ? 0 : 13, v: rowV, w: 9, h: 10 }, doorway: { u: isLeft ? 8 : 13, v: rowV + 5 }, slot: isLeft ? 'left' : 'bottomRight',
+      rect: { u: isLeft ? 0 : 16, v: rowV, w: isLeft ? 9 : 8, h: 10 }, doorway: { u: isLeft ? 8 : 16, v: rowV + 3 }, slot: isLeft ? 'left' : 'bottomRight',
       floorStyle: isLeft ? 'honey_oak' : 'warm_parquet', rugStyle: pick(rugs), themeHex: isLeft ? '#4A6A50' : '#3F5A78',
       shapeKind: pick(PREFAB_SHAPE_KINDS), comboKind: pick(FURNITURE_COMBO_KINDS), seedIdx: seed + i + 1,
     }))
   }
 
   const lobby = buildLobby(buildingRows, sk.lobbyTopV)
-  const mainEntrance: GridPoint = { u: 11, v: buildingRows - 1 }
+  const mainEntrance: GridPoint = { u: 13, v: buildingRows - 1 }
   const { corridorCells, corridorBranches, networkMetrics } = buildCorridorNetwork(buildingRows, wings, rng, sk.lobbyTopV)
   const hasWingCell = (w: WorldWingPlan, u: number, v: number) => Boolean(w.cells?.some((c) => c.u === u && c.v === v))
-  const rightLinkU = (isBaseSeed ? [16, 15, 17, 14] : [15, 16, 17, 14]).find(
+  const rightLinkU = [17, 16, 18].find(
     (u) => hasWingCell(wings[1]!, u, 8) && hasWingCell(wings[1]!, u + 1, 8)
       && hasWingCell(wings[2]!, u, 9) && hasWingCell(wings[2]!, u + 1, 9)
-      && (hasWingCell(wings[1]!, u + 2, 8) || hasWingCell(wings[2]!, u + 2, 9)),
+      && (hasWingCell(wings[1]!, u + 4, 8) || hasWingCell(wings[2]!, u + 4, 9)),
   )
   const interiorDoors: InteriorDoorSpec[] = [
     ...wings.filter((w) => w.kind === 'studio').map((w) => ({
-      id: `door-${w.id}`, u: w.rect.u === 0 ? 9 : 13, v: w.doorway.v, axis: 'u' as const, wingId: w.id,
+      id: `door-${w.id}`, u: w.rect.u === 0 ? 9 : w.doorway.u, v: w.doorway.v, axis: 'u' as const, wingId: w.id,
     })),
     ...(rightLinkU !== undefined ? [{ id: 'door-right-link', u: rightLinkU, v: 9, axis: 'v' as const, wingId: wings[2]!.id }] : []),
   ]
@@ -217,28 +220,28 @@ export function solveWorldFloorplan(workspaces: readonly WorkspaceWingSpec[], se
 
   const lightSources: LightSourceSpec[] = [
     { id: 'sc-1', kind: 'sconce', u: 9, v: 3.5, radiusTiles: 2.2, intensity: 0.24 },
-    { id: 'sc-2', kind: 'sconce', u: 13, v: 2.2, radiusTiles: 2.2, intensity: 0.24 },
-    { id: 'sc-3', kind: 'sconce', u: 9.6, v: buildingRows, radiusTiles: 2.2, intensity: 0.24 },
-    { id: 'sc-4', kind: 'sconce', u: 12.4, v: buildingRows, radiusTiles: 2.2, intensity: 0.24 },
+    { id: 'sc-2', kind: 'sconce', u: 15.1, v: 9, radiusTiles: 2.2, intensity: 0.24 },
+    { id: 'sc-3', kind: 'sconce', u: 12.2, v: buildingRows, radiusTiles: 2.2, intensity: 0.24 },
+    { id: 'sc-4', kind: 'sconce', u: 14.8, v: buildingRows, radiusTiles: 2.2, intensity: 0.24 },
     { id: 'lp-1', kind: 'lamp', u: 3.2, v: sk.leftV + 1.2, radiusTiles: 2.0, intensity: 0.22 },
-    { id: 'lp-2', kind: 'lamp', u: 19.5, v: 11.5, radiusTiles: 2.0, intensity: 0.22 },
-    { id: 'wn-1', kind: 'window', u: 19.8, v: 1.5, radiusTiles: 3.2, intensity: 0.26 },
-    { id: 'wn-2', kind: 'window', u: 16.5, v: 11.5, radiusTiles: 3.2, intensity: 0.26 },
+    { id: 'lp-2', kind: 'lamp', u: 20.5, v: 11.5, radiusTiles: 2.0, intensity: 0.22 },
+    { id: 'wn-1', kind: 'window', u: 20.5, v: 1.5, radiusTiles: 3.2, intensity: 0.26 },
+    { id: 'wn-2', kind: 'window', u: 18.5, v: 11.5, radiusTiles: 3.2, intensity: 0.26 },
   ]
   const exteriorProps = [
     makeWorldEntity('ext-tree-1', 'courtyard_tree', 'shared', -1, 14, 'SE'),
     makeWorldEntity('ext-shrub-1', 'tree_shrub', 'shared', 2, buildingRows + 1, 'SE'),
     makeWorldEntity('ext-shrub-2', 'tree_shrub', 'shared', 5, buildingRows + 1, 'SE'),
-    makeWorldEntity('ext-tree-2', 'courtyard_tree', 'shared', 7, buildingRows + 1, 'SW'),
-    makeWorldEntity('ext-pot-l', 'plant_pot', 'shared', 8, buildingRows + 1, 'SW'),
-    makeWorldEntity('ext-pot-r', 'plant_pot', 'shared', 13, buildingRows + 1, 'SW'),
-    makeWorldEntity('ext-shrub-3', 'tree_shrub', 'shared', 15, buildingRows + 1, 'SW'),
-    makeWorldEntity('ext-shrub-4', 'tree_shrub', 'shared', 18, buildingRows + 1, 'SW'),
-    makeWorldEntity('ext-shrub-5', 'tree_shrub', 'shared', 21, 9, 'SW'),
+    makeWorldEntity('ext-tree-2', 'courtyard_tree', 'shared', 8, buildingRows + 1, 'SW'),
+    makeWorldEntity('ext-pot-l', 'plant_pot', 'shared', 10, buildingRows + 1, 'SW'),
+    makeWorldEntity('ext-pot-r', 'plant_pot', 'shared', 15, buildingRows + 1, 'SW'),
+    makeWorldEntity('ext-shrub-3', 'tree_shrub', 'shared', 17, buildingRows + 1, 'SW'),
+    makeWorldEntity('ext-shrub-4', 'tree_shrub', 'shared', 20, buildingRows + 1, 'SW'),
+    makeWorldEntity('ext-shrub-5', 'tree_shrub', 'shared', 23, 9, 'SW'),
   ]
   return {
     seed, buildingCols: WORLD_BUILDING_COLS, buildingRows, baseOrigin: { ...WORLD_BASE_ORIGIN },
-    mainEntrance, corridorRect: { u: 9, v: sk.lobbyTopV, w: 4, h: buildingRows - sk.lobbyTopV },
+    mainEntrance, corridorRect: { u: 10, v: sk.lobbyTopV, w: 7, h: buildingRows - sk.lobbyTopV },
     corridorCells, corridorBranches, wallSegments, networkMetrics,
     lobby, wings, partitionWalls, exteriorProps, interiorDoors, frontFacade, lightSources,
   }

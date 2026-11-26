@@ -21,7 +21,7 @@ import { createInitialWorldActors, pickWorldTarget, reSeatWorkerOnWorld, renderW
 import type { OfficeCamera, OfficeWorldPlan, WorkspaceWingSpec, WorldPickResult, WorldWingPlan } from './world-types.ts'
 
 type TicketItem = TicketListView['items'][number]
-const WORLD_CENTER = { u: 10.3, v: 8.5 } as const
+const WORLD_CENTER = { u: 11.8, v: 9.0 } as const
 const SEED_STORAGE_KEY = 'dsh_office_world_seed'
 const defaultZoomFor = (w: number): 1 | 2 => (w >= 1320 ? 2 : 1)
 function readInitialSeed(): number {
