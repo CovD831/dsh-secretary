@@ -130,7 +130,11 @@ describe('阶段四 Track 1：零执行秘书治理闭环与飞书裁决回调�
         .toMatchObject({ totalCases: 2, catches: 1, trueAllows: 1, falseBlocks: 0, misses: 0 })
 
       const installed = await h.runTool(h.runtime.masterId, 'orchestrator_deposit_author', {
-        mode: 'install_shadow', draft: makeRerunDraft({ id: 'verify.shadow-rerun' }),
+        mode: 'install_shadow',
+        draft: {
+          ...makeRerunDraft({ id: 'verify.shadow-rerun' }),
+          rule: { kind: 'predicates', mode: 'all', clauses: [{ path: 'rerun.verifierRole', op: 'neq', value: 'builder', message: '禁止自报自验' }] },
+        },
       }) as { installed: boolean; stage: string; enforce: boolean; registeredInShadow: boolean; packageDir: string }
       expect(installed).toMatchObject({ installed: true, stage: 'shadow', enforce: false, registeredInShadow: true })
       expect(gov.registry.list().some(g => g.id === 'verify.shadow-rerun' && g.stage === 'shadow')).toBe(true)

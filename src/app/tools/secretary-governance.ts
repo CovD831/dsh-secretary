@@ -9,25 +9,19 @@ import {
   runDepositCases, validateDeclarativeRule, type AnyGateDef, type DeclarativeRule, type DepositManifest, type MandateBinding,
   type ParamSpec, type Point, type Verdict,
 } from '../../judgement/index.ts'
-import { assembleMemoryPrompt, memoryTaintOf, readMemoryPage, resolveMemoryRelPath, type MemoryScope } from '../../memory/index.ts'
+import { assembleMemoryPrompt, memoryTaintOf, readMemoryPage, resolveMemoryRelPath } from '../../memory/index.ts'
 import { readM0Events, runHistoricalReplay, type ReplayCase, type ReplayGateFn } from '../../rsi/index.ts'
 import { redactValue } from '../../spine/redact.ts'
 import type { SourceRef, SpineEnvelope } from '../../spine/index.ts'
 import { listDepositDrafts } from '../governance-drafts.ts'
 import type { GovernanceRuntime } from '../governance.ts'
-import { DepositSchema, LedgerSchema, ProposeSchema, RecallSchema, ruleCtxHint, type RawDraft } from './secretary-governance-schemas.ts'
+import {
+  DepositSchema, LedgerSchema, ProposeSchema, RecallSchema, extractDefaultParams, normalizeMemoryScope, ruleCtxHint, type RawDraft,
+} from './secretary-governance-schemas.ts'
 import { tool, type Tool } from './tool.ts'
 
 const BUILTIN_EXECUTABLE_IDS = new Set(['ticket.adaptive-dispatch', 'verify.changed-paths', 'verify.rerun'])
 const stripUndefined = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
-
-function normalizeMemoryScope(layer: 'm1' | 'm2' | 'm3', rawScope?: string, workspaceKey?: string): MemoryScope {
-  const trimmed = rawScope?.trim()
-  if (trimmed === 'global' || trimmed?.startsWith('person:') || trimmed?.startsWith('workspace:')) return trimmed as MemoryScope
-  if (layer === 'm3' && workspaceKey?.trim()) return `workspace:${workspaceKey.trim()}`
-  if (trimmed === 'boss') return 'person:boss'
-  return 'global'
-}
 
 async function resolveTriggerSpineEnvelope(
   gov: GovernanceRuntime,
@@ -73,14 +67,6 @@ function normalizeDraft(raw: RawDraft): DepositDraft {
     ...(raw.mandateCeiling ? { mandateCeiling: raw.mandateCeiling } : {}), ...(raw.mandateRef ? { mandateRef: raw.mandateRef } : {}),
     ...(raw.action ? { action: raw.action } : {}), ...(raw.unansweredSlots ? { unansweredSlots: raw.unansweredSlots } : {}),
   }
-}
-
-function extractDefaultParams(specs: Readonly<Record<string, ParamSpec>> | undefined): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
-  for (const [k, spec] of Object.entries(specs ?? {})) {
-    if (spec && typeof spec === 'object' && 'default' in spec && spec.default !== undefined) out[k] = spec.default
-  }
-  return out
 }
 
 function draftToManifest(draft: DepositDraft, raw?: RawDraft): DepositManifest {

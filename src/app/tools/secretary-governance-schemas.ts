@@ -1,5 +1,7 @@
 /** 零执行秘书治理工具 Zod Schema 抽离模块（记忆召回、M0 溯源提议、M6 账本流转与沉淀作者面）。 */
 import { z } from 'zod'
+import type { ParamSpec } from '../../judgement/index.ts'
+import type { MemoryScope } from '../../memory/index.ts'
 
 export const SourceRefSchema = z.object({ seq: z.number(), id: z.string() }).strict()
 
@@ -129,4 +131,20 @@ export function ruleCtxHint(ruleKind: unknown): string {
   if (ruleKind === 'path_rules') return 'path_rules 默认读取 ctx.changedPaths 字符串数组，正例 ["src/ok.ts"]，反例 ["a/tmp/bad.ts"]'
   if (ruleKind === 'predicates') return 'predicates 按 predicates[].path 读取 ctx 对应路径并做比较'
   return '请核对 rule.kind 与 cases[].ctx 字段路径是否一致，并确保至少 1 条 allow 与 1 条 deny 用例'
+}
+
+export function normalizeMemoryScope(layer: 'm1' | 'm2' | 'm3', rawScope?: string, workspaceKey?: string): MemoryScope {
+  const trimmed = rawScope?.trim()
+  if (trimmed === 'global' || trimmed?.startsWith('person:') || trimmed?.startsWith('workspace:')) return trimmed as MemoryScope
+  if (layer === 'm3' && workspaceKey?.trim()) return `workspace:${workspaceKey.trim()}`
+  if (trimmed === 'boss') return 'person:boss'
+  return 'global'
+}
+
+export function extractDefaultParams(specs: Readonly<Record<string, ParamSpec>> | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, spec] of Object.entries(specs ?? {})) {
+    if (spec && typeof spec === 'object' && 'default' in spec && spec.default !== undefined) out[k] = spec.default
+  }
+  return out
 }

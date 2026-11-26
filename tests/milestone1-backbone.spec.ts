@@ -102,7 +102,7 @@ describe('里程碑 1：原生秘书总线、三档权限沙箱与两层极速�
       })
       expect(sayRes).toMatchObject({ ok: true })
       await expect(h.runTool(h.runtime.masterId, 'secretary_say', {
-        text: '字'.repeat(41), expression: 'neutral',
+        text: '字'.repeat(241), expression: 'neutral',
       })).rejects.toThrow()
 
       const askRes = await h.runTool(h.runtime.masterId, 'secretary_ask', {
