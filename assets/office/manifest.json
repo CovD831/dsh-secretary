@@ -98,6 +98,32 @@
       "outOfPaletteCount": 0,
       "semiTransparentCount": 0
     },
+    "corridor_runner": {
+      "file": "corridor_runner.png",
+      "width": 64,
+      "height": 32,
+      "anchor": [
+        32,
+        16
+      ],
+      "opaquePixels": 1024,
+      "uniqueColors": 3,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "corridor_tile": {
+      "file": "corridor_tile.png",
+      "width": 32,
+      "height": 16,
+      "anchor": [
+        16,
+        8
+      ],
+      "opaquePixels": 256,
+      "uniqueColors": 4,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
     "door_glass": {
       "file": "door_glass.png",
       "width": 80,
@@ -163,6 +189,19 @@
       "outOfPaletteCount": 0,
       "semiTransparentCount": 0
     },
+    "grass_tile": {
+      "file": "grass_tile.png",
+      "width": 32,
+      "height": 16,
+      "anchor": [
+        16,
+        8
+      ],
+      "opaquePixels": 256,
+      "uniqueColors": 2,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
     "office_chair": {
       "file": "office_chair.png",
       "width": 32,
@@ -212,6 +251,45 @@
       ],
       "opaquePixels": 1183,
       "uniqueColors": 28,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "sofa_lounge": {
+      "file": "sofa_lounge.png",
+      "width": 64,
+      "height": 48,
+      "anchor": [
+        32,
+        42
+      ],
+      "opaquePixels": 1096,
+      "uniqueColors": 19,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "stone_tile": {
+      "file": "stone_tile.png",
+      "width": 32,
+      "height": 16,
+      "anchor": [
+        16,
+        8
+      ],
+      "opaquePixels": 256,
+      "uniqueColors": 3,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
+    },
+    "tree_shrub": {
+      "file": "tree_shrub.png",
+      "width": 48,
+      "height": 64,
+      "anchor": [
+        24,
+        56
+      ],
+      "opaquePixels": 1455,
+      "uniqueColors": 21,
       "outOfPaletteCount": 0,
       "semiTransparentCount": 0
     },

@@ -21,13 +21,13 @@ const ASSET_DIR = join(ROOT, 'assets', 'office')
 describe('Phase O2: 46-Color Quantized Assets & 4-Layer Iso Engine', () => {
   it('validates all sliced assets/office/*.png stay strictly within 38 non-status colors and binary alpha', () => {
     const pngs = readdirSync(ASSET_DIR).filter((f) => f.endsWith('.png')).sort()
-    expect(pngs.length).toBe(19)
+    expect(pngs.length).toBe(25)
     const manifest = JSON.parse(readFileSync(join(ASSET_DIR, 'manifest.json'), 'utf8')) as {
       paletteSize: number
       assets: Record<string, { file: string; width: number; height: number }>
     }
     expect(manifest.paletteSize).toBe(38)
-    expect(Object.keys(manifest.assets).length).toBe(19)
+    expect(Object.keys(manifest.assets).length).toBe(25)
 
     for (const file of pngs) {
       const { width, height, rgba } = decodePngRgba(readFileSync(join(ASSET_DIR, file)))
