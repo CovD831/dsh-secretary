@@ -6,7 +6,7 @@ import { latestReport, type Ticket } from '../core/index.ts'
 import { packagePath } from '../infra/paths.ts'
 import {
   discoverAndRegisterDeposits, evaluateCompiledEntry, loadDepositPackage, renderDepositsLedgerMarkdown,
-  resolveDepositEntry, transitionDepositStage,
+  transitionDepositStage,
   type DiscoveredDepositRecord, type RegistryEntry, type Stage, type TransitionDepositStageResult, type Verdict,
 } from '../judgement/index.ts'
 import { KV } from '../kv.ts'
@@ -22,6 +22,7 @@ import {
   type AblationCase, type CalibratedGateRecord, type ExpectedCalibrationReport, type HoldoutEvaluationResult,
   type LeaveOneOutResult, type OnlineCollectionResult, type ReplayCase, type TemperatureScaler,
 } from '../rsi/index.ts'
+import { loadSafeCandidateEntry } from './governance-drafts.ts'
 import type { GovernanceRuntime } from './governance.ts'
 
 export interface MemoryStudioEntryRow {
@@ -259,42 +260,35 @@ export async function openRsiSealedHoldout(
   gov: GovernanceRuntime,
   input: { candidateId: string; cases: readonly ReplayCase<unknown>[]; point: string },
 ): Promise<{ ok: true; result: HoldoutEvaluationResult } | { ok: false; reason: string }> {
+  let diskEntry: RegistryEntry | undefined
+  try {
+    if (!gov.registry.list().some(e => e.id === input.candidateId)) diskEntry = await loadSafeCandidateEntry(depositDirsOf(gov.stateDir), input.candidateId)
+    else if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(input.candidateId) || input.candidateId.includes('..')) throw new Error(`非法 candidateId "${input.candidateId}"`)
+  } catch (err) { return { ok: false, reason: err instanceof Error ? err.message : String(err) } }
   const opened = gov.storeRef.get(KV.governance.openedHoldouts) ?? {}
   if (opened[input.candidateId]) return { ok: false, reason: `Holdout "${input.candidateId}" 已于 ${opened[input.candidateId]} 开封，禁止重复调参刷分` }
   if (input.cases.length < 4) return { ok: false, reason: '样本集至少需 4 条带独立 family 的历史用例方可切分 Holdout' }
   const split = splitByFamily(input.cases)
   if (split.train.length === 0 || split.holdout.length === 0) return { ok: false, reason: '切分后 train 或 holdout 为空，请补充不同 family 样本' }
-  const otherEnforceIds = new Set(
-    gov.registry.list().filter(e => e.kind === 'gate' && e.point === input.point && e.stage === 'enforce' && e.id !== input.candidateId).map(e => e.id),
-  )
-  let diskEntry: RegistryEntry | undefined
-  if (!gov.registry.list().some(e => e.id === input.candidateId)) {
-    for (const dir of depositDirsOf(gov.stateDir)) {
-      const loaded = await loadDepositPackage(join(dir, input.candidateId)).catch(() => undefined)
-      if (loaded?.admission.admitted) { diskEntry = resolveDepositEntry(loaded.admission.manifest); break }
-    }
-  }
-  const evalBaseline = (ran: readonly { id: string; outcome: string; detail?: string }[]): Verdict => {
-    const baseRan = ran.filter(r => otherEnforceIds.has(r.id))
-    const denies = baseRan.filter(r => r.outcome === 'deny')
+  const otherEnforceIds = new Set(gov.registry.list().filter(e => e.kind === 'gate' && e.point === input.point && e.stage === 'enforce' && e.id !== input.candidateId).map(e => e.id))
+  const evalBaseline = (ran: readonly { id: string; outcome: string; detail?: string }[], observed: readonly { id: string; outcome: string }[]): Verdict => {
+    const obsSet = new Set(observed.map(o => `${o.id}:${o.outcome}`))
+    const baseRan = ran.filter(r => otherEnforceIds.has(r.id) && !obsSet.has(`${r.id}:${r.outcome}`))
+    const denies = baseRan.filter(r => r.outcome === 'deny'), unmeas = baseRan.filter(r => r.outcome === 'unmeasured')
     if (denies.length > 0) return { kind: 'deny', blockers: denies.map(r => r.detail || 'denied') as [string, ...string[]] }
-    const unmeas = baseRan.filter(r => r.outcome === 'unmeasured')
     if (unmeas.length > 0) return { kind: 'unmeasured', cause: 'no-evidence', detail: unmeas.map(r => r.detail || 'unmeasured').join('; ') }
-    if (otherEnforceIds.size > 0 && baseRan.every(r => r.outcome === 'skipped')) return { kind: 'unmeasured', cause: 'all-skipped', detail: 'baseline gates skipped' }
-    return { kind: 'allow' }
+    return otherEnforceIds.size > 0 && baseRan.every(r => r.outcome === 'skipped') ? { kind: 'unmeasured', cause: 'all-skipped', detail: 'baseline gates skipped' } : { kind: 'allow' }
   }
   const result = await evaluateSealedHoldout({
-    baselineGate: async ctx => evalBaseline((await gov.registry.evaluate(input.point as never, ctx as never)).ran),
+    baselineGate: async ctx => { const ev = await gov.registry.evaluate(input.point as never, ctx as never); return evalBaseline(ev.ran, ev.observed) },
     candidateGate: async ctx => {
-      const ev = await gov.registry.evaluate(input.point as never, ctx as never)
-      const base = evalBaseline(ev.ran)
-      if (base.kind !== 'allow') return base
+      const ev = await gov.registry.evaluate(input.point as never, ctx as never), base = evalBaseline(ev.ran, ev.observed)
+      if (base.kind === 'deny') return base
       const hit = [...ev.observed, ...ev.ran].find(r => r.id === input.candidateId)
-      if (!hit) return diskEntry ? evaluateCompiledEntry(diskEntry, ctx) : { kind: 'unmeasured', cause: 'no-evidence', detail: `未找到候选判据 ${input.candidateId}` }
-      if (hit.outcome === 'allow') return { kind: 'allow' }
-      if (hit.outcome === 'deny') return { kind: 'deny', blockers: [hit.detail || `${input.candidateId} denied`] }
-      if (hit.outcome === 'skipped') return { kind: 'unmeasured', cause: 'all-skipped', detail: hit.detail || `${input.candidateId} skipped` }
-      return { kind: 'unmeasured', cause: 'no-evidence', detail: hit.detail || `${input.candidateId} unmeasured` }
+      const cand: Verdict = !hit ? (diskEntry ? await evaluateCompiledEntry(diskEntry, ctx) : { kind: 'unmeasured', cause: 'no-evidence', detail: `未找到候选判据 ${input.candidateId}` })
+        : hit.outcome === 'allow' ? { kind: 'allow' } : hit.outcome === 'deny' ? { kind: 'deny', blockers: [hit.detail || `${input.candidateId} denied`] }
+        : { kind: 'unmeasured', cause: hit.outcome === 'skipped' ? 'all-skipped' : 'no-evidence', detail: hit.detail || `${input.candidateId} ${hit.outcome}` }
+      return base.kind === 'unmeasured' ? (cand.kind === 'deny' ? cand : base) : cand
     },
     split, candidateId: input.candidateId, actorId: 'boss', now: () => gov.nowDate(),
   })

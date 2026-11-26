@@ -132,6 +132,8 @@ describe('P0 governance closure & wired rules', () => {
       mandate: { policyVersion: 'v1', reason: 'test' } as never,
     })
 
+    const notStale = await gov.tickPatrol(120)
+    expect(notStale).toEqual({ checkedTickets: 1, evaluated: 0, reminded: 0 })
     const first = await gov.tickPatrol(30)
     expect(first).toEqual({ checkedTickets: 1, evaluated: 1, reminded: 1 })
     setNow('2026-11-26T10:01:00.000Z')
@@ -170,6 +172,16 @@ describe('P0 governance closure & wired rules', () => {
       requires: ['hasBug'] as never,
       gate: (ctx: unknown) => (ctx as { hasBug?: boolean }).hasBug ? { kind: 'deny' as const, blockers: ['bug found'] as [string] } : { kind: 'allow' as const },
     }, 'shadow')
+
+    const badTraversal = await openRsiSealedHoldout(gov, {
+      candidateId: '../evil',
+      point: 'verify.preflight',
+      cases: ['f1', 'f2', 'f3', 'f4', 'f5'].flatMap((family, i) => [
+        { id: `t-${i}-1`, family, input: { hasBug: true }, expectedOutcome: 'defect' as const },
+        { id: `t-${i}-2`, family, input: { hasBug: false }, expectedOutcome: 'clean' as const },
+      ]),
+    })
+    expect(badTraversal.ok).toBe(false)
 
     const res = await openRsiSealedHoldout(gov, {
       candidateId: 'cand.shadow-check',

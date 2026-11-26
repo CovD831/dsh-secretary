@@ -1,4 +1,4 @@
-/** 治理草稿箱、桌面裁决分流落地、常驻巡检（standing-order）与 M0 分片缓存查询。 */
+/** 治理草稿箱与桌面/像素办公室裁决分流落地（安全校验、幂等防重与 shadow 安装）。 */
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
@@ -13,19 +13,33 @@ import {
   type ParamSpec, type Point, type RegistryEntry, type Verdict,
 } from '../judgement/index.ts'
 import type { AttentionItem, WriteResult } from '../memory/index.ts'
-import { readCachedShardEvents } from '../projection/shard-cache.ts'
-import { collectOnlineRsiSnapshot, readM0Events } from '../rsi/index.ts'
-import { redactValue, type SourceRef, type SpineEnvelope } from '../spine/index.ts'
+import { collectOnlineRsiSnapshot } from '../rsi/index.ts'
+import { redactValue } from '../spine/index.ts'
 import type { GovernanceRuntime } from './governance.ts'
 import { syncDepositsAndLedger } from './governance-ops.ts'
 import type { FourWayAttribution, RulingItem } from './ruling-queue.ts'
-import type { Store } from './store.ts'
 
-const SHARD_NAME_RE = /^\d{4}-\d{2}-\d{2}\.jsonl$/
+/** 安全校验候选 ID 并从状态目录/内置沉淀目录加载未注册候选条目（防目录穿越与软链）。 */
+export async function loadSafeCandidateEntry(dirs: readonly string[], candidateId: string): Promise<RegistryEntry | undefined> {
+  if (!SAFE_DRAFT_ID_RE.test(candidateId) || candidateId.includes('..')) throw new Error(`非法 candidateId "${candidateId}"`)
+  for (const dir of dirs) {
+    const dirSt = await lstat(dir).catch(() => undefined)
+    if (!dirSt || !dirSt.isDirectory() || dirSt.isSymbolicLink()) continue
+    const dirReal = await realpath(dir), pkgDir = resolve(dirReal, candidateId)
+    const pkgSt = await lstat(pkgDir).catch(() => undefined)
+    if (!pkgSt || !pkgSt.isDirectory() || pkgSt.isSymbolicLink()) continue
+    const rel = relative(dirReal, await realpath(pkgDir))
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) continue
+    const loaded = await loadDepositPackage(pkgDir).catch(() => undefined)
+    if (loaded?.admission.admitted) return loaded.admission.manifest.rule || loaded.admission.manifest.kind === 'standing-order' ? compileDeclarativeEntry(loaded.admission.manifest) : undefined
+  }
+  return undefined
+}
 const SAFE_DRAFT_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/
 const ATTRIBUTION_MAP: Readonly<Record<FourWayAttribution, AttributionCategory>> = {
   missing_rule: 'gate_gap', wrong_rule: 'exec_mistake', unmeasurable: 'env_transient', rule_conflict: 'mandate_unclear',
 }
+const appliedRulings = new WeakMap<GovernanceRuntime, Set<string>>()
 
 export interface DepositDraftEntry {
   readonly id: string; readonly source: 'disk' | 'online-rsi'; readonly filePath?: string; readonly draft: DepositDraft
@@ -39,7 +53,6 @@ export type AdoptDepositDraftResult =
   | { readonly ok: false; readonly reason: string; readonly validation?: DraftValidationResult; readonly ruleIssues?: readonly unknown[] }
   | { readonly ok: true; readonly id: string; readonly filePath?: string; readonly installed: boolean; readonly stage?: 'shadow'
       readonly enforce?: false; readonly packageDir?: string; readonly draft: DepositDraft; readonly validation: DraftValidationResult }
-export interface PatrolRunReport { readonly checkedTickets: number; readonly evaluated: number; readonly reminded: number }
 
 const sanitizeDraftId = (rawId: string) =>
   rawId.replace(/\.{2,}/g, '-').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^[.-]+|[.-]+$/g, '') || 'friction-captured'
@@ -63,33 +76,17 @@ async function writeSafeDraftJson(stateDir: string, draftId: string, content: un
   return target
 }
 
-/** 结合 SQLite 与 `defaultShardCache` 只读分片缓存按 SourceRef 精准读取单条 M0 事件信封。 */
-export async function readSpineEnvelopeFromStore(
-  store: Pick<Store, 'db'>, memoryDir: string, closed: boolean, ref: SourceRef,
-): Promise<SpineEnvelope<Record<string, unknown>> | undefined> {
-  if (!ref || !Number.isSafeInteger(ref.seq) || ref.seq <= 0 || typeof ref.id !== 'string' || !ref.id.trim()) return undefined
-  if (!closed) {
-    const row = store.db.prepare('SELECT id, value FROM event_spine WHERE seq = ?').get(ref.seq) as { id?: string; value?: string } | undefined
-    if (row) return row.id === ref.id && row.value ? JSON.parse(row.value) as SpineEnvelope<Record<string, unknown>> : undefined
-  }
-  const m0Dir = join(memoryDir, 'm0')
-  let shards: string[]
-  try { shards = (await readdir(m0Dir)).filter(n => SHARD_NAME_RE.test(n)).sort() } catch { return undefined }
-  for (let i = shards.length - 1; i >= 0; i--) {
-    const events = await readCachedShardEvents(join(m0Dir, shards[i]!))
-    for (let j = events.length - 1; j >= 0; j--) {
-      if (events[j]!.seq === ref.seq) return events[j]!.id === ref.id ? (events[j] as SpineEnvelope<Record<string, unknown>>) : undefined
-    }
-    if (events.length > 0 && events[events.length - 1]!.seq < ref.seq) return undefined
-  }
-  return undefined
-}
-
-/** 将桌面/像素办公室已完成裁决按四分法归因接通 `routeEscalationRuling` 并落地草稿或 M2/M3/M6 记忆。 */
+/** 将桌面/像素办公室已完成裁决按四分法归因接通 `routeEscalationRuling` 并幂等落地草稿或 M2/M3/M6 记忆。 */
 export async function applyDecidedRuling(
   gov: GovernanceRuntime, item: RulingItem,
 ): Promise<{ routed?: EscalationRouteResult; draftPath?: string; memoryWrite?: WriteResult; attentionItem?: AttentionItem } | undefined> {
   if (item.status !== 'decided' || !item.ruledRef || (item.captureAsRule !== true && !item.attribution)) return undefined
+  let seen = appliedRulings.get(gov)
+  if (!seen) { seen = new Set(); appliedRulings.set(gov, seen) }
+  const appliedEventId = `desktop:applied:${item.id}`
+  if (seen.has(item.id) || gov.storeRef.db.prepare('SELECT 1 FROM event_spine WHERE id = ? LIMIT 1').get(appliedEventId)) return undefined
+  seen.add(item.id)
+
   const attribution: AttributionCategory = item.attribution ? ATTRIBUTION_MAP[item.attribution] : 'gate_gap'
   const decidedAt = item.decidedAt ?? gov.nowDate().toISOString()
   const ruling: EscalationRuling = {
@@ -99,6 +96,12 @@ export async function applyDecidedRuling(
   }
   const workspace = item.workspace ?? (item.ticketId ? gov.storeRef.tickets.get(item.ticketId)?.execution?.workspace : undefined)
   const routed = routeEscalationRuling(ruling, workspace ? { workspace } : {})
+  const recordApplied = () => gov.appender.append({
+    id: appliedEventId, at: decidedAt, stream: item.ticketId ? `ticket:${item.ticketId}` : `ruling:${item.id}`,
+    type: 'escalation.applied', causationId: item.ruledRef!.id, source: { kind: 'system', ref: 'governance.ruling' },
+    evidence: [{ kind: 'event', ref: item.ruledRef!.id }], taint: 'trusted',
+    payload: { escalationId: item.id, ruledRef: item.ruledRef, route: routed.route },
+  })
   if (routed.route === 'deposit-draft') {
     const safeId = sanitizeDraftId(routed.draft.id)
     const { value: cleanDraft } = redactValue({ ...routed.draft, id: safeId })
@@ -107,18 +110,22 @@ export async function applyDecidedRuling(
       id: `authoring:draft_created:${safeId}:${item.id}`, kind: 'draft_created', draftId: safeId,
       depositKind: cleanDraft.kind, scope: cleanDraft.scope, at: decidedAt, actorId: ruling.operatorOpenId,
     }))
+    recordApplied()
     return { routed, draftPath }
   }
   if (routed.route === 'workspace-memory-proposal' && !workspace) {
     const q = `待确认工作区归属（工单 ${ruling.ticketId} 裁决 ${ruling.escalationId}）：${ruling.note?.trim() || '请指定目标 M3 工作区'}`
     const attentionItem = (await gov.memory.upsertAttention({ kind: 'verification', question: q, sourceRefs: [item.ruledRef], delaySeen: 1, seenCount: 1 }, ruling.operatorOpenId)).item
+    recordApplied()
     return { routed, attentionItem }
   }
   if (routed.route === 'workspace-memory-proposal' || routed.route === 'user-ruling-memory-proposal') {
     const memoryWrite = await gov.memory.propose(toMemoryProposal(routed, workspace ? { workspaceId: workspace } : {}))
-    if (memoryWrite.kind === 'accepted') gov.ftsIndex.rebuild().catch(() => undefined)
+    if (memoryWrite.kind === 'accepted') await gov.ftsIndex.rebuild().catch(() => undefined)
+    recordApplied()
     return { routed, memoryWrite }
   }
+  recordApplied()
   return { routed }
 }
 
@@ -162,20 +169,26 @@ function inspectDraft(draft: DepositDraft, raw?: Record<string, unknown>) {
   return { validation, ruleIssues, ready: validation.ok && ruleIssues.length === 0 }
 }
 
-/** 列出 `<stateDir>/deposit-drafts/*.json` 草稿及可选合并在线 RSI 候选（同 ID 以磁盘为准）。 */
+/** 列出 `<stateDir>/deposit-drafts/*.json` 草稿及可选合并在线 RSI 候选（同 ID 以磁盘为准，防软链逃逸）。 */
 export async function listDepositDrafts(gov: GovernanceRuntime, options: { includeOnlineCandidates?: boolean } = {}): Promise<DepositDraftEntry[]> {
-  const draftsDir = join(gov.stateDir, 'deposit-drafts')
+  const draftsDir = resolve(gov.stateDir, 'deposit-drafts')
   const byId = new Map<string, DepositDraftEntry>()
-  let files: string[] = []
-  try { files = (await readdir(draftsDir)).filter(n => n.endsWith('.json')).sort() } catch { files = [] }
-  for (const name of files) {
-    const filePath = join(draftsDir, name)
-    try {
-      if ((await lstat(filePath)).isSymbolicLink()) continue
-      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>
-      const draft = normalizeRawDraft(raw)
-      byId.set(draft.id, { id: draft.id, source: 'disk', filePath, draft, ...inspectDraft(draft, raw) })
-    } catch { continue }
+  const dirStat = await lstat(draftsDir).catch(() => undefined)
+  if (dirStat && dirStat.isDirectory() && !dirStat.isSymbolicLink()) {
+    const rootReal = await realpath(draftsDir)
+    const files = (await readdir(rootReal)).filter(n => n.endsWith('.json')).sort()
+    for (const name of files) {
+      const filePath = resolve(rootReal, name)
+      try {
+        const st = await lstat(filePath)
+        if (!st.isFile() || st.isSymbolicLink()) continue
+        const rel = relative(rootReal, await realpath(filePath))
+        if (!rel || rel.startsWith('..') || isAbsolute(rel)) continue
+        const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>
+        const draft = normalizeRawDraft(raw)
+        byId.set(draft.id, { id: draft.id, source: 'disk', filePath, draft, ...inspectDraft(draft, raw) })
+      } catch { continue }
+    }
   }
   if (options.includeOnlineCandidates !== false) {
     const snap = await collectOnlineRsiSnapshot({ db: gov.storeRef.db, memoryDir: gov.memoryDir }).catch(() => undefined)
@@ -208,8 +221,7 @@ function buildShadowGate(draft: DepositDraft, raw: Record<string, unknown>): Any
       }, params), ctx)
     : (ctx: unknown): Verdict => {
         const audit = auditRequires(ctx, draft.requires)
-        return audit.ok
-          ? { kind: 'unmeasured', cause: 'no-evidence', detail: `草稿 "${draft.id}" 尚未绑定已注册判据实现` }
+        return audit.ok ? { kind: 'unmeasured', cause: 'no-evidence', detail: `草稿 "${draft.id}" 尚未绑定已注册判据实现` }
           : { kind: 'unmeasured', cause: 'missing-input', detail: `缺少必需输入路径: ${audit.missing.join(', ')}` }
       }
   return {
@@ -218,13 +230,14 @@ function buildShadowGate(draft: DepositDraft, raw: Record<string, unknown>): Any
   } as AnyGateDef
 }
 
-/** 认领草稿或在线 RSI 候选，保存至草稿箱并可选校验后安装为 `shadow` 沉淀包。 */
+/** 认领草稿或在线 RSI 候选，保存至草稿箱并可选校验与预编译后安装为 `shadow` 沉淀包。 */
 export async function adoptDepositDraft(gov: GovernanceRuntime, input: AdoptDepositDraftInput): Promise<AdoptDepositDraftResult> {
   let baseRaw: Record<string, unknown> | undefined = input.draft ? { ...input.draft } : undefined
   if (!baseRaw && input.draftId) {
     const found = (await listDepositDrafts(gov, { includeOnlineCandidates: true }))
       .find(d => d.id === input.draftId || sanitizeDraftId(d.id) === sanitizeDraftId(input.draftId!))
-    baseRaw = found?.filePath ? JSON.parse(await readFile(found.filePath, 'utf8')) as Record<string, unknown> : found?.draft as unknown as Record<string, unknown> | undefined
+    if (found?.filePath) { await assertNotSymlink(found.filePath); baseRaw = JSON.parse(await readFile(found.filePath, 'utf8')) as Record<string, unknown> }
+    else if (found) baseRaw = found.draft as unknown as Record<string, unknown>
   }
   if (!baseRaw) return { ok: false, reason: input.draftId ? `未找到草稿 "${input.draftId}"` : '缺少 draftId 或 draft 参数' }
   const mergedRaw: Record<string, unknown> = {
@@ -242,19 +255,24 @@ export async function adoptDepositDraft(gov: GovernanceRuntime, input: AdoptDepo
     return { ok: false, reason: `禁止影子安装包覆盖内置保留或非 shadow 阶段判据: ${safeId}` }
   }
   const shadowDraft: DepositDraft = { ...draft, stage: 'shadow', enforce: false }
+  let compiledEntry: RegistryEntry | undefined
+  if (redactedRaw['rule'] !== undefined || shadowDraft.kind === 'standing-order') {
+    compiledEntry = compileDeclarativeEntry({
+      id: shadowDraft.id, version: shadowDraft.version, kind: shadowDraft.kind, trust: 'owner', cases: 'cases/',
+      prose: shadowDraft.intent, params: shadowDraft.params, requires: shadowDraft.requires,
+      ...(shadowDraft.kind === 'gate' || shadowDraft.kind === 'counter-rule' ? { point: shadowDraft.point as Point, placement: { timing: 'pre', enforce: false } } : {}),
+      stage: 'shadow', enforce: false, actionClass: shadowDraft.actionClass,
+      ...(redactedRaw['rule'] !== undefined ? { rule: redactedRaw['rule'] as DeclarativeRule } : {}),
+      ...(redactedRaw['mandate'] ? { mandate: redactedRaw['mandate'] as MandateBinding } : {}),
+    })
+  }
   const written = await writeDepositDraftPackage(join(gov.stateDir, 'deposits'), shadowDraft)
   await mergeExtras(written.depositMdPath, redactedRaw)
   const loaded = await loadDepositPackage(written.packageDir)
   if (!loaded.admission.admitted) return { ok: false, reason: `影子包准入异常: ${loaded.admission.violations.map(v => v.reason).join('; ')}` }
-  const m = loaded.admission.manifest
   if (existing) gov.registry.unregister(safeId)
-  if (m.rule || m.kind === 'standing-order') {
-    gov.registry.register(compileDeclarativeEntry({
-      ...m, stage: 'shadow', enforce: false,
-      ...(m.kind === 'gate' || m.kind === 'counter-rule' ? { placement: { timing: 'pre', enforce: false } } : {}),
-      ...(redactedRaw['mandate'] ? { mandate: redactedRaw['mandate'] as MandateBinding } : {}),
-    }), 'shadow')
-  } else if (m.kind === 'gate' || m.kind === 'counter-rule') {
+  if (compiledEntry) gov.registry.register(compiledEntry, 'shadow')
+  else if (loaded.admission.manifest.kind === 'gate' || loaded.admission.manifest.kind === 'counter-rule') {
     gov.registry.register(buildShadowGate(shadowDraft, redactedRaw), 'shadow')
   }
   await unlink(filePath).catch(() => undefined)
@@ -264,50 +282,4 @@ export async function adoptDepositDraft(gov: GovernanceRuntime, input: AdoptDepo
     draftId: safeId, version: shadowDraft.version, at: gov.nowDate().toISOString(), actorId: input.actorId ?? 'boss',
   }))
   return { ok: true, id: safeId, installed: true, stage: 'shadow', enforce: false, packageDir: written.packageDir, draft: shadowDraft, validation }
-}
-
-/** 扫描未结单且有运行中 assignment 的工单，评估 `ticket.stale` 常驻巡检并按需写入 M6 温和提醒。 */
-export async function runStandingOrderPatrol(gov: GovernanceRuntime, options: { maxIdleMinutes?: number } = {}): Promise<PatrolRunReport> {
-  const orders = gov.registry.standingOrders('ticket.stale')
-  const openTickets = gov.storeRef.tickets.list().filter(t => !t.ended && t.assignments.some(a => a.state === 'running'))
-  if (orders.length === 0 || openTickets.length === 0) return { checkedTickets: openTickets.length, evaluated: 0, reminded: 0 }
-  const now = gov.nowDate(), nowMs = now.getTime(), maxIdleMinutes = options.maxIdleMinutes ?? 30
-  const lastEvalAt = new Map<string, number>()
-  for (const ev of await readM0Events({ db: gov.storeRef.db, memoryDir: gov.memoryDir }).catch(() => [])) {
-    const p = ev.payload as Record<string, unknown> | undefined
-    if (ev.type === 'standing_order.evaluated' && typeof p?.['orderId'] === 'string' && typeof p?.['ticketId'] === 'string') {
-      const ts = Date.parse(ev.at)
-      if (Number.isFinite(ts)) lastEvalAt.set(`${p['orderId']}:${p['ticketId']}`, ts)
-    }
-  }
-  let evaluated = 0, reminded = 0
-  for (const ticket of openTickets) {
-    const running = ticket.assignments.find(a => a.state === 'running')
-    const lastIso = running?.idleAt ?? running?.deliveredAt ?? running?.report?.at ?? running?.startedAt ?? running?.createdAt ?? ticket.updatedAt
-    const staleMinutes = Math.max(0, (nowMs - Date.parse(lastIso)) / 60_000)
-    if (!Number.isFinite(staleMinutes)) continue
-    for (const order of orders) {
-      const prevTs = lastEvalAt.get(`${order.id}:${ticket.id}`)
-      const elapsedMs = prevTs !== undefined ? Math.max(0, nowMs - prevTs) : Number.MAX_SAFE_INTEGER
-      const verdict = await evaluateCompiledEntry(order as unknown as RegistryEntry, {
-        signal: 'ticket.stale', elapsedMs, isolation: 'I1',
-        payload: { status: 'working', ticketId: ticket.id, staleMinutes, idleExceeded: staleMinutes >= maxIdleMinutes,
-          ticketOpen: !ticket.ended, completedSteps: ['verify-heartbeat-timeout', 'confirm-open-ticket'] },
-      })
-      evaluated += 1
-    const ref = gov.appender.append({
-      id: `patrol:${order.id}:${ticket.id}:${nowMs}:${evaluated}`, at: now.toISOString(), stream: `ticket:${ticket.id}`,
-      type: 'standing_order.evaluated', source: { kind: 'system', ref: 'governance.patrol' },
-      evidence: [{ kind: 'event', ref: `ticket:${ticket.id}` }], taint: 'trusted',
-      payload: { orderId: order.id, signal: 'ticket.stale', ticketId: ticket.id, staleMinutes, elapsedMs, verdict, action: order.action },
-    })
-    lastEvalAt.set(`${order.id}:${ticket.id}`, nowMs)
-    if (verdict.kind === 'allow' && order.action.name === 'ticket.remind') {
-      reminded += 1
-      await gov.memory.upsertAttention({ kind: 'verification', sourceRefs: [ref], delaySeen: 1, seenCount: 1,
-        question: `工单「${ticket.title}」(${ticket.id}) 已静默 ${Math.round(staleMinutes)} 分钟，请确认是否需要介入或催办` }, 'standing-order').catch(() => undefined)
-    }
-    }
-  }
-  return { checkedTickets: openTickets.length, evaluated, reminded }
 }

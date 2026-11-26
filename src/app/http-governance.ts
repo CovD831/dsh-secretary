@@ -8,10 +8,8 @@ import { renderF1ProofHtml } from '../pixel-office/index.ts'
 import { readDepositsProjection, readNotebookProjection, readSpineProjection, readStateProjection } from '../projection/index.ts'
 import type { AblationCase, HoldoutEvaluationResult, LeaveOneOutResult, ReplayCase } from '../rsi/index.ts'
 import type { Api, ApiResponse, RouteParams } from './api.ts'
-import {
-  adoptDepositDraft, listDepositDrafts,
-  type AdoptDepositDraftResult, type DepositDraftEntry, type PatrolRunReport,
-} from './governance-drafts.ts'
+import { adoptDepositDraft, listDepositDrafts, type AdoptDepositDraftResult, type DepositDraftEntry } from './governance-drafts.ts'
+import type { PatrolRunReport } from './governance-patrol.ts'
 import {
   changeDepositStage, decideMemoryPatch, openRsiSealedHoldout, readMemoryStudioView,
   readRsiStudioView, runRsiAblationCheck, saveDirectMemory, syncDepositsAndLedger,

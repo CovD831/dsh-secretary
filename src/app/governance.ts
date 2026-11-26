@@ -16,7 +16,8 @@ import {
   observeWorktrees, planWorkspaceGc, registerDispatchIsolationGate, registerWorkspaceGcGate,
   type GcSubject, type WorkspaceDef, type WorkspaceRegistry, type WorktreeObservation,
 } from '../workspaces/index.ts'
-import { applyDecidedRuling, readSpineEnvelopeFromStore, runStandingOrderPatrol, type PatrolRunReport } from './governance-drafts.ts'
+import { applyDecidedRuling } from './governance-drafts.ts'
+import { readSpineEnvelopeFromStore, runStandingOrderPatrol, type PatrolRunReport } from './governance-patrol.ts'
 import { collectPostTicketPatches, readSyncTailSeq, refreshSecretaryMemoryBlock, syncDepositsAndLedger } from './governance-ops.ts'
 import { ingestFeishuCardAction, type FeishuCardIngestResult, type IngestFeishuCardOptions } from './governance-ruling.ts'
 import { RulingQueue, type RulingItem } from './ruling-queue.ts'
