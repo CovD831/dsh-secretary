@@ -523,7 +523,7 @@ export class DshExecutor implements Executor {
     if (!current()) return
     const batch = told ? [] : batchOf(this.host, ticket).map(batchLine)
     let prepared: PreparedLaunchCapsule | undefined
-    if (!told && this.host.prepareCapsule) {
+    if (this.host.prepareCapsule) {
       try {
         prepared = await this.host.prepareCapsule({
           ticket, assignment, workspaceDir: workspace, ...(source ? { triggerText: source.text } : {}),
@@ -548,7 +548,14 @@ export class DshExecutor implements Executor {
     }
     await this.host.sessions.applyWorkerDispatch?.(agent, effectiveTicket)
     if (!current()) return
-    const text = told ? JSON.stringify({ ticket_id: ticket.id, assignment: ticket.assignments.length, ...retried })
+    const capsuleRefresh = told && prepared?.capsule.text ? {
+      text: prepared.capsule.text, usedBytes: prepared.capsule.usedBytes, matchedPitfalls: prepared.capsule.matchedPitfalls,
+      ...(prepared.matchedPlaybooks?.length ? { matchedPlaybooks: prepared.matchedPlaybooks } : {}),
+    } : undefined
+    const includeToldDispatch = Boolean(capsuleRefresh || prepared?.dispatch?.escalateReason)
+    const text = told ? JSON.stringify({ ticket_id: ticket.id, assignment: ticket.assignments.length, ...retried,
+      ...(includeToldDispatch && prepared?.dispatch ? { dispatch_plan: prepared.dispatch } : {}),
+      ...(capsuleRefresh ? { capsule_refresh: capsuleRefresh } : {}) })
       : JSON.stringify({ ticket_id: ticket.id, title: ticket.title, ...(brief ? { assignment: brief } : {}),
         ...(read ? { assignment_chars: chars, assignment_read: read } : {}), ...(card ? { trigger: card } : {}),
         ...(batch.length ? { batch } : {}), ...retried,

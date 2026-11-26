@@ -7,7 +7,10 @@ import { promisify } from 'node:util'
 import { assembleCapsule, sliceWorkspaceContext, type ContextCapsule, type PitfallNote, type SliceResult } from '../context/index.ts'
 import type { Assignment, Ticket } from '../core/index.ts'
 import { DEFAULT_ADAPTIVE_DISPATCH_PARAMS, type ThinkingTier } from '../judgement/gates/index.ts'
-import type { JudgementRegistry, Verdict } from '../judgement/index.ts'
+import {
+  matchDepositPlaybooks, renderPlaybookCapsuleBlock,
+  type JudgementRegistry, type PlaybookCandidate, type Verdict,
+} from '../judgement/index.ts'
 import type { SpineDraft } from '../spine/types.ts'
 
 const execFileAsync = promisify(execFile)
@@ -33,6 +36,7 @@ export interface PreparedLaunchCapsule {
   readonly blocked?: readonly [string, ...string[]]
   readonly capsule: ContextCapsule
   readonly slice: SliceResult
+  readonly matchedPlaybooks?: readonly string[]
 }
 
 export interface LaunchCapsuleInput {
@@ -46,6 +50,8 @@ export interface LaunchCapsuleInput {
   readonly allowTeam?: boolean
   readonly maxBytes?: number
   readonly pitfallNotes?: readonly PitfallNote[]
+  readonly playbooks?: readonly PlaybookCandidate[]
+  readonly generationHash?: string
   readonly rgBin?: string
 }
 
@@ -201,7 +207,10 @@ export async function prepareLaunchCapsule(input: LaunchCapsuleInput): Promise<P
   }
   const retryCount = input.retryCount ?? countFailedRetries(ticket.assignments)
   const verifyCmds = ticket.execution?.verifyCommands
-  if (entryFiles.length === 0 && retryCount === 0 && (!verifyCmds || verifyCmds.length === 0)) return undefined
+  const matchedPlaybooks = input.playbooks?.length
+    ? matchDepositPlaybooks({ deposits: input.playbooks, workspace: ticket.execution?.workspace, entryFiles, title: ticket.title, ...(triggerText ? { triggerText } : {}) })
+    : []
+  if (entryFiles.length === 0 && retryCount === 0 && (!verifyCmds || verifyCmds.length === 0) && matchedPlaybooks.length === 0) return undefined
 
   const resolvedRg = input.rgBin ?? (existsSync(DSH_BUNDLED_RG) ? DSH_BUNDLED_RG : undefined)
   const slice: SliceResult = entryFiles.length > 0
@@ -224,10 +233,15 @@ export async function prepareLaunchCapsule(input: LaunchCapsuleInput): Promise<P
   })
   const dispatch = extractDispatchPlan(evaluation.verdict)
   const blocked = evaluation.verdict.kind === 'deny' ? evaluation.verdict.blockers : undefined
-  const baseCapsule = assembleCapsule(slice, input.maxBytes ?? DEFAULT_ADAPTIVE_DISPATCH_PARAMS.max_capsule_bytes)
+  const budgetBytes = input.maxBytes ?? DEFAULT_ADAPTIVE_DISPATCH_PARAMS.max_capsule_bytes
+  const playbookBlock = renderPlaybookCapsuleBlock(matchedPlaybooks, Math.min(4096, budgetBytes))
   const verifyHeader = verifyCmds?.length ? `## 标准验证命令\n\`\`\`verify\n${verifyCmds.join('\n')}\n\`\`\`\n\n` : ''
-  const capsule: ContextCapsule = verifyHeader && Buffer.byteLength(verifyHeader + baseCapsule.text, 'utf8') <= baseCapsule.budgetBytes
-    ? { ...baseCapsule, text: verifyHeader + baseCapsule.text, usedBytes: Buffer.byteLength(verifyHeader + baseCapsule.text, 'utf8') }
+  const prefix = verifyHeader + (playbookBlock.text ? `${playbookBlock.text}\n\n` : '')
+  const prefixBytes = Buffer.byteLength(prefix, 'utf8')
+  const baseCapsule = assembleCapsule(slice, Math.max(0, budgetBytes - (prefixBytes <= budgetBytes ? prefixBytes : 0)))
+  const fullText = prefix && prefixBytes <= budgetBytes ? prefix + baseCapsule.text : baseCapsule.text
+  const capsule: ContextCapsule = prefix && prefixBytes <= budgetBytes
+    ? { ...baseCapsule, budgetBytes, text: fullText, usedBytes: Buffer.byteLength(fullText, 'utf8') }
     : baseCapsule
 
   if (recordSpine) {
@@ -256,6 +270,8 @@ export async function prepareLaunchCapsule(input: LaunchCapsuleInput): Promise<P
         capsuleBytes: capsule.usedBytes,
         overflow: capsule.overflow,
         droppedItems: capsule.droppedItems,
+        matchedPlaybooks: playbookBlock.matchedIds,
+        ...(input.generationHash ? { generationHash: input.generationHash } : {}),
       },
     })
   }
@@ -266,5 +282,6 @@ export async function prepareLaunchCapsule(input: LaunchCapsuleInput): Promise<P
     ...(blocked ? { blocked } : {}),
     capsule,
     slice,
+    ...(playbookBlock.matchedIds.length ? { matchedPlaybooks: playbookBlock.matchedIds } : {}),
   }
 }

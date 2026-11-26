@@ -9,7 +9,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Store } from '../app/store.ts'
 import type { Ticket } from '../core/index.ts'
 import { executeVerifyRerunCommands, type ExecuteVerifyRerunOptions, type ExecuteVerifyRerunReport } from '../judgement/gates/verify-rerun.ts'
-import type { ExtendedJudgementRegistry, JudgementRegistry, PointEvaluation } from '../judgement/index.ts'
+import { evaluatePointAtGeneration, type ExtendedJudgementRegistry, type JudgementRegistry, type PointEvaluation } from '../judgement/index.ts'
 import { KV, type PersistedCompletionObs } from '../kv.ts'
 import { redactValue } from '../spine/redact.ts'
 import type { SpineAppender } from '../spine/types.ts'
@@ -222,6 +222,7 @@ export class PreExecuteCompletionGuard {
     isReadyReport: boolean,
   ): Promise<PreExecuteDecision> {
     const ticket: Ticket | undefined = this.deps.store.tickets.get(rootId), obs = this.ensureObs(rootId)
+    const gen = this.deps.store.get?.(KV.governance.ticketGenerations)?.[rootId]
     const workdir = ticket?.execution?.directory ?? exec.agent?.session?.header?.cwd
     const git = await this.collectGitStatus(workdir)
     const declaredPaths: string[] | null = Array.isArray(args['declared_paths'])
@@ -229,11 +230,11 @@ export class PreExecuteCompletionGuard {
       : (isReadyReport ? [] : null)
     const sessionDiffPaths = [...obs.sessionDiffs]
 
-    const pathEval = await this.deps.registry.evaluate('verify.changed-paths', {
+    const pathEval = await evaluatePointAtGeneration(this.deps.registry, 'verify.changed-paths', {
       declaredPaths, sessionDiffPaths, gitDirtyPaths: git.gitDirtyPaths, untrackedPaths: git.untrackedPaths,
       sawShellWrite: obs.sawShellWrite, sawUnmeasuredTool: obs.sawUnmeasuredTool,
       ...(obs.unmeasuredTools.size > 0 ? { unmeasuredTools: [...obs.unmeasuredTools] } : {}),
-    })
+    }, gen)
     this.appendGateEvent(rootId, exec, 'verify.changed-paths', pathEval, { declaredPaths, gitHead: git.headRev })
     const blindDetected = obs.sawShellWrite || obs.sawUnmeasuredTool || obs.unmeasuredTools.size > 0
     const pureSkip = declaredPaths === null && !blindDetected && pathEval.verdict.kind === 'unmeasured'
@@ -245,7 +246,7 @@ export class PreExecuteCompletionGuard {
     const entries = 'list' in this.deps.registry ? this.deps.registry.list() : []
     if (entries.some(e => e.kind === 'gate' && e.point === 'verify.secret-path-guard')) {
       const union = [...new Set([...(declaredPaths ?? []), ...sessionDiffPaths, ...(git.gitDirtyPaths ?? []), ...(git.untrackedPaths ?? [])])]
-      const guardEval = await this.deps.registry.evaluate('verify.secret-path-guard', { changedPaths: union })
+      const guardEval = await evaluatePointAtGeneration(this.deps.registry, 'verify.secret-path-guard', { changedPaths: union }, gen)
       this.appendGateEvent(rootId, exec, 'verify.secret-path-guard', guardEval, { checkedCount: union.length })
       if (guardEval.registered > 0 && (guardEval.verdict.kind === 'deny' || guardEval.verdict.kind === 'unmeasured')) {
         return { kind: 'deny', reason: formatBlockReason('verify.secret-path-guard', guardEval) }
@@ -263,7 +264,7 @@ export class PreExecuteCompletionGuard {
         ...(this.deps.rerunCache ? { cache: this.deps.rerunCache } : {}),
         ...(this.deps.verifyTimeoutMs !== undefined ? { timeoutMs: this.deps.verifyTimeoutMs } : {}),
       })
-      const rerunEval = await this.deps.registry.evaluate('verify.rerun', rerunReport.ctx)
+      const rerunEval = await evaluatePointAtGeneration(this.deps.registry, 'verify.rerun', rerunReport.ctx, gen)
       this.appendGateEvent(rootId, exec, 'verify.rerun', rerunEval, { cmdHash: rerunReport.cmdHash, cached: rerunReport.cached, results: rerunReport.results })
       if (rerunEval.registered > 0 && (rerunEval.verdict.kind === 'deny' || rerunEval.verdict.kind === 'unmeasured')) {
         return { kind: 'deny', reason: formatBlockReason('verify.rerun', rerunEval) }

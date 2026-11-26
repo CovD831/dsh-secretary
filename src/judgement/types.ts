@@ -183,13 +183,24 @@ export interface PredicateClause {
   readonly path: string; readonly op: PredicateOp; readonly value?: unknown; readonly param?: string; readonly required?: boolean; readonly message?: string
 }
 export interface PredicatesConfig { readonly kind: 'predicates'; readonly mode?: 'all' | 'any'; readonly invert?: boolean; readonly clauses: readonly PredicateClause[] }
-export interface WorkflowSopStep { readonly id: string; readonly requiredField?: string; readonly mustBeTrueField?: string; readonly message?: string }
+export interface WorkflowSopStep { readonly id: string; readonly requiredField?: string; readonly mustBeTrueField?: string; readonly dependsOn?: readonly string[]; readonly message?: string }
 export interface WorkflowSopConfig {
   readonly kind: 'workflow_sop'; readonly steps: readonly WorkflowSopStep[]; readonly signal?: SignalName
-  readonly action?: { readonly name: ActionName; readonly params?: unknown }; readonly checklistField?: string
+  readonly action?: { readonly name: ActionName; readonly params?: unknown }; readonly checklistField?: string; readonly enforceOrder?: boolean
 }
 export type DeclarativeRule = PathRulesConfig | CommandCheckConfig | PredicatesConfig | WorkflowSopConfig
 export interface DeclarativeRuleIssue { readonly field: string; readonly reason: string }
+
+export interface PlaybookWhen {
+  readonly workspaces?: readonly string[]
+  readonly globs?: readonly string[]
+  readonly keywords?: readonly string[]
+}
+export interface PlaybookSpec {
+  readonly summary: string
+  readonly when?: PlaybookWhen
+  readonly steps?: readonly string[]
+}
 
 export interface DepositManifest {
   id: string
@@ -213,6 +224,7 @@ export interface DepositManifest {
   measures?: string
   cooldownMs?: number
   rule?: DeclarativeRule
+  playbook?: PlaybookSpec
 }
 
 export interface RunEntry {

@@ -44,6 +44,20 @@ export {
   type TransitionDepositStageResult,
 } from './ledger-doc.ts'
 export {
+  captureRegistryGeneration,
+  evaluatePointAtGeneration,
+  extractPlaybookSection,
+  loadPlaybookCandidates,
+  lockTicketGeneration,
+  matchDepositPlaybooks,
+  renderPlaybookCapsuleBlock,
+  validateAndNormalizePlaybook,
+  type MatchedPlaybook,
+  type PlaybookCandidate,
+  type PlaybookRenderResult,
+  type RegistryGeneration,
+} from './playbook.ts'
+export {
   executeVerifyRerunCommands,
   extractVerifyCommandsFromText,
   type ExecuteVerifyRerunOptions,
