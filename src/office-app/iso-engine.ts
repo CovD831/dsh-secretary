@@ -137,7 +137,9 @@ function renderL0AndL1(ctx: CanvasRenderingContext2D, plan: OfficeRoomPlan, spri
   if (wallImg) {
     for (let u = 0; u < plan.cols; u += 2) {
       const p = isoToScreen(u + 1, 0, origin, scale)
-      ctx.drawImage(wallImg, Math.round(p.x - 40 * scale), Math.round(p.y - 52 * scale), 80 * scale, 56 * scale)
+      const dx = Math.round(p.x - 40 * scale), dy = Math.round(p.y - 52 * scale)
+      ctx.save(); ctx.translate(dx + 80 * scale, dy); ctx.scale(-1, 1)
+      ctx.drawImage(wallImg, 0, 0, 80 * scale, 56 * scale); ctx.restore()
     }
     for (let v = 0; v < plan.rows; v += 2) {
       const p = isoToScreen(0, v + 1, origin, scale)
@@ -147,7 +149,12 @@ function renderL0AndL1(ctx: CanvasRenderingContext2D, plan: OfficeRoomPlan, spri
   for (const mount of plan.wallMounts) {
     const img = sprites.images[mount.assetId]; if (!img) continue
     const b = getWallMountBounds(mount, origin, scale)
-    ctx.drawImage(img, b.x, b.y, b.w, b.h)
+    if (mount.wall === 'back') {
+      ctx.save(); ctx.translate(b.x + b.w, b.y); ctx.scale(-1, 1)
+      ctx.drawImage(img, 0, 0, b.w, b.h); ctx.restore()
+    } else {
+      ctx.drawImage(img, b.x, b.y, b.w, b.h)
+    }
   }
 }
 
@@ -159,7 +166,7 @@ function renderL3Overlays(ctx: CanvasRenderingContext2D, state: OfficeSceneState
     const b = getEntityBounds(suite, origin, scale), { bright, dark } = STATUS_GLOW_COLORS[st]
     const blinkOn = st === 'stuck' ? Math.floor(elapsedMs / 600) % 2 === 0 : st === 'needsDecision' ? Math.floor(elapsedMs / 300) % 2 === 0 : true
     for (const a of meta.screenGlowAnchors) {
-      const gx = b.x + b.w / 2 + a.dx * scale, gy = b.y + b.h + a.dy * scale
+      const gx = b.x + b.w / 2 + (suite.mirrorX ? -a.dx : a.dx) * scale, gy = b.y + b.h + a.dy * scale
       ctx.fillStyle = dark; ctx.fillRect(Math.round(gx - 6 * scale), Math.round(gy - 4 * scale), 12 * scale, 8 * scale)
       if (!blinkOn) continue
       ctx.fillStyle = bright
@@ -219,32 +226,38 @@ export function renderOfficeFrame(ctx: CanvasRenderingContext2D, state: OfficeSc
   renderL3Overlays(ctx, state, scale)
 }
 
+function hitRect(px: number, py: number, b: { x: number; y: number; w: number; h: number }): boolean {
+  return px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h
+}
+
 export function pickSceneTarget(px: number, py: number, state: OfficeSceneState, plan: OfficeRoomPlan, scale = 2): ScenePickResult | null {
   const origin = plan.origin, l2 = computeL2RenderList(plan, state.actors, origin, scale)
   for (let i = l2.length - 1; i >= 0; i--) {
     const item = l2[i]!
     if (item.kind === 'actor' && item.actor) {
       const b = getActorBounds(item.actor, origin, scale)
-      if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) {
-        return { type: 'actor', actorId: item.actor.id, role: item.actor.role, ticketId: item.actor.ticketId, bounds: b }
-      }
-    } else if (item.kind === 'entity' && item.entity) {
+      if (hitRect(px, py, b)) return { type: 'actor', actorId: item.actor.id, role: item.actor.role, ticketId: item.actor.ticketId, bounds: b }
+    }
+  }
+  for (let i = l2.length - 1; i >= 0; i--) {
+    const item = l2[i]!
+    if (item.kind === 'entity' && item.entity) {
       const b = getEntityBounds(item.entity, origin, scale)
-      if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) {
-        if (item.entity.assetId === 'reception_desk') {
-          const prop: PropKind = px < b.x + b.w / 2 ? 'ledger' : 'notebook'
-          return { type: 'prop', prop, label: PROP_LABELS[prop].zh, bounds: b }
-        }
-        if (item.entity.propKind) return { type: 'prop', prop: item.entity.propKind, label: PROP_LABELS[item.entity.propKind].zh, bounds: b }
+      if (item.entity.assetId === 'reception_desk') {
+        const hy = b.y + Math.round(b.h * 0.56), hh = Math.round(b.h * 0.4), hw = Math.round(b.w * 0.44)
+        const ledgerBounds = { x: b.x + 4, y: hy, w: hw, h: hh }
+        const notebookBounds = { x: b.x + b.w - hw - 4, y: hy, w: hw, h: hh }
+        if (hitRect(px, py, ledgerBounds)) return { type: 'prop', prop: 'ledger', label: PROP_LABELS.ledger.zh, bounds: ledgerBounds }
+        if (hitRect(px, py, notebookBounds)) return { type: 'prop', prop: 'notebook', label: PROP_LABELS.notebook.zh, bounds: notebookBounds }
+      } else if (item.entity.propKind && hitRect(px, py, b)) {
+        return { type: 'prop', prop: item.entity.propKind, label: PROP_LABELS[item.entity.propKind].zh, bounds: b }
       }
     }
   }
   for (let i = plan.wallMounts.length - 1; i >= 0; i--) {
     const mount = plan.wallMounts[i]!; if (!mount.propKind) continue
     const b = getWallMountBounds(mount, origin, scale)
-    if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) {
-      return { type: 'prop', prop: mount.propKind, label: PROP_LABELS[mount.propKind].zh, bounds: b }
-    }
+    if (hitRect(px, py, b)) return { type: 'prop', prop: mount.propKind, label: PROP_LABELS[mount.propKind].zh, bounds: b }
   }
   return null
 }

@@ -21,13 +21,13 @@ const ASSET_DIR = join(ROOT, 'assets', 'office')
 describe('Phase O2: 46-Color Quantized Assets & 4-Layer Iso Engine', () => {
   it('validates all sliced assets/office/*.png stay strictly within 38 non-status colors and binary alpha', () => {
     const pngs = readdirSync(ASSET_DIR).filter((f) => f.endsWith('.png')).sort()
-    expect(pngs.length).toBe(17)
+    expect(pngs.length).toBe(18)
     const manifest = JSON.parse(readFileSync(join(ASSET_DIR, 'manifest.json'), 'utf8')) as {
       paletteSize: number
       assets: Record<string, { file: string; width: number; height: number }>
     }
     expect(manifest.paletteSize).toBe(38)
-    expect(Object.keys(manifest.assets).length).toBe(17)
+    expect(Object.keys(manifest.assets).length).toBe(18)
 
     for (const file of pngs) {
       const { width, height, rgba } = decodePngRgba(readFileSync(join(ASSET_DIR, file)))
@@ -108,11 +108,21 @@ describe('Phase O2: 46-Color Quantized Assets & 4-Layer Iso Engine', () => {
       elapsedMs: 0,
     }
 
+    const sec = actors.find((a) => a.id === 'secretary')!
+    const secPos = isoToScreen(sec.u + 0.5, sec.v + 0.5, plan.origin, 2)
+    expect(pickSceneTarget(secPos.x, secPos.y - 48, state, plan, 2)).toMatchObject({
+      type: 'actor',
+      actorId: 'secretary',
+      role: 'secretary',
+    })
+
     const rec = plan.suites.find((s) => s.id === 'reception')!
     const recPos = isoToScreen(rec.anchor.u + rec.size[0] / 2, rec.anchor.v + rec.size[1] / 2, plan.origin, 2)
-    expect(pickSceneTarget(recPos.x - 20, recPos.y - 20, state, plan, 2)?.type).toBe('prop')
-    expect((pickSceneTarget(recPos.x - 20, recPos.y - 20, state, plan, 2) as { prop: string }).prop).toBe('ledger')
-    expect((pickSceneTarget(recPos.x + 20, recPos.y - 20, state, plan, 2) as { prop: string }).prop).toBe('notebook')
+    const ledgerHit = pickSceneTarget(recPos.x - 56, recPos.y - 20, state, plan, 2)
+    const notebookHit = pickSceneTarget(recPos.x + 56, recPos.y - 20, state, plan, 2)
+    expect(ledgerHit).toMatchObject({ type: 'prop', prop: 'ledger' })
+    expect(notebookHit).toMatchObject({ type: 'prop', prop: 'notebook' })
+    expect(ledgerHit?.bounds).not.toEqual(notebookHit?.bounds)
 
     const cab = plan.shared.find((s) => s.id === 'file-cabinet')!
     const cabPos = isoToScreen(cab.anchor.u + cab.size[0] / 2, cab.anchor.v + cab.size[1] / 2, plan.origin, 2)

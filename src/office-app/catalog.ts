@@ -75,7 +75,7 @@ export const OFFICE_CATALOG: Record<string, OfficeAssetMeta> = {
   doorplate: {
     id: 'doorplate',
     name: PROP_LABELS.doorplate,
-    spriteUrl: '/assets/office/wall_segment.png',
+    spriteUrl: '/assets/office/doorplate.png',
     layer: 'wall',
     nativeSize: [24, 16],
     footprint: [1, 0],

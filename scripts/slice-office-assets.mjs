@@ -211,5 +211,21 @@ const charRows = [0, 1, 2].map((r) => chars.comps.filter((c) => c.minY >= r * 29
   emitAsset(id, sheet, sheetW, sheetH, [16, 44], { cellSize: [32, 48], cols: 4, rows: 2 })
 })
 
+function buildDoorplateRgba() {
+  const w = 24, h = 16, out = new Uint8Array(w * h * 4)
+  const setPx = (x, y, hex) => {
+    const n = Number.parseInt(hex.slice(1), 16), di = (y * w + x) * 4
+    out[di] = (n >> 16) & 255; out[di + 1] = (n >> 8) & 255; out[di + 2] = n & 255; out[di + 3] = 255
+  }
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const border = x === 1 || x === w - 2 || y === 1 || y === h - 2
+    const inner = x >= 4 && x <= w - 5 && y >= 4 && y <= h - 5
+    const textLine = (y === 6 || y === 9) && x >= 6 && x <= w - 7 && x % 2 === 0
+    setPx(x, y, border ? '#1A1412' : textLine ? '#2C211B' : inner ? '#C9A46A' : '#4A3428')
+  }
+  return out
+}
+emitAsset('doorplate', buildDoorplateRgba(), 24, 16, [12, 12])
+
 writeFileSync(join(OUT_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2))
 console.log(`Sliced ${Object.keys(manifest.assets).length} assets into ${OUT_DIR}`)

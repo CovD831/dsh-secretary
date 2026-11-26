@@ -240,6 +240,19 @@
       "uniqueColors": 28,
       "outOfPaletteCount": 0,
       "semiTransparentCount": 0
+    },
+    "doorplate": {
+      "file": "doorplate.png",
+      "width": 24,
+      "height": 16,
+      "anchor": [
+        12,
+        12
+      ],
+      "opaquePixels": 308,
+      "uniqueColors": 4,
+      "outOfPaletteCount": 0,
+      "semiTransparentCount": 0
     }
   }
 }
