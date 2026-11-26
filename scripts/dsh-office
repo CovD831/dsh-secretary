@@ -52,8 +52,9 @@ def ensure_office_port(profile, port):
 
 def office_state(url):
     req = urllib.request.Request(url.rstrip('/') + '/orchestrator/api/state', headers={'x-orchestrator-request': '1'})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with urllib.request.urlopen(req, timeout=2) as res:
+        with opener.open(req, timeout=2) as res:
             return json.load(res)
     except (OSError, ValueError):
         return None
@@ -72,6 +73,8 @@ def main():
         ensure_office_port(args.profile, args.port)
 
     env = dict(os.environ)
+    env['NO_PROXY'] = '127.0.0.1,localhost'
+    env['no_proxy'] = '127.0.0.1,localhost'
     if not env.get('DSH_BIN') and not shutil.which('dsh') and MACOS_DSH_APP_BIN.is_file():
         env['DSH_BIN'] = str(MACOS_DSH_APP_BIN)
     cmd = [sys.executable, str(SUPERAGENT_SCRIPT), args.action, '--profile', args.profile, '--url', office_url]
