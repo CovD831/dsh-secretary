@@ -87,9 +87,9 @@ const BUILTIN_FACTORIES: Readonly<Record<string, () => AnyGateDef>> = {
 
 /** 根据沉淀清单解析内置 TS 判据或调用零代码声明式编译器。 */
 export function resolveDepositEntry(manifest: DepositManifest): RegistryEntry | undefined {
+  if (manifest.rule || manifest.kind === 'standing-order') return compileDeclarativeEntry(manifest)
   const factory = BUILTIN_FACTORIES[manifest.id]
   if (factory) return factory()
-  if (manifest.rule || manifest.kind === 'standing-order') return compileDeclarativeEntry(manifest)
   return undefined
 }
 

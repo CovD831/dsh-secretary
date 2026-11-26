@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -170,6 +170,59 @@ describe('P3 capsule pollution, worktree double-prepare, and domain-agnostic ker
     const spine = await readSpineProjection(store, stateDir, { type: 'gate.evaluated', limit: 20 })
     expect(spine.items.some(e => (e.payload as Record<string, unknown>)['point'] === 'intake.received')).toBe(true)
     expect(spine.items.some(e => (e.payload as Record<string, unknown>)['point'] === 'outbox.send')).toBe(true)
+
+    await gov.shutdown()
+    store.close()
+  })
+
+  it('4. admits disk-installed outbox.send & OSS-same-ID deposit packages under <stateDir>/deposits/', async () => {
+    const stateDir = makeTempDir('gov-disk-deposits-')
+    const outboxPkgDir = join(stateDir, 'deposits', 'user-outbox-guard')
+    const ossPkgDir = join(stateDir, 'deposits', 'user-oss-override')
+    mkdirSync(join(outboxPkgDir, 'cases'), { recursive: true })
+    mkdirSync(join(ossPkgDir, 'cases'), { recursive: true })
+
+    writeFileSync(join(outboxPkgDir, 'DEPOSIT.md'), `---\n${JSON.stringify({
+      id: 'outbox.no-secret-token', version: 1, kind: 'gate', point: 'outbox.send',
+      trust: 'owner', cases: 'cases/', stage: 'enforce', enforce: true, side: 'hard',
+      placement: { timing: 'pre', enforce: true }, actionClass: 'block', requires: ['body'], params: {},
+      rule: { kind: 'predicates', mode: 'all', clauses: [{ path: 'body', op: 'matches', value: '^safe:', message: 'must start with safe:' }] },
+    }, null, 2)}\n---\n\n## 意图\n禁止外发未标记 safe: 的内容。\n\n## 判据\n不匹配 ^safe: 返回 deny。\n\n## 正反例\n见 cases。\n\n## 例外\n无。\n\n## 修复指引\n请以 safe: 开头。\n`)
+    writeFileSync(join(outboxPkgDir, 'cases', 'cases.json'), JSON.stringify([
+      { name: 'ok', expected: 'allow', ctx: { body: 'safe: hello world' } },
+      { name: 'bad', expected: 'deny', ctx: { body: 'TOP_SECRET' } },
+    ], null, 2))
+
+    writeFileSync(join(ossPkgDir, 'DEPOSIT.md'), `---\n${JSON.stringify({
+      id: 'intake.bug-quadruple', version: 1, kind: 'gate', point: 'intake.received',
+      trust: 'owner', cases: 'cases/', stage: 'observe', enforce: false, side: 'hard',
+      placement: { timing: 'pre', enforce: false }, actionClass: 'block', requires: ['body'], params: {},
+      rule: { kind: 'predicates', mode: 'all', clauses: [{ path: 'body', op: 'non_empty', message: 'body required' }] },
+    }, null, 2)}\n---\n\n## 意图\n用户显式安装的同名包应正常准入。\n\n## 判据\n非空放行。\n\n## 正反例\n见 cases。\n\n## 例外\n无。\n\n## 修复指引\n请补充正文。\n`)
+    writeFileSync(join(ossPkgDir, 'cases', 'cases.json'), JSON.stringify([
+      { name: 'ok', expected: 'allow', ctx: { body: 'bug report' } },
+      { name: 'bad', expected: 'deny', ctx: { body: '' } },
+    ], null, 2))
+
+    const store = new Store(join(stateDir, 'orchestrator.sqlite'))
+    const gov = new GovernanceRuntime({ store, stateDir })
+    await gov.recover()
+
+    const regIds = gov.registry.list().map(e => e.id)
+    expect(regIds).toContain('outbox.no-secret-token')
+    expect(regIds).toContain('intake.bug-quadruple')
+
+    const ledger = readFileSync(join(stateDir, 'deposits', 'LEDGER.md'), 'utf8')
+    expect(ledger).toContain('outbox.no-secret-token')
+    expect(ledger).toContain('intake.bug-quadruple')
+
+    const proj = await readDepositsProjection(store, stateDir)
+    expect(proj.admittedCount).toBe(9)
+    expect(proj.items.find(i => i.id === 'outbox.no-secret-token')?.admitted).toBe(true)
+    expect(proj.items.find(i => i.id === 'intake.bug-quadruple')?.admitted).toBe(true)
+
+    const blocked = await gov.evaluateOutbound({ id: 'm-sec', channel: { source: 'feishu', target: 'c1' } as never, text: 'TOP_SECRET', kind: 'reply' })
+    expect(blocked.kind).toBe('deny')
 
     await gov.shutdown()
     store.close()

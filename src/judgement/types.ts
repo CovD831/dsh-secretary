@@ -10,6 +10,7 @@ export interface ScopeCatalog {
   tool: true
   verify: true
   outward: true
+  outbox: true
   memory: true
   deposit: true
   collection: true
@@ -19,7 +20,7 @@ export interface ScopeCatalog {
 export type Scope = keyof ScopeCatalog & string
 
 export const BASE_SCOPES: readonly Scope[] = Object.freeze([
-  'intake', 'ticket', 'tool', 'verify', 'outward', 'memory', 'deposit', 'collection', 'workspace',
+  'intake', 'ticket', 'tool', 'verify', 'outward', 'outbox', 'memory', 'deposit', 'collection', 'workspace',
 ])
 
 export interface PointCatalog {}

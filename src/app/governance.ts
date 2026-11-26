@@ -32,7 +32,6 @@ export interface IntakeReceivedCtx {
   readonly human: boolean; readonly text: string; readonly body: string; readonly meta: Record<string, unknown>
 }
 declare module '../judgement/types.ts' {
-  interface ScopeCatalog { outbox: true }
   interface PointCatalog { 'outbox.send': OutboxSendCtx; 'intake.received': IntakeReceivedCtx }
 }
 
