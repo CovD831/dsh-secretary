@@ -31,6 +31,7 @@ import { settingsView } from './views/settings.ts'
 import { sourcesStatus, type SetupState } from './views/sources.ts'
 import { decisionList, search, threadDetail, threadList } from './views/threads.ts'
 import { executorLoad, ticketDetail, ticketList } from './views/tickets.ts'
+import { readTicketTranscript } from './transcript-reader.ts'
 
 export interface HttpHost {
   readonly store: Store
@@ -78,9 +79,12 @@ async function readBody(req: IncomingMessage, maxBytes = 128 * 1024): Promise<un
 function json(res: ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }); res.end(JSON.stringify(value))
 }
+export function isLoopbackHostHeader(host: string | undefined, port: number): boolean {
+  return host === `127.0.0.1:${port}` || host === `localhost:${port}` || host === `[::1]:${port}`
+}
 export function sameOrigin(req: Pick<IncomingMessage, 'headers'>, port: number): boolean {
   const host = req.headers.host
-  if (host !== `127.0.0.1:${port}` && host !== `localhost:${port}` && host !== `[::1]:${port}`) return false
+  if (!isLoopbackHostHeader(host, port)) return false
   return req.headers['x-orchestrator-request'] === '1' && (req.headers.origin === undefined || req.headers.origin === `http://${host}`)
 }
 /** Maps errors to HTTP status codes and structured payloads that the panel localizes in the interface language. */
@@ -196,6 +200,15 @@ function routes(runtime: HttpHost): Routes {
       return ticketList(views(runtime), state, offset, limit)
     },
     'GET tickets/:id': ({ params }) => ticketPage(runtime, params.id),
+    'GET tickets/:id/transcript': async ({ params, query }) => {
+      const view = await readTicketTranscript({
+        ticketId: params.id, store, stateDir: runtime.machine.stateDir,
+        ...(runtime.persistence ? { persistence: runtime.persistence } : {}),
+        ...(query.limit ? { limit: Number(query.limit) } : {}),
+      })
+      if (!view) throw new RouteError(404, 'Ticket not found')
+      return view
+    },
     'POST tickets/:id/retry': ({ params }) => { const id = ticket(params.id); runtime.engine.retryTicket(id); return { retried: true } },
     'POST tickets/:id/stop': ({ params }) => { const id = ticket(params.id); runtime.engine.stopTicket(id); return { stopped: true } },
     'POST executor/pause': async ({ body }) => runtime.settings.pause(z.object({ paused: z.boolean() }).parse(await body()).paused, 'panel'),
@@ -234,23 +247,28 @@ function match(table: Routes, method: string, segments: string[]) {
   }
   return undefined
 }
+/** Creates a reusable `/orchestrator/api/*` dispatcher with loopback same-origin enforcement. */
+export function createApiDispatcher(runtime: HttpHost) {
+  const table = routes(runtime)
+  return async (req: IncomingMessage, res: ServerResponse, actualPort: number | undefined): Promise<void> => {
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    if (!url.pathname.startsWith('/orchestrator/api/')) { res.writeHead(404); res.end(); return }
+    if (actualPort === undefined || !sameOrigin(req, actualPort)) { json(res, 403, { error: 'Same-origin management request required' }); return }
+    try {
+      await runtime.ready
+      const route = match(table, req.method ?? 'GET', url.pathname.slice('/orchestrator/api/'.length).split('/'))
+      if (!route) throw new RouteError(404, 'Unknown operation')
+      const query = Object.fromEntries(url.searchParams)
+      json(res, 200, await route.run({ params: route.params as never, query, body: maxBytes => readBody(req, maxBytes) }))
+    } catch (error) { json(res, ...failure(error)) }
+  }
+}
 export function registerHttp(ctx: Context, runtime: HttpHost): () => void {
   const host = ctx.webServer.host
   const loopback = host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]' || isLoopbackHost(host)
   if (!loopback) throw new Error('Orchestrator management requires a loopback Web server')
-  const table = routes(runtime)
+  const dispatch = createApiDispatcher(runtime)
   const disposers = [
-    ctx.webServer.register({ kind: 'prefix', path: '/orchestrator', handler: async (req, res) => {
-      const url = new URL(req.url ?? '/', 'http://localhost')
-      if (!url.pathname.startsWith('/orchestrator/api/')) { res.writeHead(404); res.end(); return }
-      if (ctx.webServer.port === undefined || !sameOrigin(req, ctx.webServer.port)) { json(res, 403, { error: 'Same-origin management request required' }); return }
-      try {
-        await runtime.ready
-        const route = match(table, req.method ?? 'GET', url.pathname.slice('/orchestrator/api/'.length).split('/'))
-        if (!route) throw new RouteError(404, 'Unknown operation')
-        const query = Object.fromEntries(url.searchParams)
-        json(res, 200, await route.run({ params: route.params as never, query, body: maxBytes => readBody(req, maxBytes) }))
-      } catch (error) { json(res, ...failure(error)) }
-    } })]
+    ctx.webServer.register({ kind: 'prefix', path: '/orchestrator', handler: (req, res) => dispatch(req, res, ctx.webServer.port) })]
   return () => { for (const dispose of disposers) dispose() }
 }

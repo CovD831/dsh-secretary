@@ -33,6 +33,7 @@ import { TextCache } from './cache.ts'
 import { Effects } from './effects.ts'
 import { Prompts } from './prompts.ts'
 import { registerHttp, type HttpHost } from './http.ts'
+import { OfficeServer } from './office-server.ts'
 import type { LinkTarget } from './views/records.ts'
 import { candidateCard, repliedTo, sourceLink, type LinkHost } from './links.ts'
 import { eventNotice, followupNotice } from './notices.ts'
@@ -89,6 +90,7 @@ export class Runtime extends Service implements SourceHost {
   private releaseLock?: () => Promise<void>
   private closingFlag = false
   private stopping?: Promise<void>
+  private officeServer?: OfficeServer
   private readonly sourceDeps: SourceContextDeps
   private readonly toolHost: MainToolsHost & ExecutorToolsHost
   /** Non-zero while a main-Session tool is executing an Engine command, suppressing self-triggered domain event notices. */
@@ -107,7 +109,12 @@ export class Runtime extends Service implements SourceHost {
       const store = opened = this.store = new Store(join(machine.stateDir, 'orchestrator.sqlite'), report)
       const governance = this.governance = new GovernanceRuntime({
         store, stateDir: machine.stateDir, onError: report,
+        onRulingQueued: item => { this.officeServer?.broadcast({ type: 'ruling.queued', data: item }) },
+        onSpineAppended: (ref, draft) => {
+          this.officeServer?.broadcast({ type: 'spine', data: { seq: ref.seq, id: ref.id, type: draft.type, stream: draft.stream } })
+        },
         onRulingDecided: item => {
+          this.officeServer?.broadcast({ type: 'ruling.decided', data: item })
           if (this.closing()) return
           const summary = `老板已拍板 (${item.decision})${item.selectedOptionId ? ` [选项: ${item.selectedOptionId}]` : ''}${item.note ? ` 附言: ${item.note}` : ''}`
           if (item.ticketId && item.kind !== 'dsh_approval') {
@@ -195,6 +202,7 @@ export class Runtime extends Service implements SourceHost {
       const policy = () => settingsPolicy(store.settings(), sources)
       const engine = this.engine = new Engine({ repo: store, scope: sources, policy, assessor, executor,
         outbox, prepareTicket: (ticket, outcome) => executor.prepare(ticket, outcome), emit: event => {
+          this.officeServer?.broadcast({ type: 'domain', data: event })
           governance.recordDomainEvent(event)
           // Notify the main Session only about domain events it did not initiate itself.
           const notice = this.quiet ? undefined : eventNotice(event, id => store.tickets.get(id))
@@ -281,7 +289,11 @@ export class Runtime extends Service implements SourceHost {
     await this.governance.recover()
     if (this.closing()) return
     // Register management HTTP routes before setup completes so operators can fix setup problems in the UI.
-    this.disposers.push(registerHttp(this.ctx, this.httpHost()))
+    const host = this.httpHost()
+    this.disposers.push(registerHttp(this.ctx, host))
+    this.officeServer = new OfficeServer({ host, onError: err => this.ctx.logger.warn('office-server: %s', String(err)) })
+    const officePort = this.machine.officePort?.get() ?? 0
+    if (officePort > 0) await this.officeServer.start(officePort)
     if (!await this.setup.run(this.store.settings())) {
       this.runtimeHealth.set({ ...health('paused', 'setupPending'), at: now() })
       return
@@ -325,6 +337,7 @@ export class Runtime extends Service implements SourceHost {
       this.executor.dispose()
       this.sessions.dispose()
       for (const dispose of this.disposers.reverse()) dispose()
+      await this.officeServer?.close().catch(error => { this.ctx.logger.warn('office-server close failed: %s', String(error)) })
       await this.ctx.sessionPersistence.flush()
     } finally {
       await this.governance.shutdown().catch(error => { this.ctx.logger.warn('dsh-superagent governance flush failed: %s', String(error)) })

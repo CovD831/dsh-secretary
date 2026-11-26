@@ -21,6 +21,8 @@ import type {
   TransitionDepositStageResult, UserDirectMemoryResult, WriteResult,
 } from './http-governance.ts'
 import type { DiscoveredDepositRecord, Stage } from '../judgement/index.ts'
+import type { AvatarPackSummary } from './avatar-pipeline.ts'
+import type { TicketTranscriptView } from './transcript-reader.ts'
 
 export const TICKET_FILTERS = ['open', 'person', 'working', 'idle', 'ended'] as const
 export const THREAD_FILTERS = ['subscribed', 'evaluating', 'recent', 'all'] as const
@@ -45,6 +47,7 @@ export interface Api {
   'POST decisions/:id/dismiss': { response: { dismissed: true } }
   'GET tickets': { query?: Paged & { state?: TicketFilter }; response: TicketListView }
   'GET tickets/:id': { response: TicketPageView }
+  'GET tickets/:id/transcript': { query?: { limit?: number }; response: TicketTranscriptView }
   'POST tickets/:id/retry': { response: { retried: true } }
   'POST tickets/:id/stop': { response: { stopped: true } }
   'POST executor/pause': { body: { paused: boolean }; response: { paused: boolean } }
@@ -87,6 +90,9 @@ export interface Api {
     response: { ok: true; result: HoldoutEvaluationResult } | { ok: false; reason: string }
   }
   'GET pixel-office/proof': { response: { workspaceId: string; seed: number; width: number; height: number; paletteColors: number; html: string } }
+  'GET avatars': { response: { activeId: string; items: AvatarPackSummary[] } }
+  'POST avatars/select': { body: { avatarId: string }; response: { ok: boolean; activeId: string } }
+  'POST avatars/generate': { body: { name: string; prompt: string; seed?: number }; response: { ok: boolean; pack?: AvatarPackSummary; error?: string } }
 }
 type Path<K> = K extends `${string} ${infer P}` ? P : never
 type Params<P> = P extends `${string}:${infer Name}/${infer Rest}` ? Record<Name, string> & Params<Rest>

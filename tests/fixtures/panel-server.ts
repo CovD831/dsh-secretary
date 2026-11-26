@@ -118,6 +118,7 @@ export interface PanelServer {
   rsiWorkbench?: ApiResponse<'GET rsi/workbench'>
   ablationResult?: ApiResponse<'POST rsi/ablation'>
   pixelProof?: ApiResponse<'GET pixel-office/proof'>
+  avatars?: ApiResponse<'GET avatars'>
 }
 export let server: PanelServer
 
@@ -338,6 +339,9 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   'GET tickets': { query: ['state', 'offset', 'limit'], answer: ({ query }) => page(server.tickets[query.state === 'ended' ? 'ended'
     : 'open']) },
   'GET tickets/:id': { answer: ({ params }) => server.ticketDetails[params.id] ?? refuse(404, 'Ticket not found') },
+  'GET tickets/:id/transcript': { query: ['limit'], answer: ({ params }) => server.ticketDetails[params.id]
+    ? { ticketId: params.id, sessionId: `worker-${params.id}`, entries: [], headSeq: 0, truncated: false }
+    : refuse(404, 'Ticket not found') },
   'POST tickets/:id/retry': { answer: ({ params }) => {
     const ticket = ticketOf(params.id)
     if (!ticket) return refuse(404, 'Ticket not found')
@@ -506,6 +510,12 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   'POST rsi/ablation': { body: true, answer: () => server.ablationResult ?? ({ baseline: { totalCases: 0, caseIds: [], triggeredCount: 0, catches: 0, falseBlocks: 0, misses: 0, trueAllows: 0, unmeasuredCount: 0, unknownLabelCount: 0, coverageDiscount: 1, netBenefit: 0, marginalCost: { deltaTokens: undefined, deltaMs: undefined, state: 'unmeasured' as const }, cases: [] }, impacts: [], redundantGateIds: [], harmfulGateIds: [], conflicts: [] }) },
   'POST rsi/holdout': { body: true, answer: () => ({ ok: false as const, reason: 'stub' }) },
   'GET pixel-office/proof': { answer: () => server.pixelProof ?? ({ workspaceId: 'secretary-main', seed: 20261126, width: 1440, height: 900, paletteColors: 46, html: '<!doctype html>' }) },
+  'GET avatars': { answer: () => server.avatars ?? ({ activeId: 'preset-walnut-01', items: [] }) },
+  'POST avatars/select': { body: true, answer: ({ body }) => {
+    if (server.avatars) server.avatars = { ...server.avatars, activeId: body.avatarId }
+    return { ok: true, activeId: body.avatarId }
+  } },
+  'POST avatars/generate': { body: true, answer: () => ({ ok: false, error: 'stub' }) },
 }
 
 function match(method: string, segments: string[]) {

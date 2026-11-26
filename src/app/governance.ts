@@ -31,6 +31,7 @@ declare module '../judgement/types.ts' {
 export interface GovernanceOptions {
   readonly store: Store; readonly stateDir: string; readonly onError?: (error: unknown) => void; readonly now?: () => Date
   readonly onRulingQueued?: (item: RulingItem) => void; readonly onRulingDecided?: (item: RulingItem) => void
+  readonly onSpineAppended?: (ref: SourceRef, draft: SpineDraft<Record<string, unknown>>) => void
 }
 
 const SHARD_NAME_RE = /^\d{4}-\d{2}-\d{2}\.jsonl$/
@@ -59,7 +60,17 @@ export class GovernanceRuntime {
     ensureSpineSchema(this.store.db, readSyncTailSeq(this.memoryDir))
     this.sink = createGitShardSink({ dir: this.memoryDir, lock: this.memoryRepoLock })
     this.flusher = createSpineFlusher(this.store.db, this.sink, { onError: this.onError, now: this.now })
-    this.appender = createSpineAppender(this.store, { kick: () => { if (!this.closed && !this.shuttingDown) this.flusher.kick() } })
+    const rawAppender = createSpineAppender(this.store, { kick: () => { if (!this.closed && !this.shuttingDown) this.flusher.kick() } })
+    this.appender = options.onSpineAppended
+      ? {
+          append: <P>(draft: SpineDraft<P>) => {
+            const ref = rawAppender.append(draft)
+            const cb = options.onSpineAppended!
+            this.store.afterCommit(() => cb(ref, draft as SpineDraft<Record<string, unknown>>))
+            return ref
+          },
+        }
+      : rawAppender
     this.memory = new MemoryWriter({
       dir: this.memoryDir, lock: this.memoryRepoLock, resolveRef: ref => this.resolveSpineRefUnlocked(ref), now: this.now,
       onAuditEvent: draft => {

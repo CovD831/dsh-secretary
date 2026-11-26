@@ -47,6 +47,7 @@ export const KV = {
     memoryPatches: record<PendingPatchProposal[]>('governance-memory-patches'),
     temperatureScaler: record<TemperatureScaler>('governance-temperature-scaler'),
     openedHoldouts: record<Record<string, string>>('governance-opened-holdouts'),
+    activeAvatar: record<string>('governance-active-avatar'),
   },
   /** Sessions: prompt revisions each Session has worked under, ordered oldest first; the last entry (`.at(-1)`) is its active revision. */
   sessions: { prompts: family<number[], [session: string]>('session-prompts:') },

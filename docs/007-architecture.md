@@ -357,7 +357,10 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/tools/secretary-core.ts` | Chinese personal secretary structured speaking, cross-workspace dispatch, status tools, and local desktop message bus |
 | `src/app/tools/secretary-governance.ts` | Zero-execution secretary governance tools for memory recall, status queries, and Feishu deposit/ruling card dispatch |
 | `src/app/tools/executor.ts` | An Executor Session's tools |
-| `src/app/http.ts`, `src/app/http-governance.ts` | The `/orchestrator/api` routes: the same-origin check, request limits, governance/studio handlers, and one status per kind of failure |
+| `src/app/http.ts`, `src/app/http-governance.ts` | The `/orchestrator/api` routes: the same-origin check, reusable API dispatcher, request limits, governance/studio handlers, and one status per kind of failure |
+| `src/app/office-server.ts` | Standalone loopback HTTP + SSE server for the Pixel Office frontend, static/avatar asset serving, and live governance event stream |
+| `src/app/transcript-reader.ts` | Read-only ticket terminal transcript projection merging DSH persistent session events and M0 spine events with full secret redaction |
+| `src/app/avatar-pipeline.ts` | Custom secretary avatar 46-color Oklab quantization, background removal, nearest-neighbor downsampling, and active-avatar switching pipeline |
 | `src/app/api.ts` | `Api`, every route with its parameters, query, body and response, and the filters of the lists; it imports only types, so the panel bundles it |
 | `src/app/views/text.ts` | The two forms of a view's text: `preview`, plain text on one line, and `markdown` without HTML; `plain` and `readable` |
 | `src/app/views/records.ts` | The rows the views share: Triggers, Tickets, Threads, Decisions and Channel links, and `ownersOf`, the owners of follow-ups as one request reads them |
@@ -435,6 +438,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/runtime-wiring.spec.ts` | Governance wiring, capsule pre-launch hook, and outbox `evaluateOutbound` gate enforcement |
 | `tests/secretary-closure.spec.ts` | Zero-execution secretary governance tools, tool restriction enforcement, and Feishu ruling callback idempotency/authorization |
 | `tests/projection-api.spec.ts` | Read-only projection reader, avatar-state silence invariant without valid `SourceRef`, and `/orchestrator/api/projection` HTTP endpoint |
+| `tests/phase-o1-office-server.spec.ts` | Standalone loopback `OfficeServer` same-origin/SSE stream, redacted ticket transcript reader, and 46-color avatar quantization pipeline |
 | `tests/oss-deposits.spec.ts` | Seeded OSS deposit gates (`issue-intake`, `repro-status`, `reply-desk`) and `deposits/` package evaluation |
 | `tests/stage.spec.ts` | The Ticket stages, row by row |
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations and assessment outcomes |

@@ -14,6 +14,7 @@ import {
   type MemoryStudioView, type RsiWorkbenchView,
 } from './governance-ops.ts'
 import type { HttpHost } from './http.ts'
+import { generateAvatarPackViaProvider, listAvatarPacks, selectAvatarPack } from './avatar-pipeline.ts'
 import { ingestBossDesktopMessage } from './tools/secretary-core.ts'
 
 export type {
@@ -34,6 +35,7 @@ export type GovernanceRouteKeys =
   | 'GET memory/studio' | 'POST memory/direct' | 'POST memory/patches/:index'
   | 'GET rsi/workbench' | 'POST rsi/ablation' | 'POST rsi/holdout'
   | 'GET pixel-office/proof'
+  | 'GET avatars' | 'POST avatars/select' | 'POST avatars/generate'
 
 const count = z.coerce.number().int().nonnegative()
 const limit = (fallback: number, max: number) => z.coerce.number().int().positive().catch(fallback).transform(v => Math.min(max, v))
@@ -91,6 +93,13 @@ const HoldoutBody = z.object({
     id: z.string(), family: z.string(), input: z.unknown(),
     expectedOutcome: z.enum(['defect', 'clean', 'unknown']),
   }).strict()),
+}).strict()
+
+const SelectAvatarBody = z.object({ avatarId: z.string().trim().min(1).max(64) }).strict()
+const GenerateAvatarBody = z.object({
+  name: z.string().trim().min(1).max(80),
+  prompt: z.string().trim().min(1).max(1000),
+  seed: z.number().int().nonnegative().optional(),
 }).strict()
 
 export function governanceRoutes(
@@ -161,5 +170,23 @@ export function governanceRoutes(
       workspaceId: 'secretary-main', seed: 20261126, width: 1440, height: 900, paletteColors: 46,
       html: renderF1ProofHtml(),
     }),
+    'GET avatars': () => listAvatarPacks(runtime.machine.stateDir, store),
+    'POST avatars/select': async ({ body }) => {
+      const { avatarId } = SelectAvatarBody.parse(await body())
+      try { return selectAvatarPack(runtime.machine.stateDir, store, avatarId) }
+      catch (err) { fail404(err instanceof Error ? err.message : String(err)) }
+    },
+    'POST avatars/generate': async ({ body }) => {
+      const parsed = GenerateAvatarBody.parse(await body())
+      try {
+        const pack = await generateAvatarPackViaProvider({
+          stateDir: runtime.machine.stateDir, id: `ai-${Date.now()}`, name: parsed.name,
+          prompt: parsed.prompt, ...(parsed.seed !== undefined ? { seed: parsed.seed } : {}),
+        })
+        return { ok: true, pack }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
   }
 }
