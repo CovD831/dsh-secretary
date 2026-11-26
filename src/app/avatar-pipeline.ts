@@ -234,7 +234,7 @@ export function listAvatarPacks(stateDir: string, store: Store): { activeId: str
       neutral: '/assets/f1-proof/portrait_neutral.png', working: '/assets/f1-proof/portrait_working.png',
       happy: '/assets/f1-proof/portrait_happy.png', concerned: '/assets/f1-proof/portrait_concerned.png',
     },
-    spriteUrl: '/assets/office/chars.png', quantized: true, outOfPaletteCount: 0, statusPixels: 0, semiTransparentCount: 0,
+    spriteUrl: '/assets/office/char_secretary.png', quantized: true, outOfPaletteCount: 0, statusPixels: 0, semiTransparentCount: 0,
   }
   const items: AvatarPackSummary[] = [preset]
   const root = join(stateDir, 'avatars')

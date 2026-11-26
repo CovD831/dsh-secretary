@@ -1,5 +1,5 @@
 /** 独立回环专属像素办公室 HTTP + SSE 服务：同源 API 分发、静态资产安全托管与实时治理事件推送。 */
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { extname, join, resolve } from 'node:path'
@@ -56,9 +56,9 @@ function sendStaticFile(res: ServerResponse, rootDir: string, relPath: string): 
     res.end('Not Found')
     return
   }
-  if (realTarget !== realRoot && !realTarget.startsWith(`${realRoot}/`)) {
-    res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' })
-    res.end('Forbidden')
+  if (!realTarget.startsWith(`${realRoot}/`) || !statSync(realTarget).isFile()) {
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+    res.end('Not Found')
     return
   }
   const mime = MIME[extname(realTarget).toLowerCase()] ?? 'application/octet-stream'

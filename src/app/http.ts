@@ -201,10 +201,11 @@ function routes(runtime: HttpHost): Routes {
     },
     'GET tickets/:id': ({ params }) => ticketPage(runtime, params.id),
     'GET tickets/:id/transcript': async ({ params, query }) => {
+      const lim = Number(query.limit)
       const view = await readTicketTranscript({
         ticketId: params.id, store, stateDir: runtime.machine.stateDir,
         ...(runtime.persistence ? { persistence: runtime.persistence } : {}),
-        ...(query.limit ? { limit: Number(query.limit) } : {}),
+        ...(Number.isFinite(lim) && lim > 0 ? { limit: Math.floor(lim) } : {}),
       })
       if (!view) throw new RouteError(404, 'Ticket not found')
       return view

@@ -49,28 +49,16 @@ export class GovernanceRuntime {
   private eventSeq = 0; private shuttingDown = false; private closed = false
 
   constructor(options: GovernanceOptions) {
-    this.store = options.store
-    this.storeRef = options.store
-    this.stateDir = options.stateDir
-    this.onError = options.onError ?? (() => {})
-    this.now = options.now ?? (() => new Date())
-    this.memoryDir = join(options.stateDir, 'memory')
-    this.memoryRepoLock = new GitRepoLock()
+    this.store = options.store; this.storeRef = options.store; this.stateDir = options.stateDir
+    this.onError = options.onError ?? (() => {}); this.now = options.now ?? (() => new Date())
+    this.memoryDir = join(options.stateDir, 'memory'); this.memoryRepoLock = new GitRepoLock()
 
     ensureSpineSchema(this.store.db, readSyncTailSeq(this.memoryDir))
     this.sink = createGitShardSink({ dir: this.memoryDir, lock: this.memoryRepoLock })
     this.flusher = createSpineFlusher(this.store.db, this.sink, { onError: this.onError, now: this.now })
     const rawAppender = createSpineAppender(this.store, { kick: () => { if (!this.closed && !this.shuttingDown) this.flusher.kick() } })
-    this.appender = options.onSpineAppended
-      ? {
-          append: <P>(draft: SpineDraft<P>) => {
-            const ref = rawAppender.append(draft)
-            const cb = options.onSpineAppended!
-            this.store.afterCommit(() => cb(ref, draft as SpineDraft<Record<string, unknown>>))
-            return ref
-          },
-        }
-      : rawAppender
+    const cb = options.onSpineAppended
+    this.appender = cb ? { append: <P>(draft: SpineDraft<P>) => { const ref = rawAppender.append(draft); this.store.afterCommit(() => cb(ref, draft as SpineDraft<Record<string, unknown>>)); return ref } } : rawAppender
     this.memory = new MemoryWriter({
       dir: this.memoryDir, lock: this.memoryRepoLock, resolveRef: ref => this.resolveSpineRefUnlocked(ref), now: this.now,
       onAuditEvent: draft => {
