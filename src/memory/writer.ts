@@ -9,7 +9,7 @@ import { isoTime } from '../core/model.ts'
 import { GitRepoLock } from '../spine/git-sink.ts'
 import { redactDraft, redactValue } from '../spine/redact.ts'
 import type { SourceRef, SpineDraft, Taint as SpineTaint } from '../spine/types.ts'
-import { formatChangeLogLine, listMemoryPages, readMemoryPage, resolveMemoryRelPath, writeMemoryPage } from './codec.ts'
+import { assertSafeMemoryPath, formatChangeLogLine, listMemoryPages, readMemoryPage, resolveMemoryRelPath, writeMemoryPage } from './codec.ts'
 import { assertResidentBudget, DEFAULT_MEMORY_BUDGETS, isEntryActiveAt } from './recall.ts'
 import {
   ResidentBudgetExceededError, type AttentionItem, type AttentionProposal, type AttentionTransition,
@@ -133,15 +133,17 @@ export class MemoryWriter {
   }
   private async writeAndCommit(pages: readonly [string, FactPage | LedgerPage][], message: string): Promise<string | undefined> {
     const snaps = new Map<string, string | null>()
-    for (const [rel] of pages) {
-      const abs = join(this.dir, rel)
+    const rels = pages.map(([rel]) => rel)
+    for (const rel of rels) {
+      const abs = await assertSafeMemoryPath(this.dir, rel)
       snaps.set(abs, await readFile(abs, 'utf8').catch(e => ((e as NodeJS.ErrnoException).code === 'ENOENT' ? null : Promise.reject(e))))
     }
     try {
       for (const [rel, page] of pages) await writeMemoryPage(this.dir, rel, page)
-      return await this.commitPaths(pages.map(([rel]) => rel), message)
+      return await this.commitPaths(rels, message)
     } catch (err) {
       for (const [abs, prev] of snaps) await (prev === null ? rm(abs, { force: true }) : writeFile(abs, prev, 'utf8')).catch(() => {})
+      await this.git(['reset', 'HEAD', '--', ...rels]).catch(() => this.git(['rm', '--cached', '--ignore-unmatch', '--', ...rels])).catch(() => {})
       throw err
     }
   }

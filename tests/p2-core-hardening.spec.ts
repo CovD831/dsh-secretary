@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -126,6 +127,14 @@ describe('P2 core hardening', () => {
     resolveApproval?.('allowed-once')
     expect(await approvalPromise).toBe('cancelled')
     expect(events.some(e => e.type === 'approval.stale_cancelled')).toBe(true)
+
+    store.tickets.save(makeTicket('t3', dir, 'running'))
+    const modePromise = ctx2.waterfall('approval/request' as never, {
+      agent: { id: 'worker-t3', session: { snapshotEvents: () => [] } } as never, toolName: 'bash', callId: 'call-10',
+    } as never, (async () => 'rejected') as never)
+    store.saveSettings(SettingsSchema.parse({ executor: { approvalMode: 'always-ask' } }))
+    resolveApproval?.('allowed-once')
+    expect(await modePromise).toBe('cancelled')
     g2.dispose()
   })
 
@@ -201,6 +210,7 @@ describe('P2 core hardening', () => {
       })).rejects.toThrow()
     }
     expect(readFileSync(origPath, 'utf8')).toBe(origContent)
+    expect(execFileSync('git', ['status', '--porcelain'], { cwd: memDir, encoding: 'utf8' }).trim()).toBe('')
   })
 
   it('scans newest shards first and stops early in readSpineProjection when tail=true without sinceSeq', async () => {

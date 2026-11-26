@@ -71,7 +71,10 @@ export class PreExecuteCompletionGuard {
   private persistObs(): void {
     if (typeof this.deps.store.set !== 'function') return
     const out: Record<string, PersistedCompletionObs> = {}
-    for (const [id, o] of this.observed) out[id] = { sessionDiffs: [...o.sessionDiffs], sawShellWrite: o.sawShellWrite, sawUnmeasuredTool: o.sawUnmeasuredTool, unmeasuredTools: [...o.unmeasuredTools] }
+    for (const [id, o] of this.observed) {
+      if (!o.sawShellWrite && !o.sawUnmeasuredTool && o.sessionDiffs.size === 0 && o.unmeasuredTools.size === 0) continue
+      out[id] = { sessionDiffs: [...o.sessionDiffs], sawShellWrite: o.sawShellWrite, sawUnmeasuredTool: o.sawUnmeasuredTool, unmeasuredTools: [...o.unmeasuredTools] }
+    }
     this.deps.store.set(KV.governance.completionObs, out)
   }
 

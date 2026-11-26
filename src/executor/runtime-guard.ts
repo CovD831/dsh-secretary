@@ -196,7 +196,7 @@ export class RuntimeGuard {
     this.deps.relayToMaster(`approval:${ticket.id}:${String(req.callId ?? ++this.seq)}`, JSON.stringify({
       kind: 'approval_pending', ticket_id: ticket.id, tool_name: req.toolName, reason: req.reason ?? '',
     }))
-    const snapMode = effectiveApprovalMode(this.deps.store.settings(), ticket), snapLive = liveTicket(ticket)
+    const snapMode = effectiveApprovalMode(this.deps.store.settings(), ticket), snapAsg = runningAssignment(ticket)?.id
     const outcome = await this.deps.rulings.requestDshApproval({
       question, ticketId: ticket.id, sessionId: req.agent.id, toolName: req.toolName,
       ...(ticket.execution?.workspace ? { workspace: ticket.execution.workspace } : {}),
@@ -206,11 +206,14 @@ export class RuntimeGuard {
     })
     if (outcome === 'allowed-once') {
       const fresh = this.deps.store.tickets.get(ticket.id), paused = this.deps.store.settings().paused
-      if (!fresh || !liveTicket(fresh) || paused) {
+      const freshAsg = fresh ? runningAssignment(fresh)?.id : undefined
+      const freshMode = fresh ? effectiveApprovalMode(this.deps.store.settings(), fresh) : undefined
+      const asgChanged = Boolean(snapAsg && freshAsg !== snapAsg) || !freshAsg
+      if (!fresh || !liveTicket(fresh) || paused || asgChanged || freshMode !== snapMode) {
         this.deps.appender.append({
           id: `approval:stale:${ticket.id}:${String(req.callId ?? ++this.seq)}`, stream: `ticket:${ticket.id}`, type: 'approval.stale_cancelled',
           source: { kind: 'system', ref: 'runtime-guard.approval' }, evidence: [{ kind: 'event', ref: `session:${req.agent.id}` }], taint: 'trusted',
-          payload: { ticketId: ticket.id, sessionId: req.agent.id, toolName: req.toolName, snapMode, snapLive, paused, ticketState: fresh?.ended ? 'ended' : fresh ? 'inactive' : 'missing' },
+          payload: { ticketId: ticket.id, sessionId: req.agent.id, toolName: req.toolName, snapMode, freshMode, asgChanged, paused, ticketState: fresh?.ended ? 'ended' : fresh ? 'inactive' : 'missing' },
         })
         return 'cancelled'
       }

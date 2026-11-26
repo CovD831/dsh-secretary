@@ -120,7 +120,11 @@ async function computeSourceFingerprint(memoryDir: string): Promise<string> {
   const parts: string[] = []
   const walk = async (absDir: string, relDir: string): Promise<void> => {
     let entries
-    try { entries = await readdir(absDir, { withFileTypes: true }) } catch { return }
+    try {
+      const dirSt = await lstat(absDir)
+      if (dirSt.isSymbolicLink() || !dirSt.isDirectory()) return
+      entries = await readdir(absDir, { withFileTypes: true })
+    } catch { return }
     for (const d of entries) {
       if (d.isSymbolicLink()) continue
       const abs = join(absDir, d.name), rel = `${relDir}/${d.name}`
@@ -200,9 +204,10 @@ export class MemoryFtsIndex {
       return this.openFreshAndRebuild()
     }
     if (!this.isInMemory && !existsSync(this.dbPath)) return this.openFreshAndRebuild()
+    let db: DatabaseSync | undefined
     try {
       if (!this.isInMemory) await mkdir(dirname(this.dbPath), { recursive: true })
-      const db = new DatabaseSync(this.dbPath)
+      db = new DatabaseSync(this.dbPath)
       const meta = db.prepare('SELECT recipe_fingerprint, built_at, source_fingerprint FROM index_meta WHERE id = 1').get() as
         | { recipe_fingerprint?: string; built_at?: string; source_fingerprint?: string } | undefined
       const countRow = db.prepare('SELECT count(*) AS c FROM memory_fts').get() as { c: number }
@@ -213,6 +218,7 @@ export class MemoryFtsIndex {
       this.db = db
       return { rebuilt: false, indexedEntries: Number(countRow.c) }
     } catch {
+      try { db?.close() } catch { /* 忽略关闭失败 */ }
       return this.openFreshAndRebuild()
     }
   }
@@ -223,10 +229,8 @@ export class MemoryFtsIndex {
       this.db = new DatabaseSync(this.dbPath)
       this.createSchema(this.db)
     }
-    const [pages, sourceFp] = await Promise.all([
-      existsSync(this.memoryDir) ? listMemoryPages(this.memoryDir, ['m1', 'm2', 'm3', 'm4']) : Promise.resolve([]),
-      computeSourceFingerprint(this.memoryDir),
-    ])
+    const sourceFp = await computeSourceFingerprint(this.memoryDir)
+    const pages = existsSync(this.memoryDir) ? await listMemoryPages(this.memoryDir, ['m1', 'm2', 'm3', 'm4']) : []
     const builtAt = this.now().toISOString()
     const db = this.db
     db.exec('BEGIN IMMEDIATE')
