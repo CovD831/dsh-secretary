@@ -6,7 +6,7 @@
 
 **治理优先的自治 Coding Agent 底座** —— 追加式 `M0–M6` 记忆脊、三态事前硬闸、物理零执行秘书编排，以及基于 PixiJS v8 的 2:1 等轴测像素办公室。
 
-> 基于 MIT 协议的 [DeepSeek Harness (DSH)](https://www.deepseek.com/en/harness/) 扩展接口（`dsh-superagent` 原型）深度重构，独立建设治理判局、证据记忆脊、隔离执行与可视化观测体系（`224` 个 TypeScript 模块，`90` 套 Vitest 测试集）。
+> 基于 MIT 协议的 [DeepSeek Harness (DSH)](https://www.deepseek.com/en/harness/) 扩展接口（`dsh-superagent` 原型）深度重构，独立建设治理判局、证据记忆脊、隔离执行与可视化观测体系（`238` 个 TypeScript 模块，`93` 套 Vitest 测试集）。
 
 <p align="center">
   <img src="./docs/screenshots/office-overview.png" width="820" alt="dsh-secretary 5 工作区单平面 2:1 等轴测像素办公室" />
@@ -61,6 +61,8 @@ flowchart LR
   - 每个判据均配备红/绿双向夹具及禁用变异测试，杜绝装饰性门禁。
 - **秘书物理零执行**（`src/app/tools/`、`src/workspaces/worktree.ts`）
   - 秘书总控会话仅装配路由、裁决与只读查询工具，随后调用 `tools.restrict({ allow: [] })` 屏蔽全部全局执行工具；所有代码查验与修改均在独立 Git Worktree 子会话内完成。
+- **在线问题聚类与 Chow 分层路由**（`src/rsi/`）
+  - 在线聚合执行摩擦与失败案例，从 Trace 沉淀 SOP 经验包，并通过 Chow 分层路由器按复杂度分发任务，支持工作台内一键切换 RSI 模式。
 - **2:1 等轴测像素办公室**（`src/office-app/`、`src/pixel-office/`）
   - 同层多工作区程序化蓝图（`world-layout.ts`、`room-blueprints.ts`、`roguelike-pcg.ts`）、PixiJS v8 多层光照与遮挡渲染（`pixi-diorama.ts`、`world-renderer.ts`）、46 色板衍生 8 款角色并与侧栏头像 1:1 同步（`char-variants.ts`）、双人协同席（`seat-slots.ts`）以及投影实时裁决与 `L1/L2` 嵌套子代理的位图 HUD。
 
@@ -75,8 +77,8 @@ flowchart LR
 | `src/app/` | 零执行秘书运行时、裁决队列与常驻治理巡检 |
 | `src/workspaces/` | 串行化 Git Worktree 调度、写时复制依赖隔离与 `.env` 剥离 |
 | `src/office-app/` | PixiJS v8 2:1 等轴测像素办公室渲染器、房间生成器与 HUD |
-| `src/rsi/` | 在线摩擦收集与 Trace-to-SOP 经验挖掘 |
-| `tests/` | `90` 套 Vitest 测试，覆盖判据门禁、脱敏、Worktree、记忆不变量与 UI |
+| `src/rsi/` | 在线摩擦收集、问题聚类、Chow 分层路由与 Trace-to-SOP 经验挖掘 |
+| `tests/` | `93` 套 Vitest 测试，覆盖判据门禁、脱敏、Worktree、记忆不变量与 UI |
 | `docs/` | 架构文档（`000-philosophy.md` – `008-cookbook.md`、`STANDARDS.md`） |
 
 ## 隔离验证与开发

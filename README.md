@@ -6,7 +6,7 @@
 
 **Governance-first autonomous coding agent harness** — append-only `M0–M6` memory spine, three-state pre-execution gates, physically zero-execution secretary orchestration, and a 2:1 isometric PixiJS v8 agent office.
 
-> Built on the MIT-licensed [DeepSeek Harness (DSH)](https://www.deepseek.com/en/harness/) bundle interface (`dsh-superagent` origin) and substantially re-architected with an independent governance, verification, memory, and visual-telemetry stack (`224` TypeScript modules, `90` Vitest test suites).
+> Built on the MIT-licensed [DeepSeek Harness (DSH)](https://www.deepseek.com/en/harness/) bundle interface (`dsh-superagent` origin) and substantially re-architected with an independent governance, verification, memory, and visual-telemetry stack (`238` TypeScript modules, `93` Vitest test suites).
 
 <p align="center">
   <img src="./docs/screenshots/office-overview.png" width="820" alt="dsh-secretary 5-workspace single-plane 2:1 isometric pixel office" />
@@ -61,8 +61,10 @@ flowchart LR
   - Each gate ships with paired red/green fixtures and disable-mutation checks to prevent decorative gates.
 - **Physically Zero-Execution Secretary** (`src/app/tools/`, `src/workspaces/worktree.ts`)
   - Coordinator sessions register only routing, ruling, and read-only query tools, then invoke `tools.restrict({ allow: [] })` to block all global execution tools. Code inspection and edits run strictly inside isolated git worktree sub-sessions.
+- **Online Problem Clustering & Chow Tier Routing** (`src/rsi/`)
+  - Clusters live execution frictions and ticket failures online, extracts SOP deposits from traces, and dispatches work across complexity tiers via a Chow tier router with a dedicated RSI workbench mode toggle.
 - **2:1 Isometric Pixel Diorama Office** (`src/office-app/`, `src/pixel-office/`)
-  - Single-plane multi-room blueprints (`world-layout.ts`, `room-blueprints.ts`, `roguelike-pcg.ts`), layered PixiJS v8 lighting/occlusion (`pixi-diorama.ts`, `world-renderer.ts`), 8 palette-safe pixel variants synced to sidebar portraits (`char-variants.ts`), dual-seat priority desks (`seat-slots.ts`), and a bitmap HUD projecting live rulings &amp; nested `L1/L2` subagents.
+  - Single-plane multi-room blueprints (`world-layout.ts`, `room-blueprints.ts`, `roguelike-pcg.ts`), layered PixiJS v8 lighting/occlusion (`pixi-diorama.ts`, `world-renderer.ts`), 8 palette-safe pixel variants synced to sidebar portraits (`char-variants.ts`), dual-seat priority desks (`seat-slots.ts`), and a bitmap HUD projecting live rulings & nested `L1/L2` subagents.
 
 ## Repository Map
 
@@ -75,8 +77,8 @@ flowchart LR
 | `src/app/` | Zero-exec secretary runtime, ruling queue, standing-order governance patrol |
 | `src/workspaces/` | Serialized git worktree provisioning, CoW dependency copy with secret stripping |
 | `src/office-app/` | PixiJS v8 2:1 isometric pixel office renderer, procedural room layouts & HUD |
-| `src/rsi/` | Online friction collector & trace-to-SOP mining |
-| `tests/` | `90` Vitest suites covering gates, redaction, worktrees, memory invariants & UI |
+| `src/rsi/` | Online friction collector, problem clustering, Chow tier router & trace-to-SOP mining |
+| `tests/` | `93` Vitest suites covering gates, redaction, worktrees, memory invariants & UI |
 | `docs/` | Architecture docs (`000-philosophy.md` – `008-cookbook.md`, `STANDARDS.md`) |
 
 ## Verification & Development
