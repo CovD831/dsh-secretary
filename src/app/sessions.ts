@@ -20,6 +20,16 @@ import type { Store } from './store.ts'
 import { KV } from '../kv.ts'
 import type { RegisterTool, Tool } from './tools/tool.ts'
 
+/** Read-only projection of one active child subagent belonging to a worker Session. */
+export interface TicketSubagentView {
+  readonly id: string
+  readonly parentSessionId: string
+  readonly status: 'running' | 'idle'
+  readonly depth: number
+  readonly preset?: string
+  readonly createdAt?: string
+}
+
 /** Host dependencies used by `Sessions`. */
 export interface SessionsHost {
   /** DSH Cordis context: sessions, agents, persistence, and their events. */
@@ -44,6 +54,8 @@ export interface SessionsHost {
   onMasterTurnIdleReply?(text: string, expectedBossFeedId: string): void
   /** Optional hook called when the main Session settles into idle (after any fallback reply). */
   onMasterTurnSettled?(expectedBossFeedId?: string): void
+  /** Optional read-only UI stream hook called when a worker subagent is attached, transitions status, or disposes. */
+  onSubagentChanged?(ticketId: string): void
 }
 
 /**
@@ -57,6 +69,7 @@ interface SessionBinding {
   scope?: Context
   skills?: { revision: number; dispose: () => void }
   subagent?: true
+  parentTicketId?: string
 }
 
 const SECRETARY_CHINESE_PROTOCOL = `## 中文私人秘书协议（主入口规范）
@@ -110,8 +123,10 @@ export class Sessions {
   install(): void {
     const ctx = this.ctx
     ctx.on('agent/disposed', ({ agent }) => {
+      const subTicket = this.bindings.get(agent)?.parentTicketId
       this.release(agent)
       this.retryHealth.clear(agent.id); this.updateModelHealth()
+      if (subTicket && !this.host.closing()) this.host.onSubagentChanged?.(subTicket)
       if (agent.id === this.host.masterId) { this.masterTurnText = ''; this.pendingBossFeedId = undefined }
     })
     ctx.on('session/event', (session, event) => {
@@ -150,6 +165,9 @@ export class Sessions {
       })
     })
     ctx.on('agent/status', ({ agent, status }) => {
+      const subTicket = this.bindings.get(agent)?.parentTicketId
+        ?? (agent.id !== this.host.masterId && ticketOfSession(agent.id) === undefined ? this.resolveOwnerTicket(agent)?.ticketId : undefined)
+      if (subTicket && !this.host.closing()) this.host.onSubagentChanged?.(subTicket)
       if (status === 'idle' && !this.host.closing()) {
         this.retryHealth.clear(agent.id); this.updateModelHealth()
         if (agent.id === this.host.masterId) {
@@ -383,20 +401,50 @@ export class Sessions {
   private workOnly(agent: Agent, ticketId: string): (() => void)[] {
     return this.workOnlyWithKey(agent, ticketId).disposers
   }
+  private resolveOwnerTicket(agent: Agent): { ticketId: string; depth: number } | undefined {
+    let parent = agent.session?.header?.parentSession
+    for (let depth = 0; parent !== undefined && depth < 8; depth++) {
+      const tid = ticketOfSession(parent)
+      if (tid !== undefined && this.host.store.tickets.get(tid)) return { ticketId: tid, depth: depth + 1 }
+      parent = this.ctx.agents.get(parent)?.session?.header?.parentSession
+    }
+    return undefined
+  }
+  /** Returns active child/nested subagent projections belonging to `ticketId`. */
+  subagentsFor(ticketId: string): TicketSubagentView[] {
+    const reg = this.ctx.agents as { list?(): Agent[]; values?(): Iterable<Agent> } | undefined
+    const live = typeof reg?.list === 'function'
+      ? reg.list()
+      : typeof reg?.values === 'function'
+        ? [...reg.values()]
+        : [...this.bindings.keys()]
+    const out: TicketSubagentView[] = []
+    for (const agent of live) {
+      if (agent.id === this.host.masterId || ticketOfSession(agent.id) !== undefined) continue
+      const owner = this.resolveOwnerTicket(agent)
+      if (owner?.ticketId !== ticketId) continue
+      const header = agent.session?.header
+      out.push({
+        id: agent.id,
+        parentSessionId: String(header?.parentSession ?? ''),
+        status: agent.status === 'running' ? 'running' : 'idle',
+        depth: header?.delegationDepth ?? owner.depth,
+        ...(header?.agentPreset ? { preset: header.agentPreset } : {}),
+        ...(typeof header?.createdAt === 'number' ? { createdAt: new Date(header.createdAt).toISOString() } : {}),
+      })
+    }
+    return out.sort((a, b) => a.depth - b.depth || a.id.localeCompare(b.id))
+  }
   /**
    * A subagent of an Executor Session, or of one of its subagents, which runs under DSH's `standard` preset with the worker's
    * permissions, gets the same work tools as the worker, and none once the worker's ticket ended. Any other agent is left as
    * it is.
    */
   private limitSubagent(agent: Agent): void {
-    let parent = agent.session.header.parentSession
-    // Up the subagents' parents to the worker, which are loaded while their subagents run.
-    for (let depth = 0; parent !== undefined && ticketOfSession(parent) === undefined && depth < 8; depth++) {
-      parent = this.ctx.agents.get(parent)?.session.header.parentSession
-    }
-    const ticketId = parent === undefined ? undefined : ticketOfSession(parent)
-    if (ticketId === undefined || !this.host.store.tickets.get(ticketId)) return
-    this.bindings.set(agent, { disposers: this.workOnly(agent, ticketId), subagent: true })
+    const owner = this.resolveOwnerTicket(agent)
+    if (!owner) return
+    this.bindings.set(agent, { disposers: this.workOnly(agent, owner.ticketId), subagent: true, parentTicketId: owner.ticketId })
+    if (!this.host.closing()) this.host.onSubagentChanged?.(owner.ticketId)
   }
   /** Register the skills of a prompt version in the agent's skill scope, in place of an earlier version's. */
   private bindSkills(binding: SessionBinding, version: PromptVersion): void {

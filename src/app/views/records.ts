@@ -6,11 +6,12 @@ import { allowedSender, listedBot } from '../../policy.ts'
 import type { ChannelLink, Localized } from '../../sources/kind.ts'
 import type { SourceRegistry } from '../../sources/registry.ts'
 import { workerSessionId } from '../../executor/dsh.ts'
+import type { TicketSubagentView } from '../sessions.ts'
 import type { Store } from '../store.ts'
 import { attribute, markdown, plain, preview, readable } from './text.ts'
 
 export type LinkTarget = (channel: ChannelRef) => ChannelLink
-export interface ViewHost { store: Store; sources: SourceRegistry; links: LinkTarget }
+export interface ViewHost { store: Store; sources: SourceRegistry; links: LinkTarget; subagentsOf?: (ticketId: string) => TicketSubagentView[] }
 export const page = <T>(items: T[], offset: number, limit: number) => ({ items: items.slice(offset, offset + limit), total: items.length, next_offset: offset + limit < items.length ? offset + limit : null })
 const DAY = 86_400_000
 export const dayAgo = () => new Date(Date.now() - DAY).toISOString()
@@ -140,8 +141,14 @@ export function threadFacts(store: Store, thread: Thread) {
   return { key: thread.key, source: thread.ref.source, title: threadTitle(store, thread), ...url ? { url } : {}, facts: (thread.meta.facts ?? {}) as ThreadFacts }
 }
 export type ThreadFactsView = ReturnType<typeof threadFacts>
-export const ticketLine = (view: Snapshot, ticket: Ticket) => ({ ...ticketSummary(ticket),
-  threads: view.threadsOf(ticket.id).map(thread => threadFacts(view.store, thread)) })
+export const ticketLine = (view: Snapshot, ticket: Ticket) => {
+  const subagents = view.subagentsOf?.(ticket.id) ?? []
+  return {
+    ...ticketSummary(ticket),
+    threads: view.threadsOf(ticket.id).map(thread => threadFacts(view.store, thread)),
+    ...(subagents.length > 0 ? { subagents } : {}),
+  }
+}
 export function threadTitle(store: Pick<Store, 'read'>, thread: Thread): string {
   const label = attribute(thread.meta.label)
   if (label) return label
