@@ -9,10 +9,25 @@
 > Built on the MIT-licensed [DeepSeek Harness (DSH)](https://www.deepseek.com/en/harness/) bundle interface (`dsh-superagent` origin) and substantially re-architected with an independent governance, verification, memory, and visual-telemetry stack (`224` TypeScript modules, `90` Vitest test suites).
 
 <p align="center">
-  <img src="./assets/f1-proof/room_ai_quantized.png" width="760" alt="dsh-secretary 2:1 isometric pixel office diorama" />
+  <img src="./docs/screenshots/office-overview.png" width="820" alt="dsh-secretary 5-workspace single-plane 2:1 isometric pixel office" />
   <br />
-  <sub>2:1 isometric PixiJS v8 agent office — read-only projection of live rulings, worktree sessions & memory spine</sub>
+  <sub>Single-plane 5-workspace PixiJS v8 campus — synced left-rail room portraits, live rulings, worktree sessions &amp; nested subagent telemetry</sub>
 </p>
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="./docs/screenshots/office-closeup-2x.png" alt="2x close-up of dual-seat collab table, 6-tile East Gallery corridor, and 8 pixel worker variants" />
+      <br />
+      <sub><b>2× Close-Up:</b> dual-seat collab table, widened 6-tile corridor &amp; 8 palette-safe pixel variants (<code>+N</code> subagent pills)</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="./docs/screenshots/office-worker-drawer.png" alt="Worker dossier drawer with active L1/L2 nested subagents and redacted terminal trace" />
+      <br />
+      <sub><b>Worker Dossier Drawer:</b> live <code>L1/L2</code> nested subagent hierarchy &amp; redacted session trace</sub>
+    </td>
+  </tr>
+</table>
 
 ---
 
@@ -47,7 +62,7 @@ flowchart LR
 - **Physically Zero-Execution Secretary** (`src/app/tools/`, `src/workspaces/worktree.ts`)
   - Coordinator sessions register only routing, ruling, and read-only query tools, then invoke `tools.restrict({ allow: [] })` to block all global execution tools. Code inspection and edits run strictly inside isolated git worktree sub-sessions.
 - **2:1 Isometric Pixel Diorama Office** (`src/office-app/`, `src/pixel-office/`)
-  - Procedural room blueprints (`room-blueprints.ts`, `roguelike-pcg.ts`), layered PixiJS v8 lighting/occlusion rendering (`pixi-diorama.ts`, `world-renderer.ts`), and a bitmap HUD projecting live agent states, rulings, and token telemetry.
+  - Single-plane multi-room blueprints (`world-layout.ts`, `room-blueprints.ts`, `roguelike-pcg.ts`), layered PixiJS v8 lighting/occlusion (`pixi-diorama.ts`, `world-renderer.ts`), 8 palette-safe pixel variants synced to sidebar portraits (`char-variants.ts`), dual-seat priority desks (`seat-slots.ts`), and a bitmap HUD projecting live rulings &amp; nested `L1/L2` subagents.
 
 ## Repository Map
 

@@ -9,10 +9,25 @@
 > 基于 MIT 协议的 [DeepSeek Harness (DSH)](https://www.deepseek.com/en/harness/) 扩展接口（`dsh-superagent` 原型）深度重构，独立建设治理判局、证据记忆脊、隔离执行与可视化观测体系（`224` 个 TypeScript 模块，`90` 套 Vitest 测试集）。
 
 <p align="center">
-  <img src="./assets/f1-proof/room_ai_quantized.png" width="760" alt="dsh-secretary 2:1 等轴测像素办公室" />
+  <img src="./docs/screenshots/office-overview.png" width="820" alt="dsh-secretary 5 工作区单平面 2:1 等轴测像素办公室" />
   <br />
-  <sub>2:1 等轴测 PixiJS v8 像素办公室 —— 实时裁决队列、Worktree 子会话与记忆脊的只读投影</sub>
+  <sub>5 工作区同层展开 PixiJS v8 园区 —— 左侧导览栏 1:1 匹配员工头像、实时裁决队列、Worktree 子会话与嵌套子代理聚合遥测</sub>
 </p>
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="./docs/screenshots/office-closeup-2x.png" alt="2× 近景：四人协作桌双人落座、6 格宽东西走廊与 8 款像素员工外观" />
+      <br />
+      <sub><b>2× 近景细节：</b>协作桌双人落座、6 格宽走廊、8 款 46 色衍生员工与 <code>+N</code> 嵌套子代理角标</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="./docs/screenshots/office-worker-drawer.png" alt="工位卷宗抽屉：L1/L2 活跃嵌套子代理层级与脱敏终端轨迹" />
+      <br />
+      <sub><b>工位卷宗抽屉：</b>实时 <code>L1/L2</code> 嵌套子代理层级与脱敏现场终端轨迹</sub>
+    </td>
+  </tr>
+</table>
 
 ---
 
@@ -47,7 +62,7 @@ flowchart LR
 - **秘书物理零执行**（`src/app/tools/`、`src/workspaces/worktree.ts`）
   - 秘书总控会话仅装配路由、裁决与只读查询工具，随后调用 `tools.restrict({ allow: [] })` 屏蔽全部全局执行工具；所有代码查验与修改均在独立 Git Worktree 子会话内完成。
 - **2:1 等轴测像素办公室**（`src/office-app/`、`src/pixel-office/`）
-  - 程序化房间蓝图（`room-blueprints.ts`、`roguelike-pcg.ts`）、PixiJS v8 多层光照与遮挡渲染（`pixi-diorama.ts`、`world-renderer.ts`），以及实时投影 Agent 状态、裁决与 Token 遥测的位图 HUD。
+  - 同层多工作区程序化蓝图（`world-layout.ts`、`room-blueprints.ts`、`roguelike-pcg.ts`）、PixiJS v8 多层光照与遮挡渲染（`pixi-diorama.ts`、`world-renderer.ts`）、46 色板衍生 8 款角色并与侧栏头像 1:1 同步（`char-variants.ts`）、双人协同席（`seat-slots.ts`）以及投影实时裁决与 `L1/L2` 嵌套子代理的位图 HUD。
 
 ## 目录结构速览
 
