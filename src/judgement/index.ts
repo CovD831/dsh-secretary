@@ -30,8 +30,10 @@ export {
   validateDeclarativeRule,
 } from './declarative.ts'
 export {
+  BUILTIN_EXECUTABLE_DEPOSIT_IDS,
   OSS_SEEDED_GATE_IDS,
   RESERVED_BUILTIN_DEPOSIT_IDS,
+  createBuiltinGate,
   discoverAndRegisterDeposits,
   renderDepositsLedgerMarkdown,
   resolveDepositEntry,

@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import type { Assignment, DomainEvent, OutboundMessage, Ticket, Trigger } from '../core/index.ts'
 import { prepareLaunchCapsule, type PreparedLaunchCapsule } from '../executor/capsule-hook.ts'
-import { adaptiveDispatchGate, verifyChangedPathsGate, verifyRerunGate } from '../judgement/gates/index.ts'
+import type { HostPlanReviewRunner } from '../executor/adversarial-review.ts'
+import { adaptiveDispatchGate, verifyChangedPathsGate, verifyRerunGate, type PlanReviewOutcome } from '../judgement/gates/index.ts'
 import { createJudgementRegistry, loadPlaybookCandidates, lockTicketGeneration, type ActionClass, type ExtendedJudgementRegistry, type Verdict } from '../judgement/index.ts'
 import { MemoryFtsIndex, MemoryWriter, loadWorkspacePitfallNotes } from '../memory/index.ts'
 import { domainEventToSpineDraft } from '../rsi/trace-bridge.ts'
@@ -51,6 +52,7 @@ export class GovernanceRuntime {
   private readonly store: Store; private readonly onError: (error: unknown) => void; private readonly now: () => Date
   private readonly bootId = randomUUID().slice(0, 8); private readonly pendingTasks = new Set<Promise<void>>()
   private readonly repoLocks = new Map<string, GitRepoLock>()
+  private readonly planReviewCache = new Map<string, PlanReviewOutcome>()
   private eventSeq = 0; private shuttingDown = false; private closed = false
   private patrolTimer?: ReturnType<typeof setInterval>
 
@@ -211,7 +213,9 @@ export class GovernanceRuntime {
   }
 
   /** 执行器首次发射前加载宿主派生的 M3 避坑经验、提取 1-Hop 切片与自适应派发方案并记入事件脊。 */
-  async prepareLaunchCapsule(input: { ticket: Ticket; assignment: Assignment; workspaceDir: string; triggerText?: string }): Promise<PreparedLaunchCapsule | undefined> {
+  async prepareLaunchCapsule(input: {
+    ticket: Ticket; assignment: Assignment; workspaceDir: string; triggerText?: string; runPlanReview?: HostPlanReviewRunner
+  }): Promise<PreparedLaunchCapsule | undefined> {
     const wsKey = input.ticket.execution?.workspace
     const gen = lockTicketGeneration(this.store, this.registry, input.ticket.id, input.assignment.id, this.now())
     const playbooks = await loadPlaybookCandidates(depositDirsOf(this.stateDir), this.registry)
@@ -219,7 +223,7 @@ export class GovernanceRuntime {
       ? await this.memoryRepoLock.run(() => loadWorkspacePitfallNotes(this.memoryDir, wsKey, this.now())).catch(() => [])
       : undefined
     return prepareLaunchCapsule({
-      ...input, registry: this.registry, playbooks, generationHash: gen.hash,
+      ...input, registry: this.registry, playbooks, generationHash: gen.hash, planReviewCache: this.planReviewCache,
       ...(pitfallNotes?.length ? { pitfallNotes } : {}),
       recordSpine: draft => { if (!this.closed) this.appendEvent({ ...draft, id: `${draft.id}:${this.bootId}:${++this.eventSeq}` }) },
     })

@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { lockSync } from 'proper-lockfile'
-import { Engine, key, reasonText, type EngineForSettings, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
+import { Engine, key, reasonText, waitsForPerson, type EngineForSettings, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
 import { allowedSender, settingsPolicy } from '../policy.ts'
 import { SourceRegistry } from '../sources/registry.ts'
 import { Commands } from '../infra/commands.ts'
@@ -22,6 +22,7 @@ import type { Deployment, Machine } from '../deployment.ts'
 import { environmentOf, ticketEnvironment, type Variable } from './execution-environment.ts'
 import type { SetupProblem } from '../setup.ts'
 import { DshExecutor, sourceTrigger, triggerMessage, workerSessionId } from '../executor/dsh.ts'
+import { runHostPlanReview } from '../executor/adversarial-review.ts'
 import { PreExecuteCompletionGuard } from '../executor/pre-execute-gates.ts'
 import { RuntimeGuard } from '../executor/runtime-guard.ts'
 import { refreshSecretaryMemoryBlock } from './governance-ops.ts'
@@ -124,6 +125,23 @@ export class Runtime extends Service implements SourceHost {
             if (tk && !tk.ended) {
               if (item.decision === 'approve' && item.escalationType === 'unknown_side_effect') {
                 this.quietly(() => { this.engine.note(tk.id, `人工确认外部副作用后继续: ${summary}`); this.engine.retryTicket(tk.id) })
+              } else if (item.decision === 'approve' && item.escalationType === 'gate_escalation' && item.toolName === 'verify.diff-review' && item.callId) {
+                const prev = store.get(KV.governance.reviewWaivers) ?? {}
+                const bounded = Object.fromEntries(Object.entries(prev).filter(([k]) => k !== tk.id).slice(-499))
+                bounded[tk.id] = item.callId
+                store.set(KV.governance.reviewWaivers, bounded)
+                this.quietly(() => {
+                  if (waitsForPerson(tk)) this.engine.retryTicket(tk.id)
+                  this.engine.note(tk.id, `老板已豁免本次独立对抗复核 (${item.callId})：${summary}`)
+                })
+              } else if ((item.decision === 'reject' || item.decision === 'revise') && item.escalationType === 'gate_escalation' && item.toolName === 'verify.diff-review') {
+                const waivers = { ...(store.get(KV.governance.reviewWaivers) ?? {}) }
+                if (tk.id in waivers) { delete waivers[tk.id]; store.set(KV.governance.reviewWaivers, waivers) }
+                this.completionGuard?.resetDiffReviewRounds(tk.id)
+                this.quietly(() => {
+                  if (waitsForPerson(tk)) this.engine.retryTicket(tk.id)
+                  this.engine.note(tk.id, `老板驳回放行并要求按独立复核意见继续修复（已重置复核计数）：${summary}`)
+                })
               } else if (item.decision === 'reject' && (item.escalationType === 'unknown_side_effect' || item.escalationType === 'runaway_breaker')) {
                 this.quietly(() => { this.engine.stopTicket(tk.id, summary) })
               } else {
@@ -220,7 +238,7 @@ export class Runtime extends Service implements SourceHost {
       this.executor = new DshExecutor({ context: ctx, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'), machine,
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
         repliedTo: trigger => repliedTo({ store, sources }, trigger),
-        prepareCapsule: input => governance.prepareLaunchCapsule(input),
+        prepareCapsule: input => governance.prepareLaunchCapsule({ ...input, runPlanReview: req => runHostPlanReview(ctx, store.settings(), req) }),
         onCapsuleError: (ticket, assignment, error) => governance.recordCapsuleUnmeasured(ticket, assignment, error),
         spineAppender: governance.appender,
         evaluateDispatch: (ticket, ws) => governance.evaluateTicketDispatch('local-write', ws, ticket.id),
@@ -279,6 +297,21 @@ export class Runtime extends Service implements SourceHost {
       })
       this.completionGuard = new PreExecuteCompletionGuard({
         context: ctx, store, registry: governance.registry, appender: governance.appender, memoryDir: governance.memoryDir, autoInstall: false,
+        onReviewEscalated: info => {
+          void governance.rulings.enqueue({
+            id: `diff-rev-esc:${info.ticketId}:${info.escalationCycle}:${info.revision}`,
+            kind: 'system_escalation',
+            escalationType: 'gate_escalation',
+            ticketId: info.ticketId,
+            toolName: 'verify.diff-review',
+            callId: info.revision,
+            question: `工单 ${info.ticketId} 的独立对抗 diff 复核连续 ${info.rejectedRounds} 轮发现阻断问题，请决定豁免当前修订或驳回要求继续修改：${info.reason}`,
+            options: [
+              { id: 'approve', label: '豁免当前版本放行', consequence: `允许版本 ${info.revision} 跳过 verify.diff-review 完成提交`, recommended: false },
+              { id: 'reject', label: '驳回并继续修复', consequence: '要求 worker 按审查意见修改代码后重新验收', recommended: true },
+            ],
+          })
+        },
       })
       this.toolHost = { context: ctx, engine, store, prompts, sessions, settings: this.settings, assessor, resources, governance, outbox,
         get github() { return runtime.context({ kind: 'github', health: ['github'] }) },

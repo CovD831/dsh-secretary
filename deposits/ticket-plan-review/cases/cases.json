@@ -1,0 +1,79 @@
+[
+  {
+    "name": "green-fast-tier-skip",
+    "expected": "allow",
+    "ctx": {
+      "workflowRiskTier": "fast"
+    }
+  },
+  {
+    "name": "green-elevated-proceed",
+    "expected": "allow",
+    "ctx": {
+      "workflowRiskTier": "elevated",
+      "review": {
+        "status": "ok",
+        "verdict": "proceed",
+        "criticalRisks": [],
+        "counterexamples": [],
+        "mustVerify": ["edge case: empty input returns unmeasured"]
+      }
+    }
+  },
+  {
+    "name": "red-elevated-revise-with-counterexamples",
+    "expected": "deny",
+    "ctx": {
+      "workflowRiskTier": "elevated",
+      "review": {
+        "status": "ok",
+        "verdict": "revise",
+        "criticalRisks": ["drops auth check when header missing"],
+        "counterexamples": ["unauthenticated POST bypasses guard"],
+        "mustVerify": []
+      }
+    }
+  },
+  {
+    "name": "unmeasured-unavailable",
+    "expected": "unmeasured",
+    "expectedCause": "no-evidence",
+    "ctx": {
+      "workflowRiskTier": "elevated",
+      "review": {
+        "status": "unavailable",
+        "detail": "no reviewer route configured"
+      }
+    }
+  },
+  {
+    "name": "unmeasured-timeout",
+    "expected": "unmeasured",
+    "expectedCause": "timeout",
+    "ctx": {
+      "workflowRiskTier": "elevated",
+      "review": {
+        "status": "timeout",
+        "detail": "plan review exceeded 20s"
+      }
+    }
+  },
+  {
+    "name": "unmeasured-parse-failed",
+    "expected": "unmeasured",
+    "expectedCause": "parse-failed",
+    "ctx": {
+      "workflowRiskTier": "elevated",
+      "review": {
+        "status": "parse-failed",
+        "detail": "invalid json"
+      }
+    }
+  },
+  {
+    "name": "unmeasured-missing-risk-tier",
+    "expected": "unmeasured",
+    "expectedCause": "missing-input",
+    "ctx": {}
+  }
+]

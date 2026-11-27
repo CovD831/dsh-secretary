@@ -67,6 +67,27 @@ export {
   type ChangeTestCoverageParams,
 } from './change-test-coverage.ts'
 export {
+  DEFAULT_PLAN_REVIEW_PARAMS,
+  createPlanReviewGate,
+  evaluatePlanReview,
+  ticketPlanReviewGate,
+  type PlanReviewCtx,
+  type PlanReviewOutcome,
+  type PlanReviewParams,
+} from './plan-review.ts'
+export {
+  DEFAULT_DIFF_REVIEW_PARAMS,
+  createDiffReviewGate,
+  evaluateDiffReview,
+  filterGroundedDiffFindings,
+  verifyDiffReviewGate,
+  type DiffReviewCtx,
+  type DiffReviewFinding,
+  type DiffReviewOutcome,
+  type DiffReviewParams,
+  type DiffReviewSeverity,
+} from './diff-review.ts'
+export {
   DEFAULT_REPLY_DESK_PARAMS,
   createReplyDeskGate,
   evaluateReplyDesk,

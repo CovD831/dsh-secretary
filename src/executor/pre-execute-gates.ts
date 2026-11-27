@@ -4,16 +4,21 @@ import { isAbsolute, relative } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Store } from '../app/store.ts'
 import type { Ticket } from '../core/index.ts'
+import type { DiffReviewOutcome } from '../judgement/gates/index.ts'
 import type { ExecuteVerifyRerunOptions, ExecuteVerifyRerunReport } from '../judgement/gates/verify-rerun.ts'
 import { evaluatePointAtGeneration, type ExtendedJudgementRegistry, type JudgementRegistry, type Point, type PointEvaluation } from '../judgement/index.ts'
-import { KV, type PersistedCompletionObs } from '../kv.ts'
+import { KV } from '../kv.ts'
 import { redactValue } from '../spine/redact.ts'
 import type { SpineAppender } from '../spine/types.ts'
+import { runHostDiffReview, type DiffReviewEscalationInfo, type HostDiffReviewRunner } from './adversarial-review.ts'
 import {
   auditProvisionedWorktree, collectGitStatus, computeWorkspaceRevision,
   findRevertedSessionPaths, hashWorkspaceFileSync, resolveProvisionedAnchor,
 } from './git-workspace-snapshot.ts'
-import { runReadyAcceptanceChecks, type CompletionCodeMetrics } from './completion-metrics.ts'
+import {
+  BUILTIN_VERIFY_POINTS, createEmptyObservation, formatBlockReason, hydrateObservationMap, runReadyAcceptanceChecks,
+  runReadyDiffReviewCheck, serializeObservationMap, type CompletionCodeMetrics, type CompletionObservationState,
+} from './completion-metrics.ts'
 import { inferTicketTaskType, runVerifyRerunPhase } from './red-green-probe.ts'
 import { resolveRootTicketId } from './runtime-guard.ts'
 import { buildSessionSandboxRunner } from './sandbox-runner.ts'
@@ -22,18 +27,11 @@ import type { WorkflowRiskResult } from './workflow-risk.ts'
 const SHELL_TOOL_RE = /^(?:bash|pwsh|bash_persistent|pwsh_persistent|sh|shell|powershell|zsh|cmd)$/i
 const EDITOR_BLIND_RE = /^str_replace_editor$/i
 const MAX_OBSERVED_TICKETS = 500
-const BUILTIN_VERIFY_POINTS = new Set([
-  'verify.changed-paths', 'verify.secret-path-guard', 'verify.rerun', 'verify.command-contract', 'verify.change-test-coverage',
-])
 
 declare module '../judgement/types.ts' {
   interface PointCatalog { 'verify.secret-path-guard': { readonly changedPaths: readonly string[] } }
 }
 
-interface TicketObservation {
-  readonly sessionDiffs: Set<string>; readonly structuredDigests: Map<string, string>
-  sawShellWrite: boolean; sawUnmeasuredTool: boolean; readonly unmeasuredTools: Set<string>
-}
 export type PreExecuteDecision = 'allow' | { readonly kind: 'deny'; readonly reason: string }
 
 /** `PreExecuteCompletionGuard` 依赖注入契约。 */
@@ -41,50 +39,28 @@ export interface PreExecuteCompletionGuardDeps {
   readonly context: Context; readonly store: Store; readonly registry: ExtendedJudgementRegistry | JudgementRegistry
   readonly appender?: SpineAppender; readonly memoryDir?: string; readonly now?: () => Date; readonly runVerifyCommand?: ExecuteVerifyRerunOptions['runCommand']
   readonly rerunCache?: Map<string, ExecuteVerifyRerunReport>; readonly verifyTimeoutMs?: number; readonly autoInstall?: boolean
+  readonly runDiffReview?: HostDiffReviewRunner; readonly diffReviewCache?: Map<string, DiffReviewOutcome>
+  readonly onReviewEscalated?: (info: DiffReviewEscalationInfo) => void
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === 'object' && !Array.isArray(v))
-function formatBlockReason(point: string, ev: PointEvaluation): string {
-  if (ev.verdict.kind === 'deny') return `[${point}] ${ev.verdict.blockers.join('；')}`
-  if (ev.verdict.kind === 'unmeasured') return `[${point}] 判据不可测 (${ev.verdict.cause})：${ev.verdict.detail}`
-  return `[${point}] 硬闸未通过`
-}
 
 /** 挂载于宿主 `Context` 的完成态事前硬闸守卫，拦截伪造/漏报路径、shell 盲区与验证未通过的完成申报。 */
 export class PreExecuteCompletionGuard {
-  private readonly observed = new Map<string, TicketObservation>()
+  private readonly observed = new Map<string, CompletionObservationState>()
   private readonly realpathCache = new Map<string, string>()
   private readonly localRerunCache = new Map<string, ExecuteVerifyRerunReport>()
+  private readonly localDiffReviewCache = new Map<string, DiffReviewOutcome>()
   private readonly probeMetaCache = new Map<string, { base?: string; reason?: string }>()
   private readonly disposers: Array<() => void> = []
 
   constructor(private readonly deps: PreExecuteCompletionGuardDeps) {
-    this.hydrateObs()
+    hydrateObservationMap(this.observed, this.deps.store.get?.(KV.governance.completionObs), MAX_OBSERVED_TICKETS)
     if (deps.autoInstall !== false) this.install()
   }
 
-  private hydrateObs(): void {
-    const saved = this.deps.store.get?.(KV.governance.completionObs)
-    if (!saved) return
-    for (const [id, o] of Object.entries(saved).slice(-MAX_OBSERVED_TICKETS)) {
-      this.observed.set(id, {
-        sessionDiffs: new Set(o.sessionDiffs ?? []), structuredDigests: new Map(Object.entries(o.structuredDigests ?? {})),
-        sawShellWrite: Boolean(o.sawShellWrite), sawUnmeasuredTool: Boolean(o.sawUnmeasuredTool), unmeasuredTools: new Set(o.unmeasuredTools ?? []),
-      })
-    }
-  }
-
   private persistObs(): void {
-    if (typeof this.deps.store.set !== 'function') return
-    const out: Record<string, PersistedCompletionObs> = {}
-    for (const [id, o] of this.observed) {
-      if (!o.sawShellWrite && !o.sawUnmeasuredTool && o.sessionDiffs.size === 0 && o.unmeasuredTools.size === 0) continue
-      out[id] = {
-        sessionDiffs: [...o.sessionDiffs], sawShellWrite: o.sawShellWrite, sawUnmeasuredTool: o.sawUnmeasuredTool, unmeasuredTools: [...o.unmeasuredTools],
-        ...(o.structuredDigests.size > 0 ? { structuredDigests: Object.fromEntries(o.structuredDigests) } : {}),
-      }
-    }
-    this.deps.store.set(KV.governance.completionObs, out)
+    if (typeof this.deps.store.set === 'function') this.deps.store.set(KV.governance.completionObs, serializeObservationMap(this.observed))
   }
 
   /** 注册 `tools/result` 与 `tools/pre-execute` 监听（幂等，返回卸载函数）。 */
@@ -107,6 +83,12 @@ export class PreExecuteCompletionGuard {
 
   dispose(): void { while (this.disposers.length > 0) this.disposers.pop()?.() }
 
+  resetDiffReviewRounds(ticketId: string): void {
+    const obs = this.observed.get(ticketId)
+    if (!obs) return
+    obs.reviewRejectedRevs.clear(); obs.reviewEscalatedRevs.clear(); obs.reviewCycle += 1; this.persistObs()
+  }
+
   getObservation(ticketId: string) {
     const obs = this.observed.get(ticketId)
     return {
@@ -117,15 +99,11 @@ export class PreExecuteCompletionGuard {
     }
   }
 
-  private ensureObs(ticketId: string): TicketObservation {
+  private ensureObs(ticketId: string): CompletionObservationState {
     let obs = this.observed.get(ticketId)
     if (!obs) {
-      if (this.observed.size >= MAX_OBSERVED_TICKETS) {
-        const oldest = this.observed.keys().next().value
-        if (oldest !== undefined) this.observed.delete(oldest)
-      }
-      obs = { sessionDiffs: new Set(), structuredDigests: new Map(), sawShellWrite: false, sawUnmeasuredTool: false, unmeasuredTools: new Set() }
-      this.observed.set(ticketId, obs)
+      if (this.observed.size >= MAX_OBSERVED_TICKETS) this.observed.delete(this.observed.keys().next().value!)
+      obs = createEmptyObservation(); this.observed.set(ticketId, obs)
     }
     return obs
   }
@@ -285,9 +263,9 @@ export class PreExecuteCompletionGuard {
 
     const customPoints = [...new Set(entries.filter(e => e.kind === 'gate' && e.stage !== 'retired' && e.point?.startsWith('verify.') && !BUILTIN_VERIFY_POINTS.has(e.point)).map(e => e.point!))]
     const rerunActive = entries.length === 0 || entries.some(e => e.kind === 'gate' && e.point === 'verify.rerun' && (e.stage === 'enforce' || e.stage === 'observe'))
-    let commandResults: ExecuteVerifyRerunReport['results'] = []
+    let commandResults: ExecuteVerifyRerunReport['results'] = [], revision: string | undefined
     if (verifyCommands.length > 0 && (rerunActive || customPoints.length > 0)) {
-      const revision = await computeWorkspaceRevision(workdir, effGit, effectiveSessionDiffPaths)
+      revision = await computeWorkspaceRevision(workdir, effGit, effectiveSessionDiffPaths)
       const phase = await runVerifyRerunPhase({
         rootId, workdir, store: this.deps.store, registry: this.deps.registry, gen,
         ...(this.deps.memoryDir ? { memoryDir: this.deps.memoryDir } : {}), ...(cowPaths ? { cowPaths } : {}),
@@ -304,12 +282,36 @@ export class PreExecuteCompletionGuard {
       }
     }
 
+    let diffReviewOutcome: DiffReviewOutcome | undefined
+    if (isReadyReport && readyMeta) {
+      revision ??= await computeWorkspaceRevision(workdir, effGit, effectiveSessionDiffPaths)
+      const dr = await runReadyDiffReviewCheck({
+        rootId, revision, workdir, ...(shellAudit?.base ? { shellBase: shellAudit.base } : {}),
+        ...(typeof args['summary'] === 'string' ? { summary: args['summary'] } : {}), ticket,
+        store: this.deps.store, ...(this.deps.memoryDir ? { memoryDir: this.deps.memoryDir } : {}),
+        registry: this.deps.registry, gen, entries, union, untrackedPaths: effGit.untrackedPaths,
+        readyMeta, commandResults, obs,
+        runDiffReview: this.deps.runDiffReview ?? (req => runHostDiffReview(this.deps.context, this.deps.store.settings(), req)),
+        diffReviewCache: this.deps.diffReviewCache ?? this.localDiffReviewCache,
+        ...(this.deps.onReviewEscalated ? { onReviewEscalated: this.deps.onReviewEscalated } : {}), signal: exec.signal,
+      })
+      diffReviewOutcome = dr.diffReview
+      if (dr.obsChanged) this.persistObs()
+      if (dr.check) {
+        this.appendGateEvent(rootId, exec, 'verify.diff-review', dr.check.ev, dr.check.extra)
+        if (dr.check.ev.registered > 0 && (dr.check.ev.verdict.kind === 'deny' || dr.check.ev.verdict.kind === 'unmeasured')) {
+          return { kind: 'deny', reason: formatBlockReason('verify.diff-review', dr.check.ev) }
+        }
+      }
+    }
+
     for (const pt of customPoints) {
       const customEval = await evaluatePointAtGeneration(this.deps.registry, pt as Point, {
         ...args, ticketId: rootId, taskType, declaredPaths, changedPaths: union,
         sessionDiffPaths: effectiveSessionDiffPaths, gitDirtyPaths: effGit.gitDirtyPaths, untrackedPaths: effGit.untrackedPaths,
         commands: commandResults, verifyCommands,
         ...(readyMeta ? { ...readyMeta.metrics, workflowRisk: readyMeta.workflowRisk } : {}),
+        ...(diffReviewOutcome ? { diffReview: diffReviewOutcome } : {}),
       } as never, gen)
       this.appendGateEvent(rootId, exec, pt, customEval, { taskType, checkedCount: union.length })
       if (customEval.registered > 0 && (customEval.verdict.kind === 'deny' || customEval.verdict.kind === 'unmeasured')) {

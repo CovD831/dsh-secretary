@@ -3,12 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { telemetryToSpineInput, validateDepositDraft, writeDepositDraftPackage, type DepositDraft } from '../../authoring/index.ts'
 import {
-  createAdaptiveDispatchGate, createChangeTestCoverageGate, createChangedPathsGate,
-  createCommandContractGate, createVerifyRerunGate,
-} from '../../judgement/gates/index.ts'
-import {
-  RESERVED_BUILTIN_DEPOSIT_IDS, auditRequires, compileDeclarativeEntry, evaluateCompiledEntry, loadDepositPackage,
-  runDepositCases, validateAndNormalizePlaybook, validateDeclarativeRule, type AnyGateDef, type DeclarativeRule, type DepositManifest, type MandateBinding,
+  BUILTIN_EXECUTABLE_DEPOSIT_IDS, RESERVED_BUILTIN_DEPOSIT_IDS, auditRequires, compileDeclarativeEntry, createBuiltinGate,
+  evaluateCompiledEntry, loadDepositPackage, runDepositCases, validateAndNormalizePlaybook, validateDeclarativeRule,
+  type AnyGateDef, type DeclarativeRule, type DepositManifest, type MandateBinding,
   type ParamSpec, type PlaybookSpec, type Point, type Verdict,
 } from '../../judgement/index.ts'
 import { assembleMemoryPrompt, memoryTaintOf, readMemoryPage, resolveMemoryRelPath } from '../../memory/index.ts'
@@ -22,9 +19,6 @@ import {
 } from './secretary-governance-schemas.ts'
 import { tool, type Tool } from './tool.ts'
 
-const BUILTIN_EXECUTABLE_IDS = new Set([
-  'ticket.adaptive-dispatch', 'verify.changed-paths', 'verify.rerun', 'verify.command-contract', 'verify.change-test-coverage',
-])
 const stripUndefined = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 async function resolveTriggerSpineEnvelope(
@@ -100,11 +94,8 @@ function draftToManifest(draft: DepositDraft, raw?: RawDraft): DepositManifest {
 
 function buildStandaloneGateFn(draft: DepositDraft, raw?: RawDraft): (ctx: unknown) => Verdict | Promise<Verdict> {
   const bound = extractDefaultParams(draft.params)
-  if (draft.id === 'verify.changed-paths') return ctx => createChangedPathsGate(bound).gate(ctx as never)
-  if (draft.id === 'verify.rerun') return ctx => createVerifyRerunGate(bound).gate(ctx as never)
-  if (draft.id === 'verify.command-contract') return ctx => createCommandContractGate(bound).gate(ctx as never)
-  if (draft.id === 'verify.change-test-coverage') return ctx => createChangeTestCoverageGate(bound).gate(ctx as never)
-  if (draft.id === 'ticket.adaptive-dispatch') return ctx => createAdaptiveDispatchGate(bound).gate(ctx as never)
+  const builtin = createBuiltinGate(draft.id, bound)
+  if (builtin) return ctx => builtin.gate(ctx as never)
   if (raw?.rule !== undefined) {
     const entry = compileDeclarativeEntry(draftToManifest(draft, raw), bound)
     return ctx => evaluateCompiledEntry(entry, ctx)
@@ -118,7 +109,7 @@ function buildStandaloneGateFn(draft: DepositDraft, raw?: RawDraft): (ctx: unkno
 }
 
 function buildReplayGate(gov: GovernanceRuntime, draft: DepositDraft, raw?: RawDraft): ReplayGateFn<unknown> {
-  if (BUILTIN_EXECUTABLE_IDS.has(draft.id) || raw?.rule !== undefined) return buildStandaloneGateFn(draft, raw)
+  if (BUILTIN_EXECUTABLE_DEPOSIT_IDS.has(draft.id) || raw?.rule !== undefined) return buildStandaloneGateFn(draft, raw)
   if (gov.registry.list().some(g => g.kind === 'gate' && g.id === draft.id)) {
     return async (ctx): Promise<Verdict> => {
       const ev = await gov.registry.evaluate(draft.point as Point, ctx as never), hit = [...ev.ran, ...ev.observed].find(r => r.id === draft.id)
@@ -135,7 +126,7 @@ async function checkDeclarativeDraft(draft: DepositDraft, raw: RawDraft) {
     ? validateAndNormalizePlaybook(raw.playbook, '').issues.map(i => ({ ruleId: 'invalid-playbook', field: i.field, reason: i.reason, repairHint: '修正 playbook 配置（禁可执行键且须有 summary）' }))
     : []
   if (raw.rule === undefined) {
-    if ((draft.kind === 'gate' || draft.kind === 'counter-rule' || draft.kind === 'evaluator') && !BUILTIN_EXECUTABLE_IDS.has(draft.id)) {
+    if ((draft.kind === 'gate' || draft.kind === 'counter-rule' || draft.kind === 'evaluator') && !BUILTIN_EXECUTABLE_DEPOSIT_IDS.has(draft.id)) {
       return [...pbIssues, {
         ruleId: 'missing-declarative-rule', field: 'rule',
         reason: `自定义 ${draft.kind} "${draft.id}" 缺少声明式 rule 配置`,

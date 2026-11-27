@@ -30,6 +30,9 @@ export interface PersistedCompletionObs {
   sawUnmeasuredTool: boolean
   unmeasuredTools: string[]
   structuredDigests?: Record<string, string>
+  reviewRejectedRevs?: string[]
+  reviewEscalatedRevs?: string[]
+  reviewCycle?: number
 }
 
 /** Persisted runtime-guard budget state per assignment (survives host restarts). */
@@ -77,6 +80,7 @@ export const KV = {
     completionObs: record<Record<string, PersistedCompletionObs>>('governance-completion-obs'),
     runtimeBudgets: record<Record<string, PersistedRuntimeBudget>>('governance-runtime-budgets'),
     ticketGenerations: record<Record<string, PersistedTicketGeneration>>('governance-ticket-generations'),
+    reviewWaivers: record<Record<string, string>>('governance-review-waivers'),
   },
   /** Sessions: prompt revisions each Session has worked under, ordered oldest first; the last entry (`.at(-1)`) is its active revision. */
   sessions: { prompts: family<number[], [session: string]>('session-prompts:') },

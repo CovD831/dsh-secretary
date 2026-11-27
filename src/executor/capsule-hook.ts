@@ -4,12 +4,13 @@ import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { assembleCapsule, sliceWorkspaceContext, type ContextCapsule, type PitfallNote, type SliceResult } from '../context/index.ts'
 import type { Assignment, Ticket } from '../core/index.ts'
-import { DEFAULT_ADAPTIVE_DISPATCH_PARAMS, type ThinkingTier } from '../judgement/gates/index.ts'
+import { DEFAULT_ADAPTIVE_DISPATCH_PARAMS, type PlanReviewOutcome, type ThinkingTier } from '../judgement/gates/index.ts'
 import {
   matchDepositPlaybooks, renderPlaybookCapsuleBlock,
   type JudgementRegistry, type PlaybookCandidate, type Verdict,
 } from '../judgement/index.ts'
 import type { SpineDraft } from '../spine/types.ts'
+import { renderPlanReviewNotice, runLaunchPlanReviewPhase, type HostPlanReviewRunner } from './adversarial-review.ts'
 import { DSH_BUNDLED_RG, locateFilesByKeywords } from './keyword-locator.ts'
 import { classifyWorkflowRisk, renderElevatedWorkflowNotice, type WorkflowRiskResult } from './workflow-risk.ts'
 
@@ -31,6 +32,7 @@ export interface PreparedLaunchCapsule {
   readonly verdict: Verdict
   readonly dispatch?: LaunchDispatchPlan
   readonly workflowRisk?: WorkflowRiskResult
+  readonly planReview?: PlanReviewOutcome
   readonly blocked?: readonly [string, ...string[]]
   readonly capsule: ContextCapsule
   readonly slice: SliceResult
@@ -42,7 +44,9 @@ export interface LaunchCapsuleInput {
   readonly assignment?: Pick<Assignment, 'id'>
   readonly workspaceDir: string
   readonly triggerText?: string
-  readonly registry: Pick<JudgementRegistry, 'evaluate'>
+  readonly registry: Pick<JudgementRegistry, 'evaluate'> & {
+    list?: () => readonly { kind: string; stage: string; point?: string }[]
+  }
   readonly recordSpine?: (event: SpineDraft<Record<string, unknown>>) => void
   readonly retryCount?: number
   readonly allowTeam?: boolean
@@ -51,6 +55,8 @@ export interface LaunchCapsuleInput {
   readonly playbooks?: readonly PlaybookCandidate[]
   readonly generationHash?: string
   readonly rgBin?: string
+  readonly runPlanReview?: HostPlanReviewRunner
+  readonly planReviewCache?: Map<string, PlanReviewOutcome>
 }
 
 const PATH_CANDIDATE_RE =
@@ -221,12 +227,22 @@ export async function prepareLaunchCapsule(input: LaunchCapsuleInput): Promise<P
         title: ticket.title, ...(triggerText ? { triggerText } : {}), riskTier: workflowRisk.tier,
       })
     : matchedPlaybooks
-  const blocked = evaluation.verdict.kind === 'deny' ? evaluation.verdict.blockers : undefined
+  const planPhase = await runLaunchPlanReviewPhase({
+    ticketId: ticket.id, ...(assignment ? { assignmentId: assignment.id } : {}), title: ticket.title,
+    ...(ticket.execution?.assignment ? { assignmentText: ticket.execution.assignment } : {}),
+    ...(triggerText ? { triggerText } : {}), riskPaths, workflowRisk,
+    ...(input.generationHash ? { generationHash: input.generationHash } : {}), registry,
+    ...(input.runPlanReview ? { runPlanReview: input.runPlanReview } : {}),
+    ...(input.planReviewCache ? { planReviewCache: input.planReviewCache } : {}),
+  })
+  const blockers: string[] = [...(evaluation.verdict.kind === 'deny' ? evaluation.verdict.blockers : []), ...planPhase.blockers]
+  const blocked = blockers.length > 0 ? blockers as [string, ...string[]] : undefined
   const budgetBytes = input.maxBytes ?? DEFAULT_ADAPTIVE_DISPATCH_PARAMS.max_capsule_bytes
   const playbookBlock = renderPlaybookCapsuleBlock(finalPlaybooks, Math.min(4096, budgetBytes))
   const verifyHeader = verifyCmds?.length ? `## 标准验证命令\n\`\`\`verify\n${verifyCmds.join('\n')}\n\`\`\`\n\n` : ''
   const riskNotice = renderElevatedWorkflowNotice(workflowRisk)
-  const prefix = verifyHeader + (riskNotice ? `${riskNotice}\n\n` : '') + (playbookBlock.text ? `${playbookBlock.text}\n\n` : '')
+  const planNotice = planPhase.planReview ? renderPlanReviewNotice(planPhase.planReview) : ''
+  const prefix = verifyHeader + (riskNotice ? `${riskNotice}\n\n` : '') + (planNotice ? `${planNotice}\n\n` : '') + (playbookBlock.text ? `${playbookBlock.text}\n\n` : '')
   const prefixBytes = Buffer.byteLength(prefix, 'utf8')
   const baseCapsule = assembleCapsule(slice, Math.max(0, budgetBytes - (prefixBytes <= budgetBytes ? prefixBytes : 0)))
   const fullText = prefix && prefixBytes <= budgetBytes ? prefix + baseCapsule.text : baseCapsule.text
@@ -265,12 +281,14 @@ export async function prepareLaunchCapsule(input: LaunchCapsuleInput): Promise<P
         ...(input.generationHash ? { generationHash: input.generationHash } : {}),
       },
     })
+    if (planPhase.spineDraft) recordSpine({ ...planPhase.spineDraft, id: `${planPhase.spineDraft.id}:${++hookSeq}` })
   }
 
   return {
     verdict: evaluation.verdict,
     ...(dispatch ? { dispatch } : {}),
     workflowRisk,
+    ...(planPhase.planReview ? { planReview: planPhase.planReview } : {}),
     ...(blocked ? { blocked } : {}),
     capsule,
     slice,

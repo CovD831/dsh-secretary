@@ -1,0 +1,151 @@
+[
+  {
+    "name": "green-fast-tier-skip",
+    "expected": "allow",
+    "ctx": {
+      "workflowRiskTier": "fast",
+      "codeChangedPaths": ["src/slug.ts"]
+    }
+  },
+  {
+    "name": "green-elevated-approve",
+    "expected": "allow",
+    "ctx": {
+      "workflowRiskTier": "elevated",
+      "codeChangedPaths": ["src/auth/guard.ts"],
+      "changedPaths": ["src/auth/guard.ts"],
+      "review": {
+        "status": "ok",
+        "verdict": "approve",
+        "findings": []
+      }
+    }
+  },
+  {
+    "name": "green-filter-medium-and-ungrounded-findings",
+    "expected": "allow",
+    "ctx": {
+      "workflowRiskTier": "elevated",
+      "codeChangedPaths": ["src/auth/guard.ts"],
+      "changedPaths": ["src/auth/guard.ts"],
+      "review": {
+        "status": "ok",
+        "verdict": "request_changes",
+        "findings": [
+          {
+            "severity": "medium",
+            "file": "src/auth/guard.ts",
+            "line": 12,
+            "issue": "could simplify helper",
+            "evidence": "minor style suggestion"
+          },
+          {
+            "severity": "high",
+            "file": "src/unrelated/other.ts",
+            "issue": "hallucinated bug in untouched file",
+            "evidence": "claims problem outside diff"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "green-boss-waiver",
+    "expected": "allow",
+    "ctx": {
+      "workflowRiskTier": "elevated",
+      "codeChangedPaths": ["src/auth/guard.ts"],
+      "rejectedRounds": 2,
+      "waived": true
+    }
+  },
+  {
+    "name": "red-grounded-high-finding",
+    "expected": "deny",
+    "ctx": {
+      "workflowRiskTier": "elevated",
+      "codeChangedPaths": ["src/auth/guard.ts"],
+      "changedPaths": ["src/auth/guard.ts"],
+      "review": {
+        "status": "ok",
+        "verdict": "request_changes",
+        "findings": [
+          {
+            "severity": "high",
+            "file": "src/auth/guard.ts",
+            "line": 24,
+            "issue": "missing token expiry check",
+            "evidence": "if (token.exp) skipped when exp === 0"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "red-max-rounds-escalate",
+    "expected": "deny",
+    "ctx": {
+      "workflowRiskTier": "elevated",
+      "codeChangedPaths": ["src/auth/guard.ts"],
+      "rejectedRounds": 2,
+      "review": {
+        "status": "ok",
+        "verdict": "approve",
+        "findings": []
+      }
+    }
+  },
+  {
+    "name": "unmeasured-unavailable",
+    "expected": "unmeasured",
+    "expectedCause": "no-evidence",
+    "ctx": {
+      "workflowRiskTier": "elevated",
+      "codeChangedPaths": ["src/auth/guard.ts"],
+      "review": {
+        "status": "unavailable",
+        "detail": "no reviewer route configured"
+      }
+    }
+  },
+  {
+    "name": "unmeasured-timeout",
+    "expected": "unmeasured",
+    "expectedCause": "timeout",
+    "ctx": {
+      "workflowRiskTier": "elevated",
+      "codeChangedPaths": ["src/auth/guard.ts"],
+      "review": {
+        "status": "timeout",
+        "detail": "diff review exceeded 25s"
+      }
+    }
+  },
+  {
+    "name": "unmeasured-parse-failed",
+    "expected": "unmeasured",
+    "expectedCause": "parse-failed",
+    "ctx": {
+      "workflowRiskTier": "elevated",
+      "codeChangedPaths": ["src/auth/guard.ts"],
+      "review": {
+        "status": "parse-failed",
+        "detail": "bad json"
+      }
+    }
+  },
+  {
+    "name": "unmeasured-empty-request-changes",
+    "expected": "unmeasured",
+    "expectedCause": "parse-failed",
+    "ctx": {
+      "workflowRiskTier": "elevated",
+      "codeChangedPaths": ["src/auth/guard.ts"],
+      "review": {
+        "status": "ok",
+        "verdict": "request_changes",
+        "findings": []
+      }
+    }
+  }
+]

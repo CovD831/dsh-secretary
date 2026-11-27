@@ -87,8 +87,10 @@ describe('阶段三 Runtime 主干全链路治理接入', () => {
         ['verify.secret-path-guard', 'enforce'],
         ['friction.seen-three', 'observe'],
         ['ticket.stale-patrol', 'observe'],
+        ['ticket.plan-review', 'observe'],
         ['verify.change-test-coverage', 'observe'],
         ['verify.command-contract', 'observe'],
+        ['verify.diff-review', 'observe'],
       ])
 
       const engine = createWiredEngine(store, governance)

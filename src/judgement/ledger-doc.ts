@@ -6,8 +6,8 @@ import { compileDeclarativeEntry } from './declarative.ts'
 import { loadDepositPackage, runDepositCases, type DepositCase, type DepositCasesReport, type DepositViolation } from './deposit.ts'
 import {
   createAdaptiveDispatchGate, createChangeTestCoverageGate, createChangedPathsGate, createCommandContractGate,
-  createIssueIntakeGate, createReplyDeskGate, createReproStatusGate, createVerifyRerunGate,
-  issueIntakeGate, replyDeskGate, reproStatusGate,
+  createDiffReviewGate, createIssueIntakeGate, createPlanReviewGate, createReplyDeskGate,
+  createReproStatusGate, createVerifyRerunGate, issueIntakeGate, replyDeskGate, reproStatusGate,
 } from './gates/index.ts'
 import type { ExtendedJudgementRegistry } from './registry.ts'
 import type { AnyGateDef, DepositManifest, ProofRecord, RegistryEntry, Stage } from './types.ts'
@@ -70,29 +70,35 @@ export type TransitionDepositStageResult =
 const VALID_STAGES = new Set<Stage>(['shadow', 'observe', 'enforce', 'retired'])
 export const OSS_SEEDED_GATE_IDS: ReadonlySet<string> = new Set(['intake.bug-quadruple', 'verify.repro-evidence', 'outward.reply-desk'])
 export const RESERVED_BUILTIN_DEPOSIT_IDS: ReadonlySet<string> = new Set([
-  'workspace.gc.safety', 'ticket.dispatch.isolation-ceiling', 'ticket.adaptive-dispatch',
-  'verify.changed-paths', 'verify.rerun', 'verify.command-contract', 'verify.change-test-coverage',
+  'workspace.gc.safety', 'ticket.dispatch.isolation-ceiling', 'ticket.adaptive-dispatch', 'ticket.plan-review',
+  'verify.changed-paths', 'verify.rerun', 'verify.command-contract', 'verify.change-test-coverage', 'verify.diff-review',
   'intake.bug-quadruple', 'verify.repro-evidence', 'outward.reply-desk', 'verify.secret-path-guard',
   'replay.ci-evaluator', 'friction.seen-three', 'ticket.stale-patrol',
 ])
 
-const BUILTIN_FACTORIES: Readonly<Record<string, () => AnyGateDef>> = {
-  'ticket.adaptive-dispatch': () => createAdaptiveDispatchGate(),
-  'verify.changed-paths': () => createChangedPathsGate(),
-  'verify.rerun': () => createVerifyRerunGate(),
-  'verify.command-contract': () => createCommandContractGate(),
-  'verify.change-test-coverage': () => createChangeTestCoverageGate(),
-  'intake.bug-quadruple': () => createIssueIntakeGate(),
-  'verify.repro-evidence': () => createReproStatusGate(),
-  'outward.reply-desk': () => createReplyDeskGate(),
+const BUILTIN_FACTORIES: Readonly<Record<string, (bound?: Record<string, unknown>) => AnyGateDef>> = {
+  'ticket.adaptive-dispatch': b => createAdaptiveDispatchGate(b as never),
+  'ticket.plan-review': b => createPlanReviewGate(b as never),
+  'verify.changed-paths': b => createChangedPathsGate(b as never),
+  'verify.rerun': b => createVerifyRerunGate(b as never),
+  'verify.command-contract': b => createCommandContractGate(b as never),
+  'verify.change-test-coverage': b => createChangeTestCoverageGate(b as never),
+  'verify.diff-review': b => createDiffReviewGate(b as never),
+  'intake.bug-quadruple': b => createIssueIntakeGate(b as never),
+  'verify.repro-evidence': b => createReproStatusGate(b as never),
+  'outward.reply-desk': b => createReplyDeskGate(b as never),
+}
+
+export const BUILTIN_EXECUTABLE_DEPOSIT_IDS: ReadonlySet<string> = new Set(Object.keys(BUILTIN_FACTORIES))
+
+export function createBuiltinGate(id: string, boundParams?: Record<string, unknown>): AnyGateDef | undefined {
+  return BUILTIN_FACTORIES[id]?.(boundParams)
 }
 
 /** 根据沉淀清单解析内置 TS 判据或调用零代码声明式编译器。 */
 export function resolveDepositEntry(manifest: DepositManifest): RegistryEntry | undefined {
   if (manifest.rule || manifest.kind === 'standing-order') return compileDeclarativeEntry(manifest)
-  const factory = BUILTIN_FACTORIES[manifest.id]
-  if (factory) return factory()
-  return undefined
+  return BUILTIN_FACTORIES[manifest.id]?.()
 }
 
 async function listPackageDirs(rootDir: string): Promise<{ dirName: string; packageDir: string }[]> {
