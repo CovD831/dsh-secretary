@@ -4,6 +4,7 @@ export {
   type AssembledMemoryPrompt, type AssemblePromptOptions, type AttentionItem,
   type AttentionKind, type AttentionProposal, type AttentionStatus,
   type AttentionTransition, type BucketReceipt, type Clearance, type Confidence,
+  type DemoteResidentInput, type DemoteResidentResult,
   type FactLayer, type FactPage, type LedgerPage, type M2Kind,
   type MemoryBelievabilityMetrics, type MemoryBudgets, type MemoryEntry,
   type MemoryLayer, type MemoryPage, type MemoryPageMeta, type MemoryPageTarget,
@@ -27,8 +28,9 @@ export {
   isAttentionVisible, isEntryActiveAt, matchesTriggerKeys,
   MEMORY_PROMPT_GUARDRAIL,
 } from './recall.ts'
+export { buildSmartFtsQueries, scoreTokenCoverage, tokenizeForSearch } from './text-search.ts'
 export {
-  MemoryFtsIndex, RECIPE_FINGERPRINT, searchM0Fallback, tokenizeForSearch,
+  MemoryFtsIndex, RECIPE_FINGERPRINT, searchM0Fallback,
   type FtsSearchHit, type FtsSearchOptions, type FtsSearchResult,
   type M0FallbackHit, type MemoryFtsIndexOptions,
 } from './fts-index.ts'
@@ -36,3 +38,32 @@ export {
   computeMemoryBelievabilityMetrics, loadWorkspacePitfallNotes,
   proposeTicketMemoryPatches, tickM6AttentionLifecycle, writeUserDirectMemory,
 } from './lifecycle.ts'
+export {
+  callerFromPolicy, canPolicyDirectOverride, createGroupBotMemoryPolicy, createSecretaryMemoryPolicy,
+  type PersistentBotMemoryPolicy,
+} from './policy.ts'
+export {
+  TRANSCRIPT_RECIPE_FINGERPRINT, TranscriptFtsIndex,
+  type TranscriptFtsOptions, type TranscriptHit,
+} from './transcript-fts.ts'
+export {
+  extractSessionText, isInjectedSystemContext, readUnextractedSessionWindow, renderEpochStateAnchor,
+  type SessionDialogLine, type SessionWindowSlice,
+} from './session-window.ts'
+export {
+  DELTA_PROMPT_GUARDRAIL, EpochMemoryInjector,
+  type EpochMemoryInjectorOptions, type TurnDeltaResult,
+} from './epoch-injector.ts'
+export {
+  createHostDreamExtractor,
+  type DreamExtractCandidate, type DreamExtractOutcome, type DreamExtractorFn,
+} from './dreamer-llm.ts'
+export { runDeepConsolidation, type DeepConsolidationReport } from './dreamer-deep.ts'
+export {
+  MemoryDreamer,
+  type DreamCursorState, type DreamRunReport, type DreamStatusSummary, type MemoryDreamerOptions,
+} from './dreamer.ts'
+export {
+  evaluateMemoryGoldSet,
+  type GoldCaseBucket, type GoldEvalCase, type GoldEvalReport, type GoldSeedEntry,
+} from './gold-eval.ts'

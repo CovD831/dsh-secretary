@@ -50,7 +50,8 @@
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "eval:memory-live": "node scripts/run-ts.mjs scripts/eval-memory-live.ts"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0",

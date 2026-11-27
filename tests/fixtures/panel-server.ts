@@ -494,6 +494,22 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     }
     return { ok: true }
   } },
+  'POST memory/entries/:id/tombstone': { body: true, answer: ({ params, body }) => {
+    if (server.memoryStudio) {
+      server.memoryStudio = {
+        ...server.memoryStudio,
+        entries: server.memoryStudio.entries.map(r => r.entry.id === params.id
+          ? { ...r, entry: { ...r.entry, validTo: '2026-11-28T00:00:00Z', invalidatedBy: 'tombstone:boss', invalidationReason: body.reason } }
+          : r),
+      }
+    }
+    return { ok: true }
+  } },
+  'POST memory/dream': { body: true, answer: () => ({
+    sessionId: 'mock-master', trigger: 'manual' as const, status: 'completed' as const, fromSeq: 0, throughSeq: 0,
+    extracted: 0, accepted: 0, conflicted: 0, rejectedQuotes: 0, promotedM4: 0, demotedResident: 0, deduped: 0,
+    at: '2026-11-28T00:00:00Z',
+  }) },
   'GET rsi/workbench': { query: ['mode'], answer: () => server.rsiWorkbench ?? ({
     snapshot: {
       eventCount: 0, taskRecords: [], replayCases: [], joinedSessionMetrics: [],

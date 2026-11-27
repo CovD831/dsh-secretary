@@ -250,6 +250,15 @@ export async function computeMemoryBelievabilityMetrics(
     else if (!seenQuestions.has(key)) seenQuestions.set(key, qid)
   }
   for (const item of ledgerItems) trackQ(item.id, item.question)
+  const invalidatedSeqById = new Map<string, number>()
+  for (const ev of spineEvents) {
+    if (typeof ev.seq !== 'number') continue
+    const p = (ev.payload && typeof ev.payload === 'object' ? ev.payload : {}) as Record<string, unknown>
+    if (ev.type === 'memory.tombstoned' && typeof p['entryId'] === 'string') invalidatedSeqById.set(p['entryId'], ev.seq)
+    else if (ev.type === 'memory.accepted' && Array.isArray(p['supersededIds'])) {
+      for (const sid of p['supersededIds'] as unknown[]) if (typeof sid === 'string') invalidatedSeqById.set(sid, ev.seq)
+    }
+  }
   for (const ev of spineEvents) {
     const p = (ev.payload && typeof ev.payload === 'object' ? ev.payload : {}) as Record<string, unknown>, evMs = Date.parse(ev.at)
     if ((ev.type === 'ruling.queued' || ev.type === 'secretary.ask') && typeof p['question'] === 'string') {
@@ -269,7 +278,9 @@ export async function computeMemoryBelievabilityMetrics(
       const hit = entryById.get(id)
       if (!hit) { falseRecallCount += 1; continue }
       const endMs = hit.validTo ? Date.parse(hit.validTo) : NaN
-      if (hit.invalidatedBy && (!Number.isFinite(endMs) || !Number.isFinite(evMs) || endMs <= evMs)) falseRecallCount += 1
+      const invSeq = invalidatedSeqById.get(id)
+      const beforeInvInSameMs = invSeq !== undefined && Number.isFinite(endMs) && Number.isFinite(evMs) && endMs === evMs && typeof ev.seq === 'number' && ev.seq < invSeq
+      if (hit.invalidatedBy && !beforeInvInSameMs && (!Number.isFinite(endMs) || !Number.isFinite(evMs) || endMs <= evMs)) falseRecallCount += 1
     }
     if (Number.isFinite(evMs) && evMs >= weekStartMs && evMs <= nowMs) {
       if (ev.type === 'memory.tombstoned' || ev.type === 'memory.corrected') correctedIds.add(typeof p['entryId'] === 'string' ? p['entryId'] : ev.id)

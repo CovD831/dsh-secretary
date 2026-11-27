@@ -1,12 +1,17 @@
 /** 运行时治理编排中枢：串联 M0 事件脊、判局注册表、FTS5 记忆索引、工作区安全 GC 与发射前上下文胶囊。 */
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
+import type { Context } from '@deepseek-ai/cordis'
+import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import type { Assignment, DomainEvent, OutboundMessage, Ticket, Trigger } from '../core/index.ts'
 import { prepareLaunchCapsule, type PreparedLaunchCapsule } from '../executor/capsule-hook.ts'
 import type { HostPlanReviewRunner } from '../executor/adversarial-review.ts'
 import { adaptiveDispatchGate, verifyChangedPathsGate, verifyRerunGate, type PlanReviewOutcome } from '../judgement/gates/index.ts'
 import { createJudgementRegistry, loadPlaybookCandidates, lockTicketGeneration, type ActionClass, type ExtendedJudgementRegistry, type Verdict } from '../judgement/index.ts'
-import { MemoryFtsIndex, MemoryWriter, loadWorkspacePitfallNotes } from '../memory/index.ts'
+import {
+  MemoryFtsIndex, MemoryWriter, loadWorkspacePitfallNotes,
+  type DreamExtractorFn, type EpochMemoryInjector, type MemoryDreamer, type PersistentBotMemoryPolicy, type TranscriptFtsIndex,
+} from '../memory/index.ts'
 import { domainEventToSpineDraft } from '../rsi/trace-bridge.ts'
 import {
   GitRepoLock, createGitShardSink, createSpineAppender, createSpineFlusher, ensureSpineSchema, joinTaint,
@@ -19,8 +24,9 @@ import {
 } from '../workspaces/index.ts'
 import { applyDecidedRuling } from './governance-drafts.ts'
 import { readSpineEnvelopeFromStore, runStandingOrderPatrol, type PatrolRunReport } from './governance-patrol.ts'
-import { collectPostTicketPatches, depositDirsOf, readSyncTailSeq, refreshSecretaryMemoryBlock, syncDepositsAndLedger } from './governance-ops.ts'
+import { collectPostTicketPatches, depositDirsOf, readSyncTailSeq, syncDepositsAndLedger } from './governance-ops.ts'
 import { ingestFeishuCardAction, type FeishuCardIngestResult, type IngestFeishuCardOptions } from './governance-ruling.ts'
+import { buildGovernanceMemorySubsystem } from './memory-governance-helpers.ts'
 import { RulingQueue, type RulingItem } from './ruling-queue.ts'
 import type { Store } from './store.ts'
 
@@ -40,14 +46,18 @@ export interface GovernanceOptions {
   readonly store: Store; readonly stateDir: string; readonly onError?: (error: unknown) => void; readonly now?: () => Date
   readonly onRulingQueued?: (item: RulingItem) => void; readonly onRulingDecided?: (item: RulingItem) => void
   readonly onSpineAppended?: (ref: SourceRef, draft: SpineDraft<Record<string, unknown>>) => void
+  readonly context?: Context; readonly persistence?: Pick<SessionPersistence, 'flush' | 'open'>
+  readonly masterId?: string; readonly dreamExtractor?: DreamExtractorFn
 }
 
 /** 串联 M0 事件脊、判局注册表、FTS5 派生索引、外发事前闸、发射切片与工作区自动 GC 的运行时治理中枢。 */
 export class GovernanceRuntime {
   readonly storeRef: Store; readonly stateDir: string; readonly memoryDir: string; readonly memoryRepoLock: GitRepoLock
-  readonly sink: GitShardSink; readonly flusher: SpineFlusher; readonly appender: SpineAppender
+  readonly masterId: string; readonly sink: GitShardSink; readonly flusher: SpineFlusher; readonly appender: SpineAppender
   readonly memory: MemoryWriter; readonly ftsIndex: MemoryFtsIndex; readonly registry: ExtendedJudgementRegistry
   readonly workspaces: WorkspaceRegistry; readonly rulings: RulingQueue
+  readonly memoryPolicy: PersistentBotMemoryPolicy; readonly transcriptFts: TranscriptFtsIndex
+  readonly epochInjector: EpochMemoryInjector; readonly dreamer: MemoryDreamer
   secretaryMemoryCache = ''
   private readonly store: Store; private readonly onError: (error: unknown) => void; private readonly now: () => Date
   private readonly bootId = randomUUID().slice(0, 8); private readonly pendingTasks = new Set<Promise<void>>()
@@ -58,6 +68,7 @@ export class GovernanceRuntime {
 
   constructor(options: GovernanceOptions) {
     this.store = options.store; this.storeRef = options.store; this.stateDir = options.stateDir
+    this.masterId = options.masterId ?? 'orchestrator-main'
     this.onError = options.onError ?? (() => {}); this.now = options.now ?? (() => new Date())
     this.memoryDir = join(options.stateDir, 'memory'); this.memoryRepoLock = new GitRepoLock()
 
@@ -69,16 +80,17 @@ export class GovernanceRuntime {
     this.appender = cb ? { append: <P>(draft: SpineDraft<P>) => { const ref = rawAppender.append(draft); this.store.afterCommit(() => cb(ref, draft as SpineDraft<Record<string, unknown>>)); return ref } } : rawAppender
     this.memory = new MemoryWriter({
       dir: this.memoryDir, lock: this.memoryRepoLock, resolveRef: ref => this.resolveSpineRefUnlocked(ref), now: this.now,
-      onAuditEvent: draft => {
-        if (!this.closed) {
-          this.appendEvent(draft)
-          void refreshSecretaryMemoryBlock(this, '', false).then(t => { this.secretaryMemoryCache = t }).catch(() => undefined)
-        }
-      },
+      onAuditEvent: draft => { if (!this.closed) { this.appendEvent(draft); this.epochInjector.onMemoryWritten(draft) } },
     })
-    this.ftsIndex = new MemoryFtsIndex({
-      memoryDir: this.memoryDir, dbPath: join(options.stateDir, 'derived', 'memory-fts.sqlite'), now: this.now,
+    this.ftsIndex = new MemoryFtsIndex({ memoryDir: this.memoryDir, dbPath: join(options.stateDir, 'derived', 'memory-fts.sqlite'), now: this.now })
+    const memSub = buildGovernanceMemorySubsystem({
+      stateDir: options.stateDir, memoryDir: this.memoryDir, masterId: this.masterId, memoryRepoLock: this.memoryRepoLock,
+      memory: this.memory, ftsIndex: this.ftsIndex, appender: this.appender, store: this.store, now: this.now,
+      ...(options.context ? { context: options.context } : {}), ...(options.persistence ? { persistence: options.persistence } : {}),
+      ...(options.dreamExtractor ? { dreamExtractor: options.dreamExtractor } : {}),
     })
+    this.memoryPolicy = memSub.memoryPolicy; this.transcriptFts = memSub.transcriptFts
+    this.epochInjector = memSub.epochInjector; this.dreamer = memSub.dreamer
     this.workspaces = createWorkspaceRegistry(this.store)
     this.rulings = new RulingQueue({
       store: this.store, appender: this.appender, memory: this.memory, memoryDir: this.memoryDir, memoryRepoLock: this.memoryRepoLock,
@@ -91,11 +103,8 @@ export class GovernanceRuntime {
     })
 
     this.registry = createJudgementRegistry({ scopes: ['outbox'] })
-    registerWorkspaceGcGate(this.registry, 'enforce')
-    registerDispatchIsolationGate(this.registry, 'enforce')
-    this.registry.register(adaptiveDispatchGate, 'enforce')
-    this.registry.register(verifyChangedPathsGate, 'enforce')
-    this.registry.register(verifyRerunGate, 'enforce')
+    registerWorkspaceGcGate(this.registry, 'enforce'); registerDispatchIsolationGate(this.registry, 'enforce')
+    this.registry.register(adaptiveDispatchGate, 'enforce'); this.registry.register(verifyChangedPathsGate, 'enforce'); this.registry.register(verifyRerunGate, 'enforce')
   }
 
   latestSpineSeq(): number {
@@ -110,8 +119,7 @@ export class GovernanceRuntime {
     const ev = await this.registry.evaluate('ticket.dispatch', { mandateCeiling, ...(workspace ? { workspace } : {}) })
     if (ev.registered > 0 || ev.observed.length > 0) {
       this.recordGate('ticket.dispatch', ticketId ?? (workspace?.id ?? 'default'), 'governance.dispatch-isolation', ticketId, {
-        mandateCeiling, ...(workspace ? { workspace: workspace.id, isolation: workspace.isolation } : {}), verdict: ev.verdict,
-      })
+        mandateCeiling, ...(workspace ? { workspace: workspace.id, isolation: workspace.isolation } : {}), verdict: ev.verdict })
     }
     return ev.verdict
   }
@@ -119,21 +127,21 @@ export class GovernanceRuntime {
   nowDate(): Date { return this.now() }
 
   handleFeishuCardCallback(raw: unknown, options: IngestFeishuCardOptions): Promise<FeishuCardIngestResult> {
-    return ingestFeishuCardAction({
-      store: this.store, memoryDir: this.memoryDir, memoryRepoLock: this.memoryRepoLock,
-      appender: this.appender, memory: this.memory, now: this.now,
-    }, raw, options)
+    return ingestFeishuCardAction({ store: this.store, memoryDir: this.memoryDir, memoryRepoLock: this.memoryRepoLock, appender: this.appender, memory: this.memory, now: this.now }, raw, options)
   }
 
   /** 启动恢复撕裂分片、自动发现并准入全部沉淀包、刷新只读 `LEDGER.md` 与 FTS5 派生索引。 */
   async recover(): Promise<FlushReport> {
     const report = await this.flusher.recover()
     await syncDepositsAndLedger(this).catch(err => this.onError(err))
-    await this.ftsIndex.open().catch(err => this.onError(err))
-    this.secretaryMemoryCache = await refreshSecretaryMemoryBlock(this, '', false).catch(() => '')
+    await this.ftsIndex.open().catch(err => this.onError(err)); await this.transcriptFts.open().catch(err => this.onError(err))
+    const residentRes = await this.epochInjector.refreshResidentCache().catch(() => undefined)
+    this.secretaryMemoryCache = residentRes?.text ?? ''
     if (!this.patrolTimer && !this.closed && !this.shuttingDown) {
       this.patrolTimer = setInterval(() => {
-        if (!this.closed && !this.shuttingDown) this.trackTask(this.tickPatrol().then(() => undefined, err => this.onError(err)))
+        if (this.closed || this.shuttingDown) return
+        this.trackTask(this.tickPatrol().then(() => undefined, err => this.onError(err)))
+        this.trackTask(this.dreamer.maybeRunScheduled(this.masterId).then(() => undefined, err => this.onError(err)))
       }, 60_000)
       this.patrolTimer.unref?.()
     }
@@ -141,25 +149,15 @@ export class GovernanceRuntime {
   }
 
   tickPatrol(maxIdleMinutes?: number): Promise<PatrolRunReport> { return runStandingOrderPatrol(this, ...(maxIdleMinutes !== undefined ? [{ maxIdleMinutes }] : [])) }
-
-  async flush(): Promise<FlushReport> {
-    while (this.pendingTasks.size > 0) await Promise.allSettled([...this.pendingTasks])
-    await new Promise<void>(r => queueMicrotask(r))
-    return this.flusher.flush()
-  }
+  async flush(): Promise<FlushReport> { while (this.pendingTasks.size > 0) await Promise.allSettled([...this.pendingTasks]); await new Promise<void>(r => queueMicrotask(r)); return this.flusher.flush() }
 
   async shutdown(): Promise<void> {
-    this.shuttingDown = true
+    this.shuttingDown = true; this.dreamer.shutdown()
     if (this.patrolTimer) { clearInterval(this.patrolTimer); this.patrolTimer = undefined }
     try {
       while (this.pendingTasks.size > 0) await Promise.allSettled([...this.pendingTasks])
-      await new Promise<void>(r => queueMicrotask(r))
-      await this.flusher.flush()
-      await this.flusher.flush()
-    } finally {
-      this.ftsIndex.close()
-      this.closed = true
-    }
+      await new Promise<void>(r => queueMicrotask(r)); await this.flusher.flush(); await this.flusher.flush()
+    } finally { this.ftsIndex.close(); this.transcriptFts.close(); this.closed = true }
   }
 
   resolveSpineRef(ref: SourceRef): Promise<boolean> { return this.readSpineEnvelope(ref).then(Boolean) }
@@ -251,6 +249,7 @@ export class GovernanceRuntime {
     if (this.closed) return
     const current = this.store.tickets.get(ticket.id) ?? ticket
     await collectPostTicketPatches(this, current).catch(err => this.onError(err))
+    await this.dreamer.onTicketEnded(current).catch(err => this.onError(err))
     const ws = current.ended ? this.workspaces.resolve(current) : undefined
     if (!ws || !current.execution?.directory) return
     await this.repoLock(ws.repository).run(async () => {

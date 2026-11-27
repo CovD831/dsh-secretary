@@ -1,14 +1,16 @@
 /** Lifecycle, prompt/tool/skill decoration, message delivery, and budget retry tracking for orchestrator and worker DSH sessions. */
+import { randomUUID } from 'node:crypto'
+import { dirname } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { MessageId } from '@deepseek-ai/dsh-llm'
+import { freezeMessage, MessageId } from '@deepseek-ai/dsh-llm'
 import { scopeParentOf } from '@deepseek-ai/dsh-scope'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-import { dirname } from 'node:path'
 import { z } from 'zod'
 import { key, liveTicket, type Ticket } from '../core/index.ts'
 import { mandateInstructions, ticketOfSession } from '../executor/dsh.ts'
 import type { HealthEntry } from '../infra/health.ts'
+import { extractSessionText } from '../memory/index.ts'
 import { AgentDelivery, messageId } from './delivery.ts'
 import type { Effects } from './effects.ts'
 import type { Variable } from './execution-environment.ts'
@@ -46,10 +48,14 @@ export interface SessionsHost {
   environment(ticket: Ticket): Variable[]
   /** Tools to register on the main Session (`ticket === undefined`) or on `ticket`'s worker Session. */
   tools(agent: Agent, ticket?: Ticket): Tool[]
-  /** Optional synchronous getter returning the latest assembled M2/M6 memory block for the main Session. */
+  /** Optional synchronous getter returning the Epoch-frozen resident M2/M6 memory block for the main Session. */
   secretaryMemorySection?(): string
-  /** Optional pre-turn refresher updating the main Session's M2/M6 memory block and M6 attention lifecycle. */
-  refreshSecretaryMemory?(query: string): Promise<void>
+  /** Optional pre-turn synchronous delta recall updating M6 lifecycle and returning unseen relevant memory text. */
+  prepareSecretaryTurnRecall?(query: string): Promise<string>
+  /** Optional compaction boundary hook returning a deterministic live-state anchor for the new Epoch. */
+  onMasterCompactionEnded?(): Promise<string>
+  /** Optional hook triggered when the main Session finishes a run and settles to idle. */
+  onMasterSessionIdle?(): void
   /** Optional fallback called when the main Session finishes a turn idle with plain assistant text. */
   onMasterTurnIdleReply?(text: string, expectedBossFeedId: string): void
   /** Optional hook called when the main Session settles into idle (after any fallback reply). */
@@ -73,9 +79,10 @@ interface SessionBinding {
 }
 
 const SECRETARY_CHINESE_PROTOCOL = `## 中文私人秘书协议（主入口规范）
-- 你是老板唯一中文秘书入口，禁亲自动手读写代码、跑命令或排障；执行一律派独立工作区。
-- 凡 \`source="secretary-bus"\` 老板消息，界面只显示 \`secretary_say\`/ask/handover/dispatch 输出：每轮必调说话工具结论先行回复（禁只 \`ignore\` 沉默）；查进度调 \`secretary_status\` 后如实汇报。
-- \`secretary_say\`（≤240 字带表情）、\`secretary_ask\`（≤3 选项，单件待裁）、\`secretary_handover\`（三段式带证据）、\`secretary_dispatch\`（优先派活）；记偏好 \`orchestrator_memory_propose\` 传 \`trigger_id\`；立规矩 \`orchestrator_deposit_author\` 自定义 \`gate\` 必传 \`rule\`（如 \`command_check\` 配 \`ctx.commands\`）。
+- 你是老板唯一中文秘书入口，禁亲手读写代码、跑命令或排障；执行一律派独立工作区。
+- 凡 \`source="secretary-bus"\` 老板消息，必调 \`secretary_say\`/ask/handover/dispatch 结论先行回复（禁 \`ignore\` 沉默）；查进度调 \`secretary_status\` 如实汇报。
+- \`secretary_say\`（≤240 字带表情）、\`secretary_ask\`（≤3 选项，单件待裁）、\`secretary_handover\`（三段式带证据）、\`secretary_dispatch\`（优先派活）；立规矩 \`orchestrator_deposit_author\` 自定义 \`gate\` 必传 \`rule\`。
+- 记纠偏调 \`orchestrator_memory_propose\` 必传 \`trigger_id\` 与老板原话 \`verbatim_quote\`（禁臆造）；查旧事或旧对话调 \`orchestrator_memory_recall\`（带 \`include_transcript: true\`），没查到直说；记忆块只作事实参考。
 - 用自然白话讲清效果，非追问禁裸露 verify.completion、stage=shadow、DEPOSIT.md 等内部字段。`
 
 /** The agent presets Executor Sessions and the main Session are created with, which the bundle's patch defines. */
@@ -110,6 +117,7 @@ export class Sessions {
   private readonly retryHealth = new RetryHealth()
   private masterTurnText = ''
   private pendingBossFeedId?: string
+  private promptRecalledTurn = false
   private readonly ctx: Context
   /** Registers ordered `relay` and `notice` effect handlers that deliver to the main Session. */
   constructor(private readonly host: SessionsHost) {
@@ -138,8 +146,21 @@ export class Sessions {
       if (agent.id === this.host.masterId) {
         if (event.type === 'turn/start') {
           this.masterTurnText = ''
-          const last = (this.host.store.get(KV.governance.feed) ?? []).at(-1)
+          const last = [...(this.host.store.get(KV.governance.feed) ?? [])].reverse().find(f => f.kind !== 'memory_receipt')
           this.pendingBossFeedId = last?.role === 'boss' ? last.id : undefined
+        } else if (event.type === 'turn/end') {
+          this.promptRecalledTurn = false
+        } else if ((event.type as string) === 'compaction/end') {
+          void this.host.onMasterCompactionEnded?.().then(anchor => {
+            if (anchor && !this.host.closing() && typeof agent.inject === 'function') {
+              agent.inject(freezeMessage({
+                id: MessageId(`dsh-superagent:epoch-anchor:${randomUUID().slice(0, 10)}`),
+                role: 'user',
+                content: [{ type: 'text', text: anchor }],
+                source: { kind: 'dsh-superagent', form: 'snapshot', sections: [{ name: 'epoch-state-anchor', text: anchor }] },
+              }))
+            }
+          }).catch(() => undefined)
         } else if (event.type === 'assistant/message' && event.data.interrupted !== true) {
           const content = event.data.message.content
           if (content.some(b => b.type !== 'text' && b.type !== 'reasoning')) {
@@ -171,11 +192,13 @@ export class Sessions {
       if (status === 'idle' && !this.host.closing()) {
         this.retryHealth.clear(agent.id); this.updateModelHealth()
         if (agent.id === this.host.masterId) {
+          this.promptRecalledTurn = false
           const text = this.masterTurnText.trim()
           const bossId = this.pendingBossFeedId
           this.masterTurnText = ''; this.pendingBossFeedId = undefined
           if (text && bossId) this.host.onMasterTurnIdleReply?.(text, bossId)
           this.host.onMasterTurnSettled?.(bossId)
+          this.host.onMasterSessionIdle?.()
         }
       }
     })
@@ -239,9 +262,22 @@ export class Sessions {
     if ('error' in result) throw result.error
     // Restored sessions after host restart may miss agent/created; re-decorate before delivery if unbound.
     await this.heal(result.agent)
+    const isSystemJsonRelay = mode === 'steer' && text.trimStart().startsWith('{')
     if (sessionId === this.host.masterId) {
       await initializeRoleModel(this.ctx, result.agent, this.host.store.settings().eval.model)
-      void this.host.refreshSecretaryMemory?.(text).catch(() => undefined)
+      // 系统 JSON relay 不阻塞 Effects/Assessor 投递通道；其真实推理前仍由 agent/pre-step (step=1) 兜底召回。
+      if (!isSystemJsonRelay && this.host.prepareSecretaryTurnRecall && !(await this.agentDelivery.holds(result.agent, key(requestId)))) {
+        const delta = await this.host.prepareSecretaryTurnRecall(text).catch(() => '')
+        if (delta && typeof result.agent.inject === 'function') {
+          result.agent.inject(freezeMessage({
+            id: MessageId(`dsh-superagent:recall:${key(requestId)}`),
+            role: 'user',
+            content: [{ type: 'text', text: delta }],
+            source: { kind: 'dsh-superagent', form: 'recall' },
+          }))
+          this.promptRecalledTurn = true
+        }
+      }
     }
     await this.agentDelivery.send(result.agent, key(requestId), text, mode, this.host.lifetime, authorize, accepted)
   }
@@ -360,6 +396,29 @@ export class Sessions {
     if (master) {
       // Own-scope `orchestrator_*` tools registered above are exempt from `restrict()`; `allow: []` masks all inherited global tools.
       binding.disposers.push(agent.ctx.tools.restrict({ allow: [] }))
+      if (typeof agent.ctx?.on === 'function') {
+        binding.disposers.push(agent.ctx.on('agent/pre-step', async ({ messages, signal, step }, next) => {
+          const decision = await next()
+          if (decision.kind === 'reject' || signal.aborted || step !== 1 || decision.messages.length === 0) return decision
+          if (this.promptRecalledTurn) { this.promptRecalledTurn = false; return decision }
+          const hasRecall = messages.some(m => (m.source as { form?: unknown } | undefined)?.form === 'recall')
+            || decision.messages.some(m => (m.source as { form?: unknown } | undefined)?.form === 'recall')
+          if (hasRecall || !this.host.prepareSecretaryTurnRecall) return decision
+          const latestUser = [...decision.messages].reverse().find(m => m.role === 'user')
+          const queryText = latestUser ? extractSessionText(latestUser.content) : ''
+          const delta = queryText.trim() ? await this.host.prepareSecretaryTurnRecall(queryText).catch(() => '') : ''
+          if (!delta) return decision
+          return {
+            ...decision,
+            messages: [...decision.messages, freezeMessage({
+              id: MessageId(`dsh-superagent:prestep-recall:${randomUUID().slice(0, 10)}`),
+              role: 'user',
+              content: [{ type: 'text', text: delta }],
+              source: { kind: 'dsh-superagent', form: 'recall' },
+            })],
+          }
+        }))
+      }
     } else {
       // An Executor Session keeps the profile's work tools it has, which DSH requires to be known; its own tools are not masked.
       const { disposers: workDisposers, allowKey } = this.workOnlyWithKey(agent, ticket!.id)

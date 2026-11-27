@@ -7,6 +7,7 @@ import type { RulingItem } from './app/ruling-queue.ts'
 import type { SettingsVersion } from './app/store.ts'
 import type { SecretaryFeedEntry } from './app/tools/secretary-core.ts'
 import type { Stage } from './judgement/types.ts'
+import type { DreamCursorState } from './memory/dreamer.ts'
 import type { PendingPatchProposal } from './memory/types.ts'
 import type { SettingsSave } from './policy.ts'
 import type { TemperatureScaler } from './rsi/types.ts'
@@ -81,6 +82,7 @@ export const KV = {
     runtimeBudgets: record<Record<string, PersistedRuntimeBudget>>('governance-runtime-budgets'),
     ticketGenerations: record<Record<string, PersistedTicketGeneration>>('governance-ticket-generations'),
     reviewWaivers: record<Record<string, string>>('governance-review-waivers'),
+    dreamCursors: record<Record<string, DreamCursorState>>('governance-dream-cursors'),
   },
   /** Sessions: prompt revisions each Session has worked under, ordered oldest first; the last entry (`.at(-1)`) is its active revision. */
   sessions: { prompts: family<number[], [session: string]>('session-prompts:') },

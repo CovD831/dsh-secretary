@@ -9,9 +9,11 @@ import { redactValue } from '../spine/redact.ts'
 import type { SpineEnvelope } from '../spine/types.ts'
 import { listMemoryPages } from './codec.ts'
 import { canCallerReadEntry, isEntryActiveAt } from './recall.ts'
+import { buildSmartFtsQueries, scoreTokenCoverage, tokenizeForSearch } from './text-search.ts'
 import type { Clearance, FactLayer, FactPage, MemoryEntry, RecallCaller } from './types.ts'
 
-export const RECIPE_FINGERPRINT = 'm1-m4-fts5-unicode61-cjk2-v1'
+export { tokenizeForSearch }
+export const RECIPE_FINGERPRINT = 'm1-m4-fts5-unicode61-cjk2-v2'
 const SHARD_FILE_RE = /^\d{4}-\d{2}-\d{2}\.jsonl$/
 const CLEARANCE_ORDER: Record<Clearance, number> = { public: 0, workspace: 1, private: 2 }
 
@@ -23,31 +25,6 @@ export interface M0FallbackHit {
 }
 export interface FtsSearchResult { readonly hits: readonly FtsSearchHit[]; readonly m0FallbackHits: readonly M0FallbackHit[]; readonly usedFallback: boolean; readonly rebuilt: boolean }
 export interface MemoryFtsIndexOptions { readonly memoryDir: string; readonly dbPath: string; readonly recipeFingerprint?: string; readonly now?: () => Date }
-
-/** 提取中英文检索词元（英文单词与中文一元/二元切片），统一供 FTS5 与词法打分使用。 */
-export function tokenizeForSearch(text: string): string[] {
-  const lower = text.toLowerCase()
-  const tokens = new Set<string>()
-  for (const m of lower.matchAll(/[a-z0-9_-]{2,}/g)) {
-    tokens.add(m[0]!)
-    for (const part of m[0]!.split(/[_-]+/)) {
-      if (part.length >= 3) tokens.add(part)
-    }
-  }
-  const hanRuns = lower.match(/[\u4e00-\u9fff]+/g) ?? []
-  for (const run of hanRuns) {
-    for (let i = 0; i < run.length; i += 1) {
-      tokens.add(run[i]!)
-      if (i + 1 < run.length) tokens.add(run.slice(i, i + 2))
-    }
-  }
-  return [...tokens]
-}
-
-function buildFtsMatchExpr(tokens: readonly string[]): string | undefined {
-  if (tokens.length === 0) return undefined
-  return tokens.map(t => `"${t.replace(/"/g, '""')}"`).join(' OR ')
-}
 
 function resolveNowMs(now?: Date | string): number {
   const ms = now instanceof Date ? now.getTime() : (now !== undefined ? Date.parse(now) : Date.now())
@@ -117,16 +94,14 @@ export async function searchM0Fallback(
       if (!canCallerReadM0Event(caller, ev)) continue
       const safePayload = redactValue(ev.payload).value
       const text = `${ev.type} ${ev.stream} ${JSON.stringify(safePayload)}`.toLowerCase()
-      let score = 0
-      for (const tok of tokens) if (text.includes(tok)) score += tok.length > 1 ? 2 : 1
-      if (queryLower.length >= 2 && text.includes(queryLower)) score += 3
-      if (score <= 0) continue
+      const cov = scoreTokenCoverage(tokens, text, queryLower, 0.4)
+      if (!cov.enough) continue
       const snippetRaw = typeof safePayload === 'object' && safePayload !== null && 'statement' in safePayload
         ? String((safePayload as Record<string, unknown>)['statement'])
         : JSON.stringify(safePayload)
       hits.push({
         seq: ev.seq, id: ev.id, at: ev.at, type: ev.type, stream: ev.stream,
-        taint: ev.taint, score, snippet: snippetRaw.slice(0, 240),
+        taint: ev.taint, score: cov.score, snippet: snippetRaw.slice(0, 240),
       })
     }
   }
@@ -279,27 +254,32 @@ export class MemoryFtsIndex {
   }
 
   async search(query: string, caller: RecallCaller, options: FtsSearchOptions = {}): Promise<FtsSearchResult> {
-    const nowMs = resolveNowMs(options.now)
-    const limit = Math.max(1, options.limit ?? 20)
-    const tokens = tokenizeForSearch(query)
-    const matchExpr = buildFtsMatchExpr(tokens)
-    let rebuilt = false
-    let hits: FtsSearchHit[] = []
-    let indexFailed = false
-    try {
-      const opened = await this.open()
-      rebuilt = opened.rebuilt
-      if (matchExpr && this.db) {
-        const rows = this.db.prepare(
-          'SELECT layer, rel_path, entry_json, bm25(memory_fts) AS rank FROM memory_fts WHERE memory_fts MATCH ? ORDER BY rank ASC LIMIT ?',
-        ).all(matchExpr, Math.max(limit * 4, 40)) as { layer: FactLayer; rel_path: string; entry_json: string; rank: number }[]
-        for (const r of rows) {
-          const entry = JSON.parse(r.entry_json) as MemoryEntry
-          if (!isEntryActiveAt(entry, nowMs) || !canCallerReadEntry(caller, r.layer, entry, r.rel_path)) continue
-          hits.push({ entry, layer: r.layer, relPath: r.rel_path, score: Math.max(0.0001, -Number(r.rank)) })
-          if (hits.length >= limit) break
+    const nowMs = resolveNowMs(options.now), limit = Math.max(1, options.limit ?? 20)
+    const tokens = tokenizeForSearch(query), queryLower = query.trim().toLowerCase()
+    const queries = buildSmartFtsQueries(tokens)
+    let rebuilt = false, hits: FtsSearchHit[] = [], indexFailed = false
+    const seenIds = new Set<string>()
+    const collectRows = (matchExpr: string, requireCoverage: boolean): void => {
+      if (!this.db) return
+      const rows = this.db.prepare(
+        'SELECT layer, rel_path, entry_json, bm25(memory_fts) AS rank FROM memory_fts WHERE memory_fts MATCH ? ORDER BY rank ASC LIMIT ?',
+      ).all(matchExpr, Math.max(limit * 4, 40)) as { layer: FactLayer; rel_path: string; entry_json: string; rank: number }[]
+      for (const r of rows) {
+        if (hits.length >= limit) break
+        const entry = JSON.parse(r.entry_json) as MemoryEntry
+        if (seenIds.has(entry.id) || !isEntryActiveAt(entry, nowMs) || !canCallerReadEntry(caller, r.layer, entry, r.rel_path)) continue
+        if (requireCoverage) {
+          const hay = `${entry.statement} ${entry.topicKey ?? ''} ${entry.verbatimQuote ?? ''}`.toLowerCase()
+          if (!scoreTokenCoverage(tokens, hay, queryLower, 0.4).enough) continue
         }
+        seenIds.add(entry.id)
+        hits.push({ entry, layer: r.layer, relPath: r.rel_path, score: Math.max(0.0001, -Number(r.rank)) })
       }
+    }
+    try {
+      rebuilt = (await this.open()).rebuilt
+      if (queries.primary) collectRows(queries.primary, false)
+      if (hits.length < limit && queries.fallback) collectRows(queries.fallback, true)
     } catch {
       indexFailed = true
       hits = []

@@ -3,7 +3,8 @@ import { z } from 'zod'
 import type { Engine } from '../core/index.ts'
 import type { Stage, TransitionDepositStageResult } from '../judgement/index.ts'
 import { KV } from '../kv.ts'
-import type { UserDirectMemoryResult, WriteResult } from '../memory/index.ts'
+import type { DreamRunReport, MemoryEntry, UserDirectMemoryResult, WriteResult } from '../memory/index.ts'
+import type { SourceRef } from '../spine/index.ts'
 import { renderF1ProofHtml } from '../pixel-office/index.ts'
 import { readDepositsProjection, readNotebookProjection, readSpineProjection, readStateProjection } from '../projection/index.ts'
 import type { AblationCase, HoldoutEvaluationResult, LeaveOneOutResult, ReplayCase } from '../rsi/index.ts'
@@ -15,14 +16,15 @@ import {
   readRsiStudioView, runRsiAblationCheck, saveDirectMemory, syncDepositsAndLedger,
   type MemoryStudioView, type RsiWorkbenchView,
 } from './governance-ops.ts'
+import { tombstoneMemoryEntryByBoss } from './memory-governance-helpers.ts'
 import type { HttpHost } from './http.ts'
 import { listAvatarPacks, selectAvatarPack } from './avatar-pipeline.ts'
 import { generateAvatarPackViaProvider } from './avatar-provider.ts'
 import { ingestBossDesktopMessage } from './tools/secretary-core.ts'
 
 export type {
-  AdoptDepositDraftResult, DepositDraftEntry, HoldoutEvaluationResult, LeaveOneOutResult, MemoryStudioView,
-  PatrolRunReport, RsiWorkbenchView, TransitionDepositStageResult, UserDirectMemoryResult, WriteResult,
+  AdoptDepositDraftResult, DepositDraftEntry, DreamRunReport, HoldoutEvaluationResult, LeaveOneOutResult, MemoryEntry,
+  MemoryStudioView, PatrolRunReport, RsiWorkbenchView, SourceRef, TransitionDepositStageResult, UserDirectMemoryResult, WriteResult,
 }
 
 export interface GovernanceRouteInput<K extends keyof Api> {
@@ -36,7 +38,7 @@ export type GovernanceRouteKeys =
   | 'GET rulings' | 'POST rulings/:id/decide' | 'GET secretary/feed' | 'POST secretary/messages'
   | 'GET deposits/ledger' | 'GET deposits/drafts' | 'POST deposits/drafts/adopt' | 'POST deposits/:id/stage'
   | 'POST governance/patrol'
-  | 'GET memory/studio' | 'POST memory/direct' | 'POST memory/patches/:index'
+  | 'GET memory/studio' | 'POST memory/direct' | 'POST memory/patches/:index' | 'POST memory/entries/:id/tombstone' | 'POST memory/dream'
   | 'GET rsi/workbench' | 'POST rsi/ablation' | 'POST rsi/holdout'
   | 'GET pixel-office/proof'
   | 'GET avatars' | 'POST avatars/select' | 'POST avatars/generate'
@@ -87,6 +89,13 @@ const DirectMemoryBody = z.object({
 }).strict()
 
 const PatchDecisionBody = z.object({ decision: z.enum(['approve', 'dismiss']) }).strict()
+const TombstoneEntryBody = z.object({
+  layer: z.enum(['m1', 'm2', 'm3', 'm4']),
+  slug: z.string().max(128).optional(),
+  workspaceKey: z.string().max(128).optional(),
+  reason: z.string().trim().min(1).max(300),
+}).strict()
+const DreamRunBody = z.object({ force: z.boolean().optional(), sessionId: z.string().max(128).optional() }).strict()
 
 const AblationBody = z.object({
   cases: z.array(z.object({
@@ -189,6 +198,15 @@ export function governanceRoutes(
       const idx = Number(params.index)
       if (!Number.isInteger(idx) || idx < 0) fail400('Invalid patch index')
       return decideMemoryPatch(requireGov(), idx, parsed.decision)
+    },
+    'POST memory/entries/:id/tombstone': async ({ params, body }) => {
+      const parsed = TombstoneEntryBody.parse(await body())
+      return tombstoneMemoryEntryByBoss(requireGov(), { entryId: params.id, ...parsed })
+    },
+    'POST memory/dream': async ({ body }) => {
+      const gov = requireGov()
+      const parsed = DreamRunBody.parse((await body()) ?? {})
+      return gov.dreamer.runNow({ sessionId: parsed.sessionId ?? gov.masterId, force: parsed.force ?? true, runDeep: true, trigger: 'manual' })
     },
     'GET rsi/workbench': ({ query }) => {
       const collectionMode = query.mode === 'e2e' ? 'e2e' : query.mode === 'production' ? 'production' : undefined

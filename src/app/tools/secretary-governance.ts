@@ -8,12 +8,13 @@ import {
   type AnyGateDef, type DeclarativeRule, type DepositManifest, type MandateBinding,
   type ParamSpec, type PlaybookSpec, type Point, type Verdict,
 } from '../../judgement/index.ts'
-import { assembleMemoryPrompt, memoryTaintOf, readMemoryPage, resolveMemoryRelPath } from '../../memory/index.ts'
+import { assembleMemoryPrompt, callerFromPolicy, readMemoryPage, searchM0Fallback } from '../../memory/index.ts'
 import { readM0Events, runHistoricalReplay, type ReplayCase, type ReplayGateFn } from '../../rsi/index.ts'
 import { redactValue } from '../../spine/redact.ts'
 import type { SourceRef, SpineEnvelope } from '../../spine/index.ts'
 import { listDepositDrafts } from '../governance-drafts.ts'
 import type { GovernanceRuntime } from '../governance.ts'
+import { executeSecretaryMemoryPropose } from '../memory-governance-helpers.ts'
 import {
   DepositSchema, LedgerSchema, ProposeSchema, RecallSchema, extractDefaultParams, normalizeMemoryScope, ruleCtxHint, type RawDraft,
 } from './secretary-governance-schemas.ts'
@@ -162,8 +163,9 @@ export function secretaryGovernanceTools(gov: GovernanceRuntime): Tool[] {
     tool({
       name: 'orchestrator_memory_recall', description: 'Recall secretary memory and M6 attention.', schema: RecallSchema,
       execute: async args => {
+        const caller = callerFromPolicy(gov.memoryPolicy)
         const res = await gov.memoryRepoLock.run(() => assembleMemoryPrompt({
-          dir: gov.memoryDir, caller: { role: 'secretary', maxClearance: 'private' }, query: args.query, ftsIndex: gov.ftsIndex,
+          dir: gov.memoryDir, caller, query: args.query, ftsIndex: gov.ftsIndex, residentOverflowPolicy: 'degrade',
           ...(args.recent_messages ? { recentMessages: args.recent_messages } : {}), ...(args.budgets ? { budgets: args.budgets } : {}), now: gov.nowDate(),
         }))
         const droppedIds = [...res.receipt.resident.droppedIds, ...res.receipt.triggered.droppedIds, ...res.receipt.retrieved.droppedIds, ...res.receipt.attention.droppedIds]
@@ -171,45 +173,23 @@ export function secretaryGovernanceTools(gov: GovernanceRuntime): Tool[] {
           gov.appender.append({ id: `mem:recall:dropped:${randomUUID()}`, at: gov.nowDate().toISOString(), stream: 'memory:recall',
             type: 'memory.recall.dropped', source: { kind: 'secretary', ref: 'orchestrator_memory_recall' }, evidence: [], taint: 'trusted', payload: { query: args.query, droppedIds, receipt: res.receipt } })
         }
-        return stripUndefined({ text: res.text, attention: res.attentionItems, receipt: res.receipt, droppedIds })
+        const noFactHits = res.triggeredEntries.length === 0 && res.retrievedEntries.length === 0
+        const transcriptHits = args.query.trim() && (args.include_transcript === true || noFactHits)
+          ? await gov.transcriptFts.search(args.query, caller, { limit: 6 }).catch(() => [])
+          : []
+        const m0Hits = args.query.trim() && (args.include_m0 === true || (noFactHits && transcriptHits.length === 0))
+          ? await searchM0Fallback(gov.memoryDir, args.query, caller, { limit: 6 }).catch(() => [])
+          : []
+        return stripUndefined({
+          text: res.text, attention: res.attentionItems, receipt: res.receipt, droppedIds,
+          ...(transcriptHits.length > 0 ? { transcript_hits: transcriptHits } : {}),
+          ...(m0Hits.length > 0 ? { m0_hits: m0Hits } : {}),
+        })
       },
     }),
     tool({
-      name: 'orchestrator_memory_propose', description: 'Propose or tombstone M1-M3 memory with M0 source_ref.', schema: ProposeSchema,
-      execute: async args => {
-        let sourceRef = args.source_ref
-        let env = sourceRef ? await gov.readSpineEnvelope(sourceRef) : undefined
-        if (!env && args.trigger_id) {
-          const resolved = await resolveTriggerSpineEnvelope(gov, args.trigger_id)
-          if (resolved) { sourceRef = resolved.ref; env = resolved.env }
-        }
-        if (!env || !sourceRef) {
-          return { kind: 'rejected', reason: 'unknown-source-ref',
-            detail: args.trigger_id ? `未在 M0 事件脊中找到 trigger_id=${args.trigger_id} 对应的 trigger.received` : `source_ref 未在事件脊中确认: seq=${args.source_ref?.seq ?? 'missing'}` }
-        }
-        if (args.mode === 'tombstone') {
-          if (!args.entry_id?.trim() || !args.reason?.trim()) throw new Error('tombstone mode requires entry_id and reason')
-          if (args.layer === 'm2') return { kind: 'rejected', reason: 'forbidden', detail: '禁止秘书工具对 M2 条目打墓碑' }
-          const rel = resolveMemoryRelPath({ layer: args.layer, ...(args.slug ? { slug: args.slug } : {}), ...(args.workspace_key ? { workspaceKey: args.workspace_key } : {}) })
-          const page = await gov.memoryRepoLock.run(() => readMemoryPage(gov.memoryDir, rel)), hit = page?.layer !== 'm6' ? page?.entries.find(e => e.id === args.entry_id) : undefined
-          if (hit && (hit.sourceType === 'user_ruling' || hit.sourceType === 'user_direct')) return { kind: 'rejected', reason: 'forbidden', detail: '禁止秘书工具对老板直述或裁决条目打墓碑' }
-          const tombRes = await gov.memory.tombstone({ target: { layer: args.layer, ...(args.slug ? { slug: args.slug } : {}), ...(args.workspace_key ? { workspaceKey: args.workspace_key } : {}) }, entryId: args.entry_id, reason: args.reason, sourceRef, author: 'secretary' })
-          await gov.ftsIndex.rebuild().catch(() => undefined)
-          return stripUndefined({ kind: 'tombstoned', ...tombRes })
-        }
-        if (!args.statement?.trim()) throw new Error('propose mode requires statement')
-        if (args.layer === 'm2' && env.taint === 'untrusted') return { kind: 'rejected', reason: 'forbidden', detail: '禁止使用 untrusted 来源事件写入 M2 记忆' }
-        const resolvedScope = normalizeMemoryScope(args.layer, args.scope, args.workspace_key)
-        const propRes = await gov.memory.propose({
-          layer: args.layer, ...(args.slug ? { slug: args.slug } : {}), ...(args.workspace_key ? { workspaceKey: args.workspace_key } : {}),
-          statement: args.statement, scope: resolvedScope, sourceType: args.source_type ?? 'session', sourceRef, author: 'secretary',
-          taint: memoryTaintOf(env.taint), overrideTombstone: false, ...(args.topic_key ? { topicKey: args.topic_key } : {}), ...(args.clearance ? { clearance: args.clearance } : {}),
-          ...(args.m2_kind ? { m2Kind: args.m2_kind } : {}), ...(args.resident !== undefined ? { resident: args.resident } : {}), ...(args.importance !== undefined ? { importance: args.importance } : {}),
-          ...(args.verbatim_quote ? { verbatimQuote: args.verbatim_quote } : {}), ...(args.evidence_text ? { evidenceText: args.evidence_text } : {}), ...(args.trigger_keys ? { triggerKeys: args.trigger_keys } : {}),
-        })
-        if (propRes.kind === 'accepted') await gov.ftsIndex.rebuild().catch(() => undefined)
-        return stripUndefined(propRes)
-      },
+      name: 'orchestrator_memory_propose', description: 'Propose or tombstone M1-M3 memory with M0 source_ref. Same topic_key supersedes prior active entry—use distinct topic_key values when splitting multiple independent facts from one message.', schema: ProposeSchema,
+      execute: args => executeSecretaryMemoryPropose(gov, args, id => resolveTriggerSpineEnvelope(gov, id), stripUndefined),
     }),
     tool({
       name: 'orchestrator_attention_ledger', description: 'List or transition M6 ledger items.', schema: LedgerSchema,

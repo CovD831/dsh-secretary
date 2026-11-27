@@ -1,6 +1,6 @@
 /** 秘书手边《皮质备忘手账》：真实感三指标、M1-M3 手写批注纠偏、工单原文便利贴审批与 M6 待办提醒。 */
 import { type CSSProperties, type FormEvent, useCallback, useEffect, useState } from 'react'
-import type { MemoryStudioView } from '../app/governance-ops.ts'
+import type { MemoryStudioEntryRow, MemoryStudioView } from '../app/governance-ops.ts'
 import type { M2Kind } from '../memory/types.ts'
 import type { NotebookProjectionView } from '../projection/types.ts'
 import { DiegeticModal, OFFICE_THEME, officeCall } from './office-api.tsx'
@@ -72,6 +72,28 @@ export function PropNotebook({ open, activeWorkspaceId, onClose, onChanged }: { 
     } catch (err) { setNotice(err instanceof Error ? err.message : String(err)) } finally { setBusy(false) }
   }
 
+  const tombstoneEntry = async (row: MemoryStudioEntryRow) => {
+    setBusy(true); setNotice('')
+    try {
+      const parts = row.relPath.replace(/\.md$/, '').split('/')
+      const target = row.layer === 'm3' && parts[1] && parts[2]
+        ? { layer: 'm3' as const, workspaceKey: parts[1], slug: parts[2] }
+        : row.layer === 'm1' && parts[1] ? { layer: 'm1' as const, slug: parts[1] } : { layer: row.layer }
+      const res = await officeCall('POST memory/entries/:id/tombstone', { id: row.entry.id, body: { ...target, reason: 'notebook manual tombstone' } })
+      setNotice(res.ok ? `条目 ${row.entry.id} 已作废归档` : (res.reason ?? '作废失败'))
+      if (res.ok) { await load(); onChanged?.() }
+    } catch (err) { setNotice(err instanceof Error ? err.message : String(err)) } finally { setBusy(false) }
+  }
+
+  const runDreamNow = async () => {
+    setBusy(true); setNotice('')
+    try {
+      const res = await officeCall('POST memory/dream', { body: { force: true } })
+      setNotice(`梦境整理结束：+${res.accepted} 条新记忆、M4 +${res.promotedM4}、常驻降级 ${res.demotedResident}`)
+      await load(); onChanged?.()
+    } catch (err) { setNotice(err instanceof Error ? err.message : String(err)) } finally { setBusy(false) }
+  }
+
   const m13 = data ? data.studio.entries.filter(r => r.layer === 'm1' || r.layer === 'm2' || r.layer === 'm3') : []
   const nbItems = data ? [...data.notebook.groups.pending, ...data.notebook.groups.asked, ...data.notebook.groups.resolved] : []
 
@@ -80,10 +102,11 @@ export function PropNotebook({ open, activeWorkspaceId, onClose, onChanged }: { 
       {error && <p style={{ color: '#9E2F2C', margin: '0 0 8px' }}>加载失败：{error}</p>}
       {notice && <p style={{ ...DIEGETIC_PARCHMENT_CARD, backgroundColor: OFFICE_THEME.parchment, margin: '0 0 10px', fontSize: 12 }}>{notice}</p>}
       {!data ? <p>摊开皮质手账中…</p> : <>
-        <div style={{ ...DIEGETIC_PARCHMENT_CARD, backgroundColor: OFFICE_THEME.parchment, display: 'flex', flexWrap: 'wrap', gap: 14, marginBottom: 12, fontSize: 12 }}>
+        <div style={{ ...DIEGETIC_PARCHMENT_CARD, backgroundColor: OFFICE_THEME.parchment, display: 'flex', flexWrap: 'wrap', gap: 14, marginBottom: 12, fontSize: 12, alignItems: 'center' }}>
           <span>重复提问率：<strong>{(data.studio.metrics.repeatQuestionRate * 100).toFixed(1)}%</strong> ({data.studio.metrics.repeatQuestions}/{data.studio.metrics.totalQuestions})</span>
           <span>误召回数：<strong>{data.studio.metrics.falseRecallCount}</strong></span>
           <span>周纠偏数：<strong>{data.studio.metrics.weeklyCorrectedMemories}</strong> ({data.studio.metrics.windowDays}d)</span>
+          <button type="button" className="dsh-px-btn" disabled={busy} style={{ ...btnStyle(false), marginLeft: 'auto' }} onClick={() => { void runDreamNow() }}>整理梦境</button>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div style={pageStyle}>
@@ -117,12 +140,13 @@ export function PropNotebook({ open, activeWorkspaceId, onClose, onChanged }: { 
             <div style={{ maxHeight: 240, overflowY: 'auto', display: 'grid', gap: 6 }}>
               {m13.length === 0 ? <span style={{ fontSize: 12, opacity: 0.75 }}>暂无 M1–M3 实体记忆。</span> : m13.map(row => (
                 <div key={row.entry.id} style={{ ...DIEGETIC_PARCHMENT_CARD, backgroundColor: OFFICE_THEME.parchment, padding: 6, fontSize: 11 }}>
-                  <div style={{ display: 'flex', gap: 6, marginBottom: 2 }}>
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 2, alignItems: 'center' }}>
                     <strong>[{row.layer}]</strong>
                     <span>{row.entry.topicKey ?? row.entry.m2Kind ?? row.entry.scope}</span>
                     {row.entry.resident && <span>★常驻</span>}
                     {row.entry.validTo && <span style={{ color: '#9E2F2C' }}>已墓碑</span>}
                     <span style={{ marginLeft: 'auto', opacity: 0.75 }}>#{row.entry.sourceRef.seq}</span>
+                    {!row.entry.validTo && <button type="button" className="dsh-px-btn" disabled={busy} style={{ ...btnStyle(false), padding: '1px 6px', fontSize: 10 }} onClick={() => { void tombstoneEntry(row) }}>作废</button>}
                   </div>
                   <div>{row.entry.statement}</div>
                 </div>

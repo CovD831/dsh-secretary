@@ -15,12 +15,13 @@ export interface SecretaryFeedEntry {
   readonly id: string
   readonly at: string
   readonly role: 'boss' | 'secretary'
-  readonly kind: 'boss_message' | 'say' | 'ask' | 'handover' | 'dispatch'
+  readonly kind: 'boss_message' | 'say' | 'ask' | 'handover' | 'dispatch' | 'memory_receipt'
   readonly text: string
   readonly expression?: SecretaryExpression
   readonly rulingId?: string
   readonly options?: readonly { id: string; label: string; consequence: string; recommended?: boolean }[]
   readonly handover?: { conclusion: string; reason: string; impact: string; evidenceRefs: readonly string[] }
+  readonly memoryMeta?: { readonly entryId: string; readonly layer: string; readonly commit?: string; readonly supersededIds?: readonly string[] }
   readonly ticketId?: string
   readonly triggerId?: string
   readonly sourceRef?: { seq: number; id: string }

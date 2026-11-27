@@ -25,7 +25,6 @@ import { DshExecutor, sourceTrigger, triggerMessage, workerSessionId } from '../
 import { runHostPlanReview } from '../executor/adversarial-review.ts'
 import { PreExecuteCompletionGuard } from '../executor/pre-execute-gates.ts'
 import { RuntimeGuard } from '../executor/runtime-guard.ts'
-import { refreshSecretaryMemoryBlock } from './governance-ops.ts'
 import { ticketCard } from './cards.ts'
 import { MasterAssessor } from './assessment.ts'
 import { KV } from '../kv.ts'
@@ -110,8 +109,10 @@ export class Runtime extends Service implements SourceHost {
     try {
       const report = (error: unknown) => { ctx.logger.warn('dsh-superagent: %s', String(error)) }
       const store = opened = this.store = new Store(join(machine.stateDir, 'orchestrator.sqlite'), report)
+      const masterId = this.masterId = store.get(KV.runtime.masterId) ?? `orchestrator-${key(machine.stateDir)}`
+      store.set(KV.runtime.masterId, masterId)
       const governance = this.governance = new GovernanceRuntime({
-        store, stateDir: machine.stateDir, onError: report,
+        store, stateDir: machine.stateDir, onError: report, masterId, context: ctx, persistence: ctx.sessionPersistence,
         onRulingQueued: item => { this.officeServer?.broadcast({ type: 'ruling.queued', data: item }) },
         onSpineAppended: (ref, draft) => {
           this.officeServer?.broadcast({ type: 'spine', data: { seq: ref.seq, id: ref.id, type: draft.type, stream: draft.stream } })
@@ -163,8 +164,6 @@ export class Runtime extends Service implements SourceHost {
         ? environmentOf({ deployment: setup.deployment, sources: this.sources, settings: store.settings() }) : undefined
       const feishu = () => setup.configured() && !!setup.deployment.feishu
       const prompts = this.prompts = new Prompts(store, () => machine.promptMaxChars.get(), deployed, feishu)
-      const masterId = this.masterId = store.get(KV.runtime.masterId) ?? `orchestrator-${key(machine.stateDir)}`
-      store.set(KV.runtime.masterId, masterId)
       const commands = this.commands = new Commands(() => setup.deployment, setup.commandEnvironment, this.lifetime)
       const board = this.board
       const effects = this.effects = new Effects(store, board)
@@ -184,15 +183,29 @@ export class Runtime extends Service implements SourceHost {
         lifetime: this.lifetime,
         closing: () => this.closing(), environment,
         tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent),
-        secretaryMemorySection: () => governance.secretaryMemoryCache || this.secretaryMemoryBlock,
-        refreshSecretaryMemory: async query => {
-          const block = await refreshSecretaryMemoryBlock(governance, query, true)
-          governance.secretaryMemoryCache = block
-          this.secretaryMemoryBlock = block
+        secretaryMemorySection: () => governance.epochInjector.residentSection() || governance.secretaryMemoryCache || this.secretaryMemoryBlock,
+        prepareSecretaryTurnRecall: async query => {
+          const delta = await governance.epochInjector.prepareTurnDelta(query)
+          return delta.text
         },
+        onMasterCompactionEnded: async () => {
+          const res = await governance.epochInjector.onCompactionEnded({
+            openTickets: store.tickets.open().map(t => ({
+              id: t.id, title: t.title, stage: t.assignments.at(-1)?.state ?? 'open',
+              ...(t.execution?.workspace ? { workspace: t.execution.workspace } : {}),
+            })),
+            pendingRulings: governance.rulings.list('pending').map(r => ({ id: r.id, question: r.question, kind: r.kind })),
+            workspaces: governance.workspaces.list().map(w => ({ id: w.id, baseBranch: w.baseBranch })),
+          })
+          governance.secretaryMemoryCache = res.residentText
+          this.secretaryMemoryBlock = res.residentText
+          void governance.dreamer.onCompactionEnded(masterId).catch(report)
+          return res.anchorText
+        },
+        onMasterSessionIdle: () => { void governance.dreamer.onSessionIdle(masterId).catch(report) },
         onMasterTurnIdleReply: (text, expectedBossFeedId) => {
           const feed = store.get(KV.governance.feed) ?? []
-          const last = feed.at(-1)
+          const last = [...feed].reverse().find(f => f.kind !== 'memory_receipt')
           if (!last || last.role !== 'boss' || last.id !== expectedBossFeedId) return
           const clipped = text.length > 240 ? `${text.slice(0, 237)}…` : text
           const id = `say-fallback-${randomUUID().slice(0, 10)}`
@@ -216,7 +229,7 @@ export class Runtime extends Service implements SourceHost {
             const boss = feed[i]!
             if (boss.role !== 'boss' || boss.kind !== 'boss_message' || !boss.triggerId) continue
             const replied = feed.some((s, j) => {
-              if (s.role !== 'secretary') return false
+              if (s.role !== 'secretary' || s.kind === 'memory_receipt') return false
               if (s.triggerId) return s.triggerId === boss.triggerId
               return j > i && (turnBossIdx < 0 || i <= turnBossIdx)
             })

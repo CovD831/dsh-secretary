@@ -11,9 +11,9 @@ import {
 } from '../judgement/index.ts'
 import { KV } from '../kv.ts'
 import {
-  assembleMemoryPrompt, computeMemoryBelievabilityMetrics, listMemoryPages, proposeTicketMemoryPatches,
+  assembleMemoryPrompt, callerFromPolicy, computeMemoryBelievabilityMetrics, listMemoryPages, proposeTicketMemoryPatches,
   readMemoryPage, tickM6AttentionLifecycle, writeUserDirectMemory,
-  type FactPage, type MemoryBelievabilityMetrics, type MemoryEntry, type PendingPatchProposal,
+  type DreamStatusSummary, type FactPage, type MemoryBelievabilityMetrics, type MemoryEntry, type PendingPatchProposal,
   type UserDirectMemoryInput, type UserDirectMemoryResult, type WriteResult,
 } from '../memory/index.ts'
 import {
@@ -37,6 +37,7 @@ export interface MemoryStudioView {
   readonly entries: MemoryStudioEntryRow[]
   readonly pendingPatches: PendingPatchProposal[]
   readonly metrics: MemoryBelievabilityMetrics
+  readonly dreamStatus?: DreamStatusSummary
 }
 
 export interface RoutedProblemCluster {
@@ -144,7 +145,7 @@ export async function refreshSecretaryMemoryBlock(gov: GovernanceRuntime, query:
     }
     if (!existsSync(gov.memoryDir)) return ''
     const res = await assembleMemoryPrompt({
-      dir: gov.memoryDir, caller: { role: 'secretary', maxClearance: 'private' },
+      dir: gov.memoryDir, caller: callerFromPolicy(gov.memoryPolicy), residentOverflowPolicy: 'degrade',
       query, ftsIndex: gov.ftsIndex, now: gov.nowDate(),
     })
     const hasAny = res.receipt.resident.includedIds.length > 0
@@ -157,24 +158,18 @@ export async function refreshSecretaryMemoryBlock(gov: GovernanceRuntime, query:
 
 /** 工单收尾时从真实报告摘取逐字引证，生成待老板确认的 M3/M4 记忆补丁提案（不自动越权直写）。 */
 export async function collectPostTicketPatches(gov: GovernanceRuntime, ticket: Ticket): Promise<PendingPatchProposal[]> {
-  const summary = latestReport(ticket)?.summary?.trim()
-  const wsId = ticket.execution?.workspace
+  const summary = latestReport(ticket)?.summary?.trim(), wsId = ticket.execution?.workspace
   if (!summary || summary.length < 12) return []
   const events = await readM0Events({ db: gov.storeRef.db, memoryDir: gov.memoryDir })
   const ticketEvent = [...events].reverse().find(e => e.stream === `ticket:${ticket.id}`)
-  if (!ticketEvent) return []
   const firstSentence = summary.split(/[\n。！？!?]/)[0]?.trim() ?? summary.slice(0, 80)
-  if (!firstSentence) return []
+  if (!ticketEvent || !firstSentence) return []
   const out = await gov.memoryRepoLock.run(() => proposeTicketMemoryPatches({
     memoryDir: gov.memoryDir, ticketId: ticket.id, apply: false, author: 'consolidator',
     candidates: [{
-      layer: wsId ? 'm3' : 'm1',
-      ...(wsId ? { workspaceKey: wsId } : { slug: 'tickets' }),
-      scope: wsId ? `workspace:${wsId}` : 'global',
-      statement: `工单「${ticket.title}」经验：${firstSentence}`,
-      sourceRef: { seq: ticketEvent.seq, id: ticketEvent.id },
-      verbatimQuote: firstSentence,
-      evidenceText: summary,
+      layer: wsId ? 'm3' : 'm1', ...(wsId ? { workspaceKey: wsId } : { slug: 'tickets' }),
+      scope: wsId ? `workspace:${wsId}` : 'global', statement: `工单「${ticket.title}」经验：${firstSentence}`,
+      sourceRef: { seq: ticketEvent.seq, id: ticketEvent.id }, verbatimQuote: firstSentence, evidenceText: summary,
       topicKey: ticket.execution?.dispatchKey ?? `ticket-${ticket.id.slice(0, 8)}`,
     }],
   }))
@@ -202,13 +197,17 @@ export async function readMemoryStudioView(gov: GovernanceRuntime): Promise<Memo
   }
   const metrics = await gov.memoryRepoLock.run(() => computeMemoryBelievabilityMetrics(gov.memoryDir, spineEvents, gov.nowDate()))
   const pendingPatches = gov.storeRef.get(KV.governance.memoryPatches) ?? []
-  return { entries, pendingPatches, metrics }
+  return { entries, pendingPatches, metrics, dreamStatus: gov.dreamer.status() }
 }
 
 /** 老板在记忆表格直改或新增偏好/避坑（写 M0 `memory.user_direct` + 重建 FTS5 派生索引）。 */
 export async function saveDirectMemory(gov: GovernanceRuntime, input: UserDirectMemoryInput): Promise<UserDirectMemoryResult> {
   const res = await writeUserDirectMemory(gov.memory, gov.appender, { ...input, now: gov.nowDate() })
-  if (res.writeResult.kind === 'accepted') await gov.ftsIndex.rebuild().catch(() => undefined)
+  if (res.writeResult.kind === 'accepted') {
+    await gov.ftsIndex.rebuild().catch(() => undefined)
+    gov.epochInjector.invalidateEntry(res.writeResult.entry.id)
+    for (const sid of res.tombstonedIds) gov.epochInjector.invalidateEntry(sid)
+  }
   return res
 }
 
@@ -222,16 +221,15 @@ export async function decideMemoryPatch(
   if (index < 0 || index >= list.length) return { ok: false, reason: 'patch-not-found' }
   const target = list[index]!
   if (decision === 'dismiss') {
-    list.splice(index, 1)
-    gov.storeRef.set(KV.governance.memoryPatches, list)
+    list.splice(index, 1); gov.storeRef.set(KV.governance.memoryPatches, list)
     return { ok: true }
   }
   const curPage = await gov.memoryRepoLock.run(() => readMemoryPage(gov.memoryDir, target.targetRelPath))
   const writeResult = await gov.memory.propose({ ...target, expectedRevision: curPage?.revision ?? target.expectedRevision })
   if (writeResult.kind === 'accepted') {
-    list.splice(index, 1)
-    gov.storeRef.set(KV.governance.memoryPatches, list)
+    list.splice(index, 1); gov.storeRef.set(KV.governance.memoryPatches, list)
     await gov.ftsIndex.rebuild().catch(() => undefined)
+    gov.epochInjector.invalidateEntry(writeResult.entry.id)
     return { ok: true, writeResult }
   }
   return { ok: false, writeResult, reason: writeResult.reason }
@@ -308,8 +306,7 @@ export async function openRsiSealedHoldout(
     split, candidateId: input.candidateId, actorId: 'boss', now: () => gov.nowDate(),
   })
   gov.storeRef.atomic(() => {
-    gov.appender.append(result.auditEvent)
-    gov.storeRef.set(KV.governance.openedHoldouts, { ...opened, [input.candidateId]: gov.nowDate().toISOString() })
+    gov.appender.append(result.auditEvent); gov.storeRef.set(KV.governance.openedHoldouts, { ...opened, [input.candidateId]: gov.nowDate().toISOString() })
   })
   return { ok: true, result }
 }

@@ -131,7 +131,10 @@ it('transitions deposit stages in Deposits studio and writes direct m2/m3 memory
     ],
   }
   server.memoryStudio = {
-    entries: [],
+    entries: [{
+      relPath: 'm3/ws-1/notes.md', layer: 'm3', revision: 1,
+      entry: { id: 'mem-m3-row1', statement: 'ws-1 历史测试规则', scope: 'workspace:ws-1', sourceType: 'session', sourceRef: { seq: 5, id: 'ev-5' }, observedAt: '2026-11-26T00:00:00Z', validFrom: '2026-11-26T00:00:00Z', confidence: 'stated', author: 'secretary', taint: 'clean', clearance: 'workspace' },
+    }],
     pendingPatches: [{
       layer: 'm3', workspaceKey: 'ws-1', statement: '发布前先跑 pnpm check', scope: 'workspace:ws-1',
       sourceType: 'session', sourceRef: { seq: 8, id: 'ev-8' }, author: 'consolidator',
@@ -165,6 +168,12 @@ it('transitions deposit stages in Deposits studio and writes direct m2/m3 memory
 
   await click(zh['studio.mem.approvePatch'])
   expect(server.requests.find(r => r.path === 'memory/patches/0' && r.method === 'POST')?.body).toEqual({ decision: 'approve' })
+
+  await click(zh['studio.mem.tombstoneBtn'])
+  expect(server.requests.find(r => r.path === 'memory/entries/mem-m3-row1/tombstone' && r.method === 'POST')).toBeDefined()
+
+  await click(zh['studio.mem.dreamRunNow'])
+  expect(server.requests.find(r => r.path === 'memory/dream' && r.method === 'POST')).toBeDefined()
 })
 
 it('renders RSI workbench, triggers LOO ablation + F1 pixel proof preview, and saves approvalMode/breakers/workspaces settings', async () => {

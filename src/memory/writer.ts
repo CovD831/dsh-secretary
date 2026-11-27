@@ -5,75 +5,26 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { isoTime } from '../core/model.ts'
 import { GitRepoLock } from '../spine/git-sink.ts'
 import { redactDraft, redactValue } from '../spine/redact.ts'
 import type { SourceRef, SpineDraft, Taint as SpineTaint } from '../spine/types.ts'
 import { assertSafeMemoryPath, formatChangeLogLine, listMemoryPages, readMemoryPage, resolveMemoryRelPath, writeMemoryPage } from './codec.ts'
+import { buildMemoryEntry, hasSecretShape, isolatedGitEnv, makeWriteReject, validateMemoryProposal, validSourceRef } from './proposal-check.ts'
 import { assertResidentBudget, DEFAULT_MEMORY_BUDGETS, isEntryActiveAt } from './recall.ts'
 import {
   ResidentBudgetExceededError, type AttentionItem, type AttentionProposal, type AttentionTransition,
-  type FactLayer, type FactPage, type LedgerPage, type MemoryEntry, type MemoryProposal, type MemoryScope,
+  type DemoteResidentInput, type DemoteResidentResult, type FactLayer, type FactPage, type LedgerPage,
+  type MemoryEntry, type MemoryPageTarget, type MemoryProposal, type MemoryScope,
   type TombstoneInput, type TombstoneResult, type WriteRejectReason, type WriteResult,
 } from './types.ts'
 
 const execFileAsync = promisify(execFile)
-const ISOLATED_ENV_KEYS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY',
-  'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT',
-  'GIT_AUTHOR_NAME', 'GIT_COMMITTER_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_EMAIL'] as const
 const normText = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, ' ')
-const validRef = (ref?: SourceRef): ref is SourceRef => Boolean(ref && Number.isSafeInteger(ref.seq) && ref.seq > 0 && typeof ref.id === 'string' && ref.id.trim())
-const hasSecret = (vals: readonly (string | undefined)[]): boolean => vals.some(v => v !== undefined && redactValue(v).redacted.length > 0)
-const reject = (reason: WriteRejectReason, detail: string, extra?: { attentionItem?: AttentionItem; commit?: string }): WriteResult =>
-  ({ kind: 'rejected', reason, detail, ...extra })
-
-function isolatedGitEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', GIT_CONFIG_NOSYSTEM: '1' }
-  for (const key of ISOLATED_ENV_KEYS) delete env[key]
-  env.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null'
-  return env
-}
-
-function validateProposal(p: MemoryProposal): { error: WriteResult } | { targetRel: string } {
-  if ('id' in p && (p as { id?: unknown }).id !== undefined) return { error: reject('caller-id-forbidden', '记忆 id 必须由宿主分配') }
-  if ('changeLog' in p && (p as { changeLog?: unknown }).changeLog !== undefined) return { error: reject('invalid-input', '禁止篡改 Change Log') }
-  if (hasSecret([p.statement, p.verbatimQuote, p.evidenceText, p.invalidationReason, p.topicKey, p.scope, p.author, p.sourceRef?.id,
-    ...(p.workspacesSeen ?? []), ...(p.triggerKeys?.primary ?? []), ...(p.triggerKeys?.secondary ?? [])])) {
-    return { error: reject('secret-detected', '检测到秘密或凭据形状，已触发拒写门') }
-  }
-  if (!validRef(p.sourceRef)) return { error: reject('missing-source-ref', '缺少有效的 M0 sourceRef (seq > 0 且 id 非空)') }
-  if (!p.statement.trim() || !p.author.trim()) return { error: reject('invalid-input', 'statement 与 author 不能为空') }
-  if (p.expectedRevision !== undefined && (!Number.isSafeInteger(p.expectedRevision) || p.expectedRevision < 0)) return { error: reject('invalid-input', 'expectedRevision 必须为非负整数') }
-  if (p.importance !== undefined && (!Number.isFinite(p.importance) || p.importance < 0 || p.importance > 10)) return { error: reject('invalid-input', 'importance 须在 0–10 间') }
-  if ([p.observedAt, p.validFrom, p.lastAccessedAt].some(ts => ts !== undefined && !Number.isFinite(Date.parse(ts)))) return { error: reject('invalid-input', '时间戳格式非法') }
-  const validScope = p.scope === 'global' || /^workspace:[^\s]+$/.test(p.scope) || /^person:[^\s]+$/.test(p.scope)
-  if (!validScope || (p.layer === 'm4' && p.scope !== 'global') || (p.layer === 'm2' && p.scope.startsWith('workspace:'))) return { error: reject('scope-mismatch', `层级 ${p.layer} 不允许作用域 "${p.scope}"`) }
-  if (p.layer === 'm2' && (p.taint === 'external_untrusted' || p.sourceType === 'external_doc')) return { error: reject('untrusted-m2-forbidden', '禁止不可信外部来源 (external_untrusted/external_doc) 写入 M2 偏好层') }
-  if (p.layer === 'm3' && (!p.scope.startsWith('workspace:') || (p.workspaceKey && p.workspaceKey !== p.scope.slice(10)))) return { error: reject('scope-mismatch', `M3 作用域与 workspaceKey 不匹配: "${p.scope}"`) }
-  if (p.layer === 'm4') {
-    const uniq = new Set((p.workspacesSeen ?? []).map(s => s.trim()).filter(Boolean))
-    if ((uniq.size < 2 || (p.seenCount ?? 0) < 2) && p.sourceType !== 'user_ruling') {
-      return { error: reject('m4-threshold-not-met', '写 M4 须满足 workspacesSeen 去重 >= 2 且 seenCount >= 2，或显式 user_ruling') }
-    }
-  }
-  try { return { targetRel: resolveMemoryRelPath({ layer: p.layer, slug: p.slug, workspaceKey: p.layer === 'm3' ? (p.workspaceKey ?? p.scope.slice(10)) : undefined }) } }
-  catch (err) { return { error: reject('invalid-input', err instanceof Error ? err.message : String(err)) } }
-}
-
-function buildEntry(p: MemoryProposal, id: string, nowIso: string, isInf: boolean, isUserAuth: boolean, supersedes?: string): MemoryEntry {
-  return {
-    id, statement: p.statement.trim(), scope: p.scope, sourceType: p.sourceType, sourceRef: p.sourceRef,
-    observedAt: isoTime(p.observedAt ?? nowIso), validFrom: isoTime(p.validFrom ?? nowIso),
-    confidence: isInf ? 'inferred' : (p.confidence ?? (isUserAuth ? 'stated' : 'corroborated')), author: p.author.trim(),
-    taint: p.taint ?? (p.sourceType === 'external_doc' ? 'external_untrusted' : 'clean'),
-    clearance: p.clearance ?? (p.layer === 'm2' ? 'private' : p.layer === 'm3' ? 'workspace' : 'public'),
-    ...(supersedes ? { supersedes } : {}), ...(p.topicKey?.trim() ? { topicKey: p.topicKey.trim() } : {}),
-    ...(p.verbatimQuote ? { verbatimQuote: p.verbatimQuote.trim() } : {}), ...(p.workspacesSeen ? { workspacesSeen: [...p.workspacesSeen] } : {}),
-    ...(p.seenCount !== undefined ? { seenCount: p.seenCount } : {}), ...(p.importance !== undefined ? { importance: p.importance } : {}),
-    ...(p.lastAccessedAt ? { lastAccessedAt: isoTime(p.lastAccessedAt) } : {}), ...(p.triggerKeys ? { triggerKeys: p.triggerKeys } : {}),
-    ...(p.m2Kind ? { m2Kind: p.m2Kind } : {}), ...(p.resident !== undefined ? { resident: p.resident } : {}),
-  }
-}
+const validRef = validSourceRef
+const hasSecret = hasSecretShape
+const reject = makeWriteReject
+const validateProposal = validateMemoryProposal
+const buildEntry = buildMemoryEntry
 
 export interface MemoryWriterOptions {
   dir: string; lock: GitRepoLock; resolveRef?: (ref: SourceRef) => boolean | Promise<boolean>
@@ -246,25 +197,47 @@ export class MemoryWriter {
     })
   }
 
-  tombstone(input: TombstoneInput): Promise<TombstoneResult> {
+  private async mutateEntry(
+    target: Omit<MemoryPageTarget, 'layer'> & { layer: FactLayer },
+    entryId: string,
+    sourceRef: SourceRef,
+    author: string,
+    reason: string,
+    action: 'tombstone' | 'demote-resident',
+    apply: (entry: MemoryEntry, nowIso: string) => void,
+  ): Promise<TombstoneResult> {
     return this.lock.run(async () => {
-      const fail = (reason: string, msg: string): never => {
-        this.emitAudit('memory.rejected', `memory:${input.target.layer}`, input.author ?? 'unknown', { layer: input.target.layer, entryId: input.entryId, reason, detail: msg }, input.sourceRef)
+      const fail = (r: string, msg: string): never => {
+        this.emitAudit('memory.rejected', `memory:${target.layer}`, author ?? 'unknown', { layer: target.layer, entryId, reason: r, detail: msg }, sourceRef)
         throw new Error(msg)
       }
-      if (!validRef(input.sourceRef) || hasSecret([input.reason, input.author, input.sourceRef.id])) fail('secret-or-missing-ref', 'tombstone 缺少合法 sourceRef 或含秘密形状')
-      if (this.opts.resolveRef && !(await this.opts.resolveRef(input.sourceRef))) fail('unknown-source-ref', 'tombstone sourceRef 未在事件脊确认')
-      const relPath = resolveMemoryRelPath(input.target), page = await readMemoryPage(this.dir, relPath)
+      if (!validRef(sourceRef) || hasSecret([reason, author, sourceRef.id])) fail('secret-or-missing-ref', `${action} 缺少合法 sourceRef 或含秘密形状`)
+      if (this.opts.resolveRef && !(await this.opts.resolveRef(sourceRef))) fail('unknown-source-ref', `${action} sourceRef 未在事件脊确认`)
+      const relPath = resolveMemoryRelPath(target), page = await readMemoryPage(this.dir, relPath)
       if (!page || page.layer === 'm6') fail('page-not-found', `未找到记忆页: ${relPath}`)
-      const factPage = page as FactPage, entry = factPage.entries.find(e => e.id === input.entryId)
-      if (!entry) fail('entry-not-found', `记忆页 ${relPath} 不存在条目 ${input.entryId}`)
+      const factPage = page as FactPage, entry = factPage.entries.find(e => e.id === entryId)
+      if (!entry) fail('entry-not-found', `记忆页 ${relPath} 不存在条目 ${entryId}`)
       const targetEntry = entry!, nowIso = this.now().toISOString()
-      targetEntry.validTo = nowIso; targetEntry.invalidatedBy = `tombstone:${input.sourceRef.id}`; targetEntry.invalidationReason = input.reason.trim()
+      apply(targetEntry, nowIso)
       factPage.revision += 1; factPage.updatedAt = nowIso
-      factPage.changeLog.push(formatChangeLogLine(nowIso, 'tombstone', targetEntry.id, input.sourceRef, input.author, targetEntry.invalidationReason))
-      const commit = await this.writeAndCommit([[relPath, factPage]], `memory(${factPage.layer}): tombstone ${targetEntry.id}`)
-      this.emitAudit('memory.tombstoned', `memory:${factPage.layer}`, input.author, { layer: factPage.layer, entryId: targetEntry.id, pagePath: relPath, reason: targetEntry.invalidationReason }, input.sourceRef)
+      factPage.changeLog.push(formatChangeLogLine(nowIso, action, targetEntry.id, sourceRef, author, reason.trim()))
+      const commit = await this.writeAndCommit([[relPath, factPage]], `memory(${factPage.layer}): ${action} ${targetEntry.id}`)
+      const auditType = action === 'tombstone' ? 'memory.tombstoned' : 'memory.accepted'
+      this.emitAudit(auditType, `memory:${factPage.layer}`, author, { layer: factPage.layer, entryId: targetEntry.id, pagePath: relPath, reason: reason.trim(), action }, sourceRef)
       return { entry: targetEntry, pagePath: relPath, commit }
+    })
+  }
+
+  tombstone(input: TombstoneInput): Promise<TombstoneResult> {
+    return this.mutateEntry(input.target, input.entryId, input.sourceRef, input.author, input.reason, 'tombstone', (entry, nowIso) => {
+      entry.validTo = nowIso; entry.invalidatedBy = `tombstone:${input.sourceRef.id}`; entry.invalidationReason = input.reason.trim()
+    })
+  }
+
+  demoteResident(input: DemoteResidentInput): Promise<DemoteResidentResult> {
+    return this.mutateEntry(input.target, input.entryId, input.sourceRef, input.author, input.reason, 'demote-resident', entry => {
+      entry.resident = false
+      if (input.triggerKeys?.primary.length && !entry.triggerKeys) entry.triggerKeys = input.triggerKeys
     })
   }
 

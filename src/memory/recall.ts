@@ -1,7 +1,7 @@
 /** 双通道记忆召回、作用域/密级隔离、M6 防打扰过滤与分仓预算账本组装器。 */
 import { existsSync } from 'node:fs'
 import { listMemoryPages } from './codec.ts'
-import { tokenizeForSearch } from './fts-index.ts'
+import { tokenizeForSearch } from './text-search.ts'
 import {
   DEFAULT_MEMORY_BUDGETS,
   ResidentBudgetExceededError,
@@ -189,19 +189,35 @@ export async function assembleMemoryPrompt(options: AssemblePromptOptions): Prom
     }
   }
 
+  const includeResident = options.includeResident !== false
+  const overflowPolicy = options.residentOverflowPolicy ?? 'throw'
+  const isExcluded = (e: MemoryEntry) => Boolean(options.excludeEntryIds?.has(e.id) || options.excludeEntryIds?.has(`${e.id}@${e.validFrom}`))
   const residentPool = eligibleFacts
     .filter(e => e.resident === true)
-    .sort((a, b) => SOURCE_AUTHORITY[b.sourceType] - SOURCE_AUTHORITY[a.sourceType] || a.id.localeCompare(b.id))
-  const residentLines = residentPool.map(formatEntryLine)
-  const residentChars = assertResidentBudget(residentPool, budgets.residentMaxChars)
-  const residentReceipt: BucketReceipt = {
-    budgetChars: budgets.residentMaxChars,
-    usedChars: residentChars,
-    includedIds: residentPool.map(e => e.id),
-    droppedIds: [],
+    .sort((a, b) => SOURCE_AUTHORITY[b.sourceType] - SOURCE_AUTHORITY[a.sourceType] || (b.importance ?? 5) - (a.importance ?? 5) || a.id.localeCompare(b.id))
+  let keptResidents: MemoryEntry[] = []
+  let residentLines: string[] = []
+  let residentReceipt: BucketReceipt = { budgetChars: budgets.residentMaxChars, usedChars: 0, includedIds: [], droppedIds: [] }
+  let residentOverflowIds: readonly string[] = []
+  if (includeResident) {
+    if (overflowPolicy === 'degrade') {
+      const resBucket = allocateBucket(residentPool, formatEntryLine, budgets.residentMaxChars)
+      keptResidents = resBucket.kept
+      residentLines = resBucket.lines
+      residentReceipt = resBucket.receipt
+      residentOverflowIds = resBucket.receipt.droppedIds
+    } else {
+      keptResidents = residentPool
+      residentLines = residentPool.map(formatEntryLine)
+      const residentChars = assertResidentBudget(residentPool, budgets.residentMaxChars)
+      residentReceipt = { budgetChars: budgets.residentMaxChars, usedChars: residentChars, includedIds: residentPool.map(e => e.id), droppedIds: [] }
+    }
   }
 
-  const claimed = new Set(residentReceipt.includedIds)
+  const claimed = new Set(keptResidents.map(e => e.id))
+  for (const e of eligibleFacts) {
+    if (options.excludeEntryIds ? isExcluded(e) : (!includeResident && e.resident === true)) claimed.add(e.id)
+  }
   const scanText = [options.query, ...(options.recentMessages ?? [])].filter(Boolean).join('\n')
   const triggeredPool = eligibleFacts
     .filter(e => !claimed.has(e.id) && e.triggerKeys && matchesTriggerKeys(scanText, e.triggerKeys))
@@ -268,8 +284,9 @@ export async function assembleMemoryPrompt(options: AssemblePromptOptions): Prom
       triggered: triggeredBucket.receipt,
       retrieved: retrievedBucket.receipt,
       attention: attentionBucket.receipt,
+      ...(residentOverflowIds.length > 0 ? { residentOverflowIds } : {}),
     },
-    residentEntries: residentPool,
+    residentEntries: keptResidents,
     triggeredEntries: triggeredBucket.kept,
     retrievedEntries: retrievedBucket.kept,
     attentionItems: attentionBucket.kept,

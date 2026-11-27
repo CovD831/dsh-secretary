@@ -101,6 +101,7 @@ function FeedItem({ entry }: { entry: SecretaryFeedEntry }) {
   return <li className="dt-event">
     <div className="dt-row-meta">
       <Tag tone={entry.role === 'boss' ? 'neutral' : 'info'}>{t(`sec.role.${entry.role}`)}</Tag>
+      {entry.kind === 'memory_receipt' && <Tag tone="outline">{t('sec.kind.memory_receipt')}</Tag>}
       {entry.kind === 'say' && <Tag tone="outline">{EXPR_ICON[expr]} {t(`sec.expr.${expr}`)}</Tag>}
       {entry.ticketId && <span className="dt-mono">{entry.ticketId}</span>}
       {entry.sourceRef && <span className="dt-mono">#{entry.sourceRef.seq}</span>}

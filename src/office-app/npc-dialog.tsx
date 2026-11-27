@@ -106,11 +106,17 @@ export function NpcDialog({
   const mood = resolveSecretaryMood(activeRuling, gateBlocked, hasWorkingTickets, feed, secretaryThinking)
   const portraitSrc = avatar?.portraitUrls[mood] ?? `/assets/f1-proof/portrait_${mood}.png`
   const latestSayIdx = useMemo(() => {
-    for (let i = feed.length - 1; i >= 0; i--) if (feed[i]!.role === 'secretary') return i
+    for (let i = feed.length - 1; i >= 0; i--) if (feed[i]!.role === 'secretary' && feed[i]!.kind !== 'memory_receipt') return i
     return -1
   }, [feed])
   const latestSay = latestSayIdx >= 0 ? feed[latestSayIdx] : undefined
-  const repliedBossText = latestSayIdx > 0 && feed[latestSayIdx - 1]?.role === 'boss' ? feed[latestSayIdx - 1]!.text : null
+  const repliedBossText = useMemo(() => {
+    for (let i = latestSayIdx - 1; i >= 0; i--) {
+      if (feed[i]!.kind === 'memory_receipt') continue
+      return feed[i]!.role === 'boss' ? feed[i]!.text : null
+    }
+    return null
+  }, [feed, latestSayIdx])
   const latestHandover = useMemo(() => [...feed].reverse().find(e => e.kind === 'handover' && e.handover), [feed])
   const effectiveOption = selectedOption ?? activeRuling?.options.find(o => o.recommended)?.id ?? activeRuling?.options[0]?.id
   const isNegativeApprovalOption = activeRuling?.kind !== 'secretary_ask'

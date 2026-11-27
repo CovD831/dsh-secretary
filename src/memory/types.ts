@@ -230,6 +230,7 @@ export interface PromptBudgetReceipt {
   triggered: BucketReceipt
   retrieved: BucketReceipt
   attention: BucketReceipt
+  residentOverflowIds?: readonly string[]
 }
 
 export interface AssemblePromptOptions {
@@ -242,6 +243,24 @@ export interface AssemblePromptOptions {
   halfLifeDays?: number
   rrfK?: number
   ftsIndex?: MemoryFtsIndex
+  includeResident?: boolean
+  excludeEntryIds?: ReadonlySet<string>
+  residentOverflowPolicy?: 'throw' | 'degrade'
+}
+
+export interface DemoteResidentInput {
+  target: Omit<MemoryPageTarget, 'layer'> & { layer: FactLayer }
+  entryId: string
+  reason: string
+  sourceRef: SourceRef
+  author: string
+  triggerKeys?: TriggerKeys
+}
+
+export interface DemoteResidentResult {
+  entry: MemoryEntry
+  pagePath: string
+  commit?: string
 }
 
 export interface AssembledMemoryPrompt {

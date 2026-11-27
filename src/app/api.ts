@@ -17,8 +17,8 @@ import type {
 import type { DecideRulingInput, RulingItem, RulingStatus } from './ruling-queue.ts'
 import type { SecretaryFeedEntry } from './tools/secretary-core.ts'
 import type {
-  AdoptDepositDraftResult, DepositDraftEntry, HoldoutEvaluationResult, LeaveOneOutResult, MemoryStudioView,
-  PatrolRunReport, RsiWorkbenchView, TransitionDepositStageResult, UserDirectMemoryResult, WriteResult,
+  AdoptDepositDraftResult, DepositDraftEntry, DreamRunReport, HoldoutEvaluationResult, LeaveOneOutResult, MemoryEntry,
+  MemoryStudioView, PatrolRunReport, RsiWorkbenchView, SourceRef, TransitionDepositStageResult, UserDirectMemoryResult, WriteResult,
 } from './http-governance.ts'
 import type { DepositFixtureCase } from '../authoring/index.ts'
 import type { DiscoveredDepositRecord, Stage } from '../judgement/index.ts'
@@ -87,6 +87,11 @@ export interface Api {
     response: UserDirectMemoryResult
   }
   'POST memory/patches/:index': { body: { decision: 'approve' | 'dismiss' }; response: { ok: boolean; writeResult?: WriteResult; reason?: string } }
+  'POST memory/entries/:id/tombstone': {
+    body: { layer: 'm1' | 'm2' | 'm3' | 'm4'; slug?: string; workspaceKey?: string; reason: string }
+    response: { ok: boolean; entry?: MemoryEntry; pagePath?: string; commit?: string; sourceRef?: SourceRef; reason?: string }
+  }
+  'POST memory/dream': { body: { force?: boolean; sessionId?: string }; response: DreamRunReport }
   'GET rsi/workbench': { query?: { mode?: 'production' | 'e2e' }; response: RsiWorkbenchView }
   'POST rsi/ablation': {
     body: { cases: { id: string; family: string; input: unknown; expectedOutcome: 'defect' | 'clean' | 'unknown'; point?: string }[] }

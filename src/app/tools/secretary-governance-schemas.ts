@@ -8,6 +8,8 @@ export const SourceRefSchema = z.object({ seq: z.number(), id: z.string() }).str
 export const RecallSchema = z.object({
   query: z.string().default(''),
   recent_messages: z.array(z.string()).optional(),
+  include_transcript: z.boolean().optional(),
+  include_m0: z.boolean().optional(),
   budgets: z.object({
     residentMaxChars: z.number().optional(),
     triggeredMaxChars: z.number().optional(),
@@ -16,7 +18,7 @@ export const RecallSchema = z.object({
   }).strict().optional(),
 }).strict()
 
-// 移除 user_ruling/user_direct、override_tombstone 与自由 author，防止提示注入伪造老板权威。
+// 移除 user_ruling/user_direct、evidence_text、override_tombstone 与自由 author，防止提示注入伪造老板权威或自证原文。
 export const ProposeSchema = z.object({
   mode: z.enum(['propose', 'tombstone']).default('propose'),
   layer: z.enum(['m1', 'm2', 'm3']),
@@ -27,13 +29,12 @@ export const ProposeSchema = z.object({
   statement: z.string().optional(),
   scope: z.string().optional().describe('global / person:<id> / workspace:<key>'),
   source_type: z.enum(['session', 'inference']).optional(),
-  topic_key: z.string().optional(),
+  topic_key: z.string().optional().describe('主题去重键；同 topic_key 会覆盖旧条目，从同一句话拆多条独立事实时务必使用不同 topic_key'),
   clearance: z.enum(['public', 'workspace', 'private']).optional(),
   m2_kind: z.enum(['preference', 'veto', 'shared_event', 'internal_moniker', 'correction_repair']).optional(),
   resident: z.boolean().optional(),
   importance: z.number().optional(),
   verbatim_quote: z.string().optional(),
-  evidence_text: z.string().optional(),
   trigger_keys: z.object({
     primary: z.array(z.string()),
     secondary: z.array(z.string()).optional(),
