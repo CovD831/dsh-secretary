@@ -4,7 +4,7 @@ import type { TicketTranscriptView } from '../app/transcript-reader.ts'
 import type { SettingsView } from '../app/views/settings.ts'
 import type { TicketListView } from '../app/views/tickets.ts'
 import { DiegeticModal, OFFICE_THEME, officeCall } from './office-api.tsx'
-import { DIEGETIC_WALNUT_CARD, NINE_SLICE_SLOT, nineSliceButtonStyle } from './ui-skin.tsx'
+import { DIEGETIC_WALNUT_CARD, NINE_SLICE_SLOT, PIXEL_MONO_FONT, nineSliceButtonStyle } from './ui-skin.tsx'
 
 export type WorkerDrawerMode = 'doorplate' | 'worker' | null
 type TicketItem = TicketListView['items'][number]
@@ -23,9 +23,13 @@ export interface WorkerDrawerProps {
   readonly onClose: () => void
 }
 
+function matchesRoom(t: TicketItem, roomId: string, repo?: string): boolean {
+  if (roomId === 'default') return !t.workspace || t.workspace === 'default'
+  return t.workspace === roomId || (!t.workspace && Boolean(repo) && Boolean(t.directory?.startsWith(repo!)))
+}
+
 function countRoomTickets(pool: readonly TicketItem[], roomId: string, repo?: string): number {
-  if (roomId === 'default') return pool.filter(t => !t.workspace || t.workspace === 'default').length
-  return pool.filter(t => t.workspace === roomId || (!t.workspace && Boolean(repo) && Boolean(t.directory?.startsWith(repo!)))).length
+  return pool.filter(t => matchesRoom(t, roomId, repo)).length
 }
 
 const KIND_COLOR: Record<string, string> = {
@@ -41,13 +45,28 @@ export function WorkerDrawer({
   mode, workspaceId, settings, tickets, allTickets, selectedTicketId, streamTick,
   onSelectWorkspace, onSelectTicket, onChanged, onClose,
 }: WorkerDrawerProps) {
+  const [endedTickets, setEndedTickets] = useState<TicketItem[]>([])
   const [transcript, setTranscript] = useState<TicketTranscriptView | null>(null)
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const logRef = useRef<HTMLDivElement | null>(null)
 
-  const activeTicket = tickets.find(t => t.id === selectedTicketId) ?? tickets[0] ?? null
+  const roomRepo = workspaceId === 'default'
+    ? settings?.environment.root
+    : settings?.blocks.workspaces.value?.find(w => w.id === workspaceId)?.repository
+
+  useEffect(() => {
+    if (mode !== 'worker') { setEndedTickets([]); return }
+    let cancelled = false
+    void officeCall('GET tickets', { query: { state: 'ended', limit: 20 } })
+      .then(res => { if (!cancelled) setEndedTickets(res.items.filter(t => matchesRoom(t, workspaceId, roomRepo))) })
+      .catch(() => { if (!cancelled) setEndedTickets([]) })
+    return () => { cancelled = true }
+  }, [mode, workspaceId, roomRepo, streamTick])
+
+  const mergedTickets = [...tickets, ...endedTickets.filter(e => !tickets.some(t => t.id === e.id))]
+  const activeTicket = mergedTickets.find(t => t.id === selectedTicketId) ?? mergedTickets[0] ?? null
   const activeId = activeTicket?.id ?? null
   const stageText = activeTicket ? ('action' in activeTicket ? `${activeTicket.stage}/${activeTicket.action}` : activeTicket.stage) : ''
 
@@ -82,11 +101,11 @@ export function WorkerDrawer({
             const current = room.id === workspaceId
             const roomCount = countRoomTickets(allTickets ?? tickets, room.id, room.repository)
             return (
-              <button key={room.id} type="button" onClick={() => { onSelectWorkspace(room.id); onClose() }} style={{
+              <button key={room.id} type="button" className="dsh-px-btn" onClick={() => { onSelectWorkspace(room.id); onClose() }} style={{
                 ...DIEGETIC_WALNUT_CARD,
                 textAlign: 'left', padding: '10px 12px', cursor: 'pointer', width: '100%',
                 backgroundColor: current ? OFFICE_THEME.woodMid : OFFICE_THEME.bgDeep,
-                outline: current ? `2px solid ${OFFICE_THEME.borderGold}` : 'none',
+                borderColor: current ? OFFICE_THEME.borderGold : OFFICE_THEME.borderWood,
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
               }}>
                 <div>
@@ -134,12 +153,12 @@ export function WorkerDrawer({
       onClose={onClose}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {tickets.length > 1 && (
+        {mergedTickets.length > 1 && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {tickets.map(t => (
-              <button key={t.id} type="button" onClick={() => onSelectTicket(t.id)} style={{
+            {mergedTickets.map(t => (
+              <button key={t.id} type="button" className="dsh-px-btn" onClick={() => onSelectTicket(t.id)} style={{
                 ...nineSliceButtonStyle(t.id === activeTicket?.id), padding: '4px 10px', fontSize: 12,
-              }}>{t.title || t.id}</button>
+              }}>{t.title || t.id}{(t.subagents?.length ?? 0) > 0 ? ` (+${t.subagents!.length})` : ''}</button>
             ))}
           </div>
         )}
@@ -162,22 +181,35 @@ export function WorkerDrawer({
               </p>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button type="button" disabled={busy || !activeTicket.actions.retry} onClick={() => void runAction('retry')} style={{
-                ...nineSliceButtonStyle(false, busy || !activeTicket.actions.retry),
-                background: OFFICE_THEME.stuck, color: OFFICE_THEME.inkDark, padding: '4px 12px', fontWeight: 700, fontSize: 12,
-              }}>重试</button>
-              <button type="button" disabled={busy || !activeTicket.actions.stop} onClick={() => void runAction('stop')} style={{
-                ...nineSliceButtonStyle(false, busy || !activeTicket.actions.stop),
-                background: OFFICE_THEME.needsDecision, color: OFFICE_THEME.inkCream, padding: '4px 12px', fontWeight: 700, fontSize: 12,
-              }}>停止</button>
+              <button type="button" className="dsh-px-btn" disabled={busy || !activeTicket.actions.retry} onClick={() => void runAction('retry')} style={nineSliceButtonStyle(false, busy || !activeTicket.actions.retry, 'warn')}>重试</button>
+              <button type="button" className="dsh-px-btn" disabled={busy || !activeTicket.actions.stop} onClick={() => void runAction('stop')} style={nineSliceButtonStyle(false, busy || !activeTicket.actions.stop, 'danger')}>停止</button>
             </div>
           </div>
         ) : <p style={{ opacity: 0.75 }}>当前工作区暂无工单。</p>}
 
+        {activeTicket && (activeTicket.subagents?.length ?? 0) > 0 && (
+          <div aria-label="活跃嵌套子代理" style={{ ...DIEGETIC_WALNUT_CARD, padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: OFFICE_THEME.borderGold }}>活跃嵌套子代理 ({activeTicket.subagents!.length})</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {activeTicket.subagents!.map(sub => (
+                <span key={sub.id} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 3, fontSize: 11,
+                  fontFamily: PIXEL_MONO_FONT, background: OFFICE_THEME.bgDeep, border: `1px solid ${OFFICE_THEME.borderWood}`, color: OFFICE_THEME.inkCream,
+                }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', display: 'inline-block', background: sub.status === 'running' ? OFFICE_THEME.working : OFFICE_THEME.parchmentSoft }} />
+                  <strong style={{ color: OFFICE_THEME.borderGold }}>L{sub.depth}</strong>
+                  <span>{sub.id.length > 16 ? `…${sub.id.slice(-12)}` : sub.id}</span>
+                  {sub.preset && <span style={{ opacity: 0.72 }}>· {sub.preset}</span>}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div ref={logRef} aria-label="现场终端卷宗" style={{
           ...NINE_SLICE_SLOT, color: OFFICE_THEME.inkCream,
           padding: 12, height: 320, overflowY: 'auto', fontSize: 12, lineHeight: 1.5,
-          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+          fontFamily: PIXEL_MONO_FONT,
         }}>
           {loading && !transcript && <div>读取现场终端卷宗中…</div>}
           {error && <div style={{ color: OFFICE_THEME.needsDecision }}>{error}</div>}

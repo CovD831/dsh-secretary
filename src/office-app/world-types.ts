@@ -84,12 +84,13 @@ export interface WorldWingPlan {
   readonly cells?: readonly GridPoint[]
   readonly shapeKind?: PrefabShapeKind
   readonly comboKind?: FurnitureComboKind
+  readonly vacant?: boolean
 }
 
 export interface OfficeCamera {
   readonly panX: number
   readonly panY: number
-  readonly zoom: 1 | 2
+  readonly zoom: number
 }
 
 export interface PartitionWallSegment {
@@ -101,10 +102,12 @@ export interface PartitionWallSegment {
 
 export interface OfficeWorldPlan {
   readonly seed: number
+  readonly floorIndex?: number
   readonly buildingCols: number
   readonly buildingRows: number
   readonly baseOrigin: { readonly x: number; readonly y: number }
   readonly mainEntrance: GridPoint
+  readonly streetSpawnPoints?: readonly GridPoint[]
   readonly corridorRect: { readonly u: number; readonly v: number; readonly w: number; readonly h: number }
   readonly lobby: WorldWingPlan
   readonly wings: WorldWingPlan[]
@@ -128,6 +131,8 @@ export interface WorldSceneState {
   readonly world: OfficeWorldPlan
   readonly actors: OfficeActor[]
   readonly screenStates: Record<string, StatusKind | 'off'>
+  readonly subagentCounts?: Record<string, number>
+  readonly roomOverflows?: Record<string, number>
   readonly activeWorkspaceId: string
   readonly gateIntercept?: { targetActorId: string; frame: number }
   readonly hoverTarget?: WorldPickResult | null

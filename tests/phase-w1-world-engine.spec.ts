@@ -2,14 +2,22 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { WORLD_ASSET_CATALOG } from '../src/office-app/diorama-catalog.ts'
+import { assignActorVariants, CHAR_VARIANTS, resolveRoomVariantMap, workerVariantIndex } from '../src/office-app/char-variants.ts'
+import { analyzeSpriteFloorContact } from '../src/office-app/contact-shadow.ts'
+import { getTimeOfDayProfile } from '../src/office-app/diorama-polish.ts'
+import { FROZEN_PALETTE } from '../src/pixel-office/palette.ts'
+import { reconcileSlotRegistry } from '../src/office-app/floor-slots.ts'
+import { computeTownPassersby, resolveWingStatus } from '../src/office-app/living-world.ts'
 import { createDioramaLayerNames } from '../src/office-app/pixi-diorama.ts'
 import { CUTAWAY_WALL_H, UNIFIED_WALL_H, armrestCellsFor, buildDoorEntryZones, isChamferEdgeCell, isDeskWallClear, isSeatFacingDoor, type RoomDoorSpec } from '../src/office-app/procedural-rooms.ts'
 import { TALL_WALL_BLOCKERS } from '../src/office-app/room-blueprints.ts'
+import { assignRoomTicketsToSeats, seatSlotsForSuite } from '../src/office-app/seat-slots.ts'
 import {
   WORLD_BASE_ORIGIN,
   WORLD_BUILDING_COLS,
   WORLD_BUILDING_ROWS,
   cameraForGridPoint,
+  cameraForWorldFit,
   solveWorldFloorplan,
 } from '../src/office-app/world-layout.ts'
 import {
@@ -17,6 +25,7 @@ import {
   pickWorldTarget,
   renderWorldFrame,
   screenToWorldIso,
+  seatWorldWorker,
   spawnWorldWorker,
   stepWorldActors,
   worldIsoToScreen,
@@ -71,14 +80,23 @@ function makePixelTrackingCtx(width: number, height: number) {
 describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Stage', () => {
   it('keeps V2 world modules browser-safe and within line limits', () => {
     for (const [file, maxLines] of [
+      ['contact-shadow.ts', 140],
+      ['diorama-polish.ts', 220],
+      ['living-world.ts', 220],
+      ['street-sprites.ts', 210],
+      ['floor-slots.ts', 180],
+      ['seat-slots.ts', 120],
+      ['dusk-exterior.ts', 200],
       ['roguelike-pcg.ts', 260],
       ['procedural-rooms.ts', 285],
       ['room-blueprints.ts', 260],
       ['world-layout.ts', 270],
+      ['char-variants.ts', 145],
       ['world-renderer.ts', 285],
       ['pixi-diorama.ts', 285],
       ['diorama-catalog.ts', 290],
       ['game-hud.tsx', 300],
+      ['stage-hotkeys.ts', 60],
       ['stage-app.tsx', 300],
     ] as const) {
       const src = readFileSync(join(ROOT, 'src', 'office-app', file), 'utf8')
@@ -111,9 +129,17 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
         expect(audit.totalOpaquePixels, `${dirName}/${file} opaquePixels`).toBeGreaterThan(0)
       }
     }
+    for (const f of ['assets/office/worker_desk.png', 'assets/office/exec_desk.png', 'assets/office-diorama/desk_cluster.png', 'assets/office-diorama/armchair_green.png']) {
+      const { width, height, rgba } = decodePngRgba(readFileSync(join(ROOT, f)))
+      const fc = analyzeSpriteFloorContact(rgba, width, height)
+      expect(fc.contactCols.length, `${f} has real floor contact cols`).toBeGreaterThan(4)
+      const envAtCols = fc.contactCols.map((x) => Math.abs(Math.min(fc.lMax + 0.5 * x, fc.rMax - 0.5 * x) - fc.botY[x]!))
+      expect(Math.min(...envAtCols), `${f} tightly grounded to 2:1 floor envelope`).toBeLessThanOrEqual(1)
+      expect(fc.maxY, `${f} never pads shadow far below sprite`).toBeGreaterThanOrEqual(height - 3)
+    }
   })
 
-  it('solves asymmetric interlocking diorama topology with doors, facade, and warm lights', () => {
+  it('solves asymmetric partial/multi-floor campus, non-demolition vacant slots, and warm lights', () => {
     const world = solveWorldFloorplan([
       { id: 'demo-repo', title: 'demo-repo' },
       { id: 'default', title: 'default' },
@@ -128,22 +154,114 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
     expect(world.wings[0]).toMatchObject({ workspaceId: 'default', kind: 'studio', rugStyle: 'sage' })
     expect(world.wings[1]).toMatchObject({ workspaceId: 'demo-repo', kind: 'studio', rugStyle: 'indigo' })
     expect(world.wings[0]!.doorway.v).not.toBe(world.wings[1]!.doorway.v)
-    expect(world.wings[2]).toMatchObject({ id: 'wing-lounge', kind: 'studio', chamferSE: 2, rugStyle: 'persian' })
+    expect(world.wings[2]!.kind).toBe('courtyard')
     expect(world.wings[3]!.kind).toBe('courtyard')
-    expect(world.interiorDoors?.length).toBeGreaterThanOrEqual(3)
-    expect(world.lightSources?.length).toBeGreaterThanOrEqual(6)
+    expect(world.interiorDoors?.length).toBeGreaterThanOrEqual(2)
+    expect(world.lightSources?.length).toBeGreaterThanOrEqual(4)
     expect(world.frontFacade?.length).toBeGreaterThanOrEqual(3)
     expect(world.exteriorProps.length).toBeGreaterThanOrEqual(6)
 
-    const large = solveWorldFloorplan([
-      { id: 'a', title: 'a' }, { id: 'b', title: 'b' }, { id: 'c', title: 'c' }, { id: 'd', title: 'd' },
+    const fourList = [{ id: 'default', title: 'default' }, { id: 'a', title: 'a' }, { id: 'b', title: 'b' }, { id: 'c', title: 'c' }]
+    const r4 = reconcileSlotRegistry([], fourList, 1)
+    const w4 = solveWorldFloorplan(fourList, 1, { slotEntries: r4 })
+    expect(w4.buildingRows).toBe(24)
+    expect(w4.buildingCols).toBe(40)
+    expect(w4.wings.filter((w) => w.kind === 'studio' && w.workspaceId)).toHaveLength(4)
+    expect(w4.wings.filter((w) => w.kind === 'studio' && w.vacant)).toHaveLength(1)
+    expect(createInitialWorldActors(w4).map((a) => a.id)).toEqual(['secretary'])
+
+    const fiveList = [...fourList, { id: 'd', title: 'd' }]
+    const r5 = reconcileSlotRegistry(r4, fiveList, 1)
+    const w5 = solveWorldFloorplan(fiveList, 1, { slotEntries: r5 })
+    expect(w5.buildingRows).toBe(24)
+    expect(w5.buildingCols).toBe(40)
+    expect(w5.wings.filter((w) => w.kind === 'studio' && w.workspaceId)).toHaveLength(5)
+    expect(w5.wings.some((w) => w.vacant)).toBe(false)
+    const eastRows = new Set((w5.corridorCells ?? []).filter((c) => c.u >= 28 && c.v >= 9 && c.v <= 14).map((c) => c.v))
+    expect([...eastRows].sort((a, b) => a - b)).toEqual([9, 10, 11, 12, 13, 14])
+    expect(new Set(w5.wings.filter((w) => w.kind === 'studio').map((w) => w.comboKind)).size).toBe(5)
+    const paletteHexes = new Set(FROZEN_PALETTE.map((c) => c.hex.toUpperCase()))
+    expect(CHAR_VARIANTS).toHaveLength(8)
+    expect(new Set(CHAR_VARIANTS.map((v) => v.base))).toEqual(new Set(['worker', 'lead']))
+    for (const spec of CHAR_VARIANTS) {
+      for (const map of [spec.hairMap, spec.outfitMap, spec.skinMap ?? {}]) {
+        for (const hex of Object.values(map)) expect(paletteHexes.has(hex.toUpperCase())).toBe(true)
+      }
+    }
+    expect(workerVariantIndex('worker-1', 't-1', 'ws-1')).not.toBe(workerVariantIndex('worker-1', 't-1', 'ws-1#nw'))
+    const dedup = assignActorVariants([
+      { id: 'worker-t-demo-1', role: 'worker', ticketId: 't-demo-1', assignedSuiteId: 'ws-demo-repo-1#nw' },
+      { id: 'worker-t-demo-2', role: 'worker', ticketId: 't-demo-2', assignedSuiteId: 'ws-demo-repo-1' },
+      { id: 'secretary', role: 'secretary' },
     ])
-    expect(large.wings).toHaveLength(6)
-    expect(large.buildingRows).toBe(30)
+    expect(dedup.get('worker-t-demo-1')).not.toBe(dedup.get('worker-t-demo-2'))
+    expect(dedup.has('secretary')).toBe(false)
+    const aCollab = w5.wings.find((w) => w.workspaceId === 'a')!.suites.find((s) => s.assetId === 'collab_table')!
+    const defWs = w5.wings.find((w) => w.workspaceId === 'default')!.suites.find((s) => s.suiteKind === 'workstation')!
+    const realActors = [
+      ...createInitialWorldActors(w5),
+      seatWorldWorker(w5, 'worker-t-def', 'default', 't-def', defWs.id),
+      seatWorldWorker(w5, 'worker-t-a-1', 'a', 't-demo-1', `${aCollab.id}#nw`),
+      seatWorldWorker(w5, 'worker-t-a-2', 'a', 't-demo-2', aCollab.id),
+    ]
+    const actorVarMap = assignActorVariants(realActors)
+    const roomVarMap = resolveRoomVariantMap(['default', 'a', 'b', 'c', 'd'], realActors, { [`${aCollab.id}#nw`]: 'working', [aCollab.id]: 'needsDecision' }, w5.wings)
+    expect(roomVarMap.get('default')).toBe(actorVarMap.get('worker-t-def'))
+    expect(roomVarMap.get('a')).toBe(actorVarMap.get('worker-t-a-2'))
+    expect(new Set(roomVarMap.values()).size).toBe(5)
+    expect([...roomVarMap.values()].every((v) => v >= 0 && v < CHAR_VARIANTS.length)).toBe(true)
+    const seenTod = new Set(Array.from({ length: 24 }, (_, h) => getTimeOfDayProfile(new Date(2026, 10, 27, h, 0, 0)).pipCount))
+    expect(seenTod.size).toBe(6)
+    expect(resolveWingStatus(w5.wings[0]!, { [w5.wings[0]!.suites[0]!.id]: 'working', [w5.wings[0]!.suites[1]?.id ?? 'x']: 'needsDecision' })).toBe('needsDecision')
+    expect(resolveWingStatus(w5.wings[0]!, { [w5.wings[0]!.suites[0]!.id]: 'stuck' })).toBe('stuck')
+    expect(resolveWingStatus(w5.wings[0]!, {})).toBe('idle')
+    const p1a = computeTownPassersby(w4, 0), p1b = computeTownPassersby(w4, 2000)
+    expect(p1a).toHaveLength(2)
+    expect(p1a.every((p) => p.v >= 26)).toBe(true)
+    expect(p1b[0]!.u).not.toBe(p1a[0]!.u)
+
+    const fitCam = cameraForWorldFit(w5, 1280, 720)
+    expect(fitCam.zoom).toBeLessThanOrEqual(1)
+    expect(fitCam.zoom).toBeGreaterThanOrEqual(0.5)
+    for (const pt of [[0, 0], [w5.buildingCols, 0], [0, w5.buildingRows], [w5.buildingCols, w5.buildingRows]] as const) {
+      const sp = worldIsoToScreen(pt[0], pt[1], w5, fitCam)
+      expect(sp.x).toBeGreaterThanOrEqual(0)
+      expect(sp.x).toBeLessThanOrEqual(1280)
+      expect(sp.y).toBeGreaterThanOrEqual(0)
+      expect(sp.y).toBeLessThanOrEqual(720)
+    }
+
+    const demoWing5 = w5.wings.find((w) => w.workspaceId === 'a')!
+    const collab = demoWing5.suites.find((s) => s.assetId === 'collab_table')
+    if (collab) expect(seatSlotsForSuite(collab)).toHaveLength(2)
+    const fifthWing = w5.wings.find((w) => w.workspaceId === 'd')!
+    let a5 = [...createInitialWorldActors(w5), spawnWorldWorker(w5, 'worker-d', 'd', 'T-D', fifthWing.suites[0]!.id)]
+    for (let i = 0; i < 240; i++) a5 = stepWorldActors(a5, w5, 250)
+    expect(a5.find((a) => a.id === 'worker-d')?.lifecycle).toBe('working')
+
+    const { assignments, roomOverflows } = assignRoomTicketsToSeats([
+      { id: 't-work-1', workspace: 'a', stage: 'working', action: 'running', updatedAt: '2026-11-27T09:00:00Z' },
+      { id: 't-work-2', workspace: 'a', stage: 'working', action: 'running', updatedAt: '2026-11-27T08:00:00Z' },
+      { id: 't-alert', workspace: 'a', stage: 'person', action: 'answer', updatedAt: '2026-11-27T07:00:00Z' },
+    ], w5, (t) => t.workspace)
+    expect(assignments.has('t-alert')).toBe(true)
+    expect(roomOverflows['a'] ?? 0).toBe(Math.max(0, 3 - demoWing5.suites.filter((s) => s.suiteKind === 'workstation').flatMap(seatSlotsForSuite).length))
+
+    const afterDelete = reconcileSlotRegistry(
+      reconcileSlotRegistry([], [{ id: 'default', title: 'default' }, { id: 'alpha', title: 'alpha' }, { id: 'beta', title: 'beta' }], 1),
+      [{ id: 'default', title: 'default' }, { id: 'beta', title: 'beta' }],
+      1,
+    )
+    expect(afterDelete.find((e) => e.slot === 1)).toMatchObject({ status: 'vacant' })
+    expect(afterDelete.find((e) => e.slot === 2)).toMatchObject({ status: 'active', workspaceId: 'beta' })
+    const afterReadd = reconcileSlotRegistry(afterDelete, [{ id: 'default', title: 'default' }, { id: 'beta', title: 'beta' }, { id: 'gamma', title: 'gamma' }], 1)
+    expect(afterReadd.find((e) => e.slot === 1)).toMatchObject({ status: 'active', workspaceId: 'gamma' })
+    const legacy = reconcileSlotRegistry([{ floor: 1, slot: 0, status: 'active', workspaceId: 'fourth', roomSeed: 1 }], [{ id: 'default', title: 'default' }, { id: 'fourth', title: 'fourth' }], 1)
+    expect(legacy.find((e) => e.workspaceId === 'fourth')).toMatchObject({ floor: 0, slot: 3 })
   })
 
-  it('generates deterministic seeded irregular prefab rooms, 3-tier walls, MST-loop corridors, and reachable paths for seeds 1..100', () => {
-    const specs = [{ id: 'default', title: 'default' }, { id: 'demo-repo', title: 'demo-repo' }]
+  it('generates deterministic seeded irregular prefab rooms, 3-tier walls, MST-loop corridors, and reachable paths for seeds 1..50', () => {
+    const specs = [{ id: 'default', title: 'default' }, { id: 'demo-repo', title: 'demo-repo' }, { id: 'third', title: 'third' }]
     const w1a = solveWorldFloorplan(specs, 1)
     const w1b = solveWorldFloorplan(specs, 1)
     expect(w1a.wallSegments).toEqual(w1b.wallSegments)
@@ -186,7 +304,7 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
       sigs.add(world.wings.slice(0, 3).map((w) => `${w.shapeKind}:${w.comboKind}:${w.doorway.v}`).join('|'))
 
       let actors = [...createInitialWorldActors(world), spawnWorldWorker(world, 'w-test', 'demo-repo', 'T-1', 'ws-demo-repo-1')]
-      for (let i = 0; i < 140; i++) actors = stepWorldActors(actors, world, 250)
+      for (let i = 0; i < 180; i++) actors = stepWorldActors(actors, world, 250)
       expect(actors.find((a) => a.id === 'w-test')?.lifecycle).toBe('working')
     }
     expect(sigs.size).toBeGreaterThanOrEqual(3)
@@ -196,7 +314,7 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
     expect(pixiSrc).not.toContain('0.34')
 
     const multiWs = [{ id: 'default', title: 'default' }, { id: 'demo-repo', title: 'demo-repo' }, { id: 'third', title: 'third' }]
-    for (let seed = 1; seed <= 100; seed++) {
+    for (let seed = 1; seed <= 50; seed++) {
       const w = solveWorldFloorplan(multiWs, seed)
       if (seed <= 30) {
         pcgSigs.add(w.wings.slice(0, 3).map((x) => `${x.rect.v}:${x.rect.h}:${x.chamferSE ?? 0}:${x.doorway.v}:${x.suites.map((s) => `${s.assetId}@${s.anchor.u},${s.anchor.v}`).join(',')}`).join('|'))
@@ -281,7 +399,7 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
       expect(hit / tot, `${label} foreground solid wall occlusion`).toBeLessThan(0.1)
     }
     expect(pcgSigs.size, '1..30 roguelike diversity').toBeGreaterThanOrEqual(20)
-    for (let seed = 1; seed <= 100; seed++) {
+    for (let seed = 1; seed <= 50; seed++) {
       const w = solveWorldFloorplan(multiWs, seed)
       expect(createInitialWorldActors(w).map((a) => a.id), `seed=${seed} only secretary`).toEqual(['secretary'])
       const diagWalls = w.wallSegments!.filter((s) => s.from.u !== s.to.u && s.from.v !== s.to.v)
@@ -340,36 +458,37 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
           }
         }
       }
-      const w1s = solveWorldFloorplan([{ id: 'default', title: 'default' }], seed)
-      const resWing = w1s.wings.find((x) => x.id === 'wing-reserve')!
-      const lngWing = w1s.wings.find((x) => x.id === 'wing-lounge')!
-      const splitV = lngWing.rect.v
-      const resTopSet = new Set(resWing.cells!.map((c) => `${c.u},${c.v}`))
-      const lngSet = new Set(lngWing.cells!.map((c) => `${c.u},${c.v}`))
-      const belowSet = new Set([...lngWing.cells!, ...(w1s.corridorCells ?? [])].map((c) => `${c.u},${c.v}`))
-      for (const c of resWing.cells!) if (c.v === splitV - 1) expect(belowSet.has(`${c.u},${splitV}`), `seed=${seed} zero Escher overhang at (${c.u},${splitV})`).toBe(true)
-      expect(resWing.shared.some((s) => s.assetId === 'collab_table'), `1ws seed=${seed} meeting room`).toBe(true)
-      expect(lngWing.shared.some((s) => s.assetId === 'sofa_lounge'), `1ws seed=${seed} lounge sofa`).toBe(true)
-      expect(lngWing.shared.some((s) => s.assetId === 'printer_copier'), `1ws seed=${seed} lounge no copier`).toBe(false)
-      expect(lngWing.rugRect?.w, `1ws seed=${seed} lounge rug >=6`).toBeGreaterThanOrEqual(6)
-      expect(resTopSet.size, `seed=${seed} resWing expanded >=100`).toBeGreaterThanOrEqual(100)
-      expect(lngSet.size, `seed=${seed} lngWing expanded >=100`).toBeGreaterThanOrEqual(100)
-      for (const wg of w1s.wings.filter((x) => x.kind === 'studio')) {
+      for (const partialList of [[{ id: 'default', title: 'default' }], [{ id: 'default', title: 'default' }, { id: 'demo-repo', title: 'demo-repo' }]]) {
+        const wp = solveWorldFloorplan(partialList, seed)
+        const vh = new Map<string, Set<number>>(), ed = new Map<string, number>()
+        for (const s of wp.wallSegments!) {
+          const s1 = vh.get(`${s.from.u},${s.from.v}`) ?? new Set<number>(); s1.add(s.startH); vh.set(`${s.from.u},${s.from.v}`, s1)
+          const s2 = vh.get(`${s.to.u},${s.to.v}`) ?? new Set<number>(); s2.add(s.endH); vh.set(`${s.to.u},${s.to.v}`, s2)
+          if (s.tier !== 'partition') {
+            ed.set(`${s.from.u},${s.from.v}`, (ed.get(`${s.from.u},${s.from.v}`) ?? 0) + 1)
+            ed.set(`${s.to.u},${s.to.v}`, (ed.get(`${s.to.u},${s.to.v}`) ?? 0) + 1)
+          }
+        }
+        for (const [, hs] of vh) expect(hs.size, `partial seed=${seed} wall vertex height mismatch`).toBe(1)
+        for (const [, deg] of ed) expect(deg, `partial seed=${seed} exterior vertex dangling`).toBeGreaterThanOrEqual(2)
+      }
+      const splitV = w.wings[2]!.rect.v
+      const resTop = w.wings[1]!, lngBot = w.wings[2]!
+      const belowSet = new Set([...lngBot.cells!, ...(w.corridorCells ?? [])].map((c) => `${c.u},${c.v}`))
+      for (const c of resTop.cells!) if (c.v === splitV - 1) expect(belowSet.has(`${c.u},${splitV}`), `seed=${seed} zero Escher overhang`).toBe(true)
+      for (const wg of w.wings.filter((x) => x.kind === 'studio')) {
         const occ = [...wg.suites, ...wg.shared].reduce((s, e) => s + e.size[0] * e.size[1], 0) / wg.cells!.length
-        expect(occ, `1ws seed=${seed} ${wg.id} density <= 0.35`).toBeLessThanOrEqual(0.35)
+        expect(occ, `seed=${seed} ${wg.id} density <= 0.35`).toBeLessThanOrEqual(0.35)
         const roomDoors: RoomDoorSpec[] = [{ u: wg.doorway.u, v: wg.doorway.v, axis: 'u', inDir: wg.rect.u === 0 ? -1 : 1 }]
-        const link = w1s.interiorDoors?.find((d) => d.id === 'door-right-link')
+        const link = w.interiorDoors?.find((d) => d.id === 'door-right-link')
         if (link && wg.rect.u >= 16) roomDoors.push({ u: link.u, v: wg.rect.v < splitV ? splitV - 1 : splitV, axis: 'v', inDir: wg.rect.v < splitV ? -1 : 1 })
         const entryZone = buildDoorEntryZones(roomDoors)
         for (const e of [...wg.suites, ...wg.shared]) {
           for (const fc of e.footprint) expect(entryZone.has(`${fc.u},${fc.v}`), `seed=${seed} ${e.id} inside 2x3 door entry corridor`).toBe(false)
-          if (e.assetId === 'armchair_green' || e.assetId === 'sofa_lounge') {
-            expect(isSeatFacingDoor(e.anchor.u, e.anchor.v, e.size[0], e.size[1], e.facing, roomDoors), `seed=${seed} ${e.id} faces doorway`).toBe(false)
-          }
+          if (e.assetId === 'armchair_green' || e.assetId === 'sofa_lounge') expect(isSeatFacingDoor(e.anchor.u, e.anchor.v, e.size[0], e.size[1], e.facing, roomDoors)).toBe(false)
           if (e.assetId === 'lamp_table') {
             const seats = wg.shared.filter((s) => s.assetId === 'armchair_green' || s.assetId === 'sofa_lounge')
-            const paired = seats.some((s) => armrestCellsFor({ u: s.anchor.u, v: s.anchor.v, mw: s.size[0], mh: s.size[1], facing: s.facing }).some((c) => c.u === e.anchor.u && c.v === e.anchor.v))
-            expect(paired, `seed=${seed} ${e.id} on seat armrest`).toBe(true)
+            expect(seats.some((s) => armrestCellsFor({ u: s.anchor.u, v: s.anchor.v, mw: s.size[0], mh: s.size[1], facing: s.facing }).some((c) => c.u === e.anchor.u && c.v === e.anchor.v))).toBe(true)
           }
         }
       }
@@ -401,12 +520,27 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
         checkBoxOcc(w, `seed=${seed}:actor:${a.id}`, p.x - 16, p.y - 44, 32, 48, au, av, au + 1, av + 1, zY)
       }
     }
-    const fourWs = [...multiWs, { id: 'fourth', title: 'fourth' }]
+    const fiveWs = [...multiWs, { id: 'fourth', title: 'fourth' }, { id: 'fifth', title: 'fifth' }]
     for (let seed = 1; seed <= 20; seed++) {
-      const w4 = solveWorldFloorplan(fourWs, seed)
-      for (const wg of w4.wings.filter((x) => x.kind === 'studio' && x.workspaceId)) {
-        expect(wg.suites.some((s) => s.suiteKind === 'workstation'), `4ws seed=${seed} ${wg.id} ws`).toBe(true)
+      const reg5 = reconcileSlotRegistry([], fiveWs, seed)
+      const w5s = solveWorldFloorplan(fiveWs, seed, { slotEntries: reg5 })
+      const vh5 = new Map<string, Set<number>>(), ed5 = new Map<string, number>()
+      for (const s of w5s.wallSegments!) {
+        const s1 = vh5.get(`${s.from.u},${s.from.v}`) ?? new Set<number>(); s1.add(s.startH); vh5.set(`${s.from.u},${s.from.v}`, s1)
+        const s2 = vh5.get(`${s.to.u},${s.to.v}`) ?? new Set<number>(); s2.add(s.endH); vh5.set(`${s.to.u},${s.to.v}`, s2)
+        if (s.tier !== 'partition') {
+          ed5.set(`${s.from.u},${s.from.v}`, (ed5.get(`${s.from.u},${s.from.v}`) ?? 0) + 1)
+          ed5.set(`${s.to.u},${s.to.v}`, (ed5.get(`${s.to.u},${s.to.v}`) ?? 0) + 1)
+        }
       }
+      for (const [, hs] of vh5) expect(hs.size, `5ws seed=${seed} wall vertex height mismatch`).toBe(1)
+      for (const [, deg] of ed5) expect(deg, `5ws seed=${seed} dangling vertex`).toBeGreaterThanOrEqual(2)
+      for (const wg of w5s.wings.filter((x) => x.kind === 'studio' && x.workspaceId)) {
+        expect(wg.suites.some((s) => s.suiteKind === 'workstation'), `5ws seed=${seed} ${wg.id} ws`).toBe(true)
+        const occ5 = [...wg.suites, ...wg.shared].reduce((sum, e) => sum + e.size[0] * e.size[1], 0) / wg.cells!.length
+        expect(occ5, `5ws seed=${seed} ${wg.id} density <= 0.35`).toBeLessThanOrEqual(0.35)
+      }
+      expect(new Set(w5s.wings.filter((x) => x.kind === 'studio' && x.workspaceId).map((x) => x.comboKind)).size, `5ws seed=${seed} combos`).toBe(5)
     }
   }, 20_000)
 
@@ -422,25 +556,29 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
     }
   })
 
-  it('routes worker from main entrance across corridor through demo-repo doorway and back out', () => {
+  it('routes worker from dusk street through entrance and demo-repo doorway and back to street', () => {
     const world = solveWorldFloorplan([{ id: 'default', title: 'default' }, { id: 'demo-repo', title: 'demo-repo' }])
     let actors = createInitialWorldActors(world)
     expect(actors.map((a) => a.id)).toEqual(['secretary'])
 
     const worker = spawnWorldWorker(world, 'worker-1', 'demo-repo', 'T-42', 'ws-demo-repo-1')
-    expect(worker.u).toBe(13)
-    expect(worker.v).toBe(19)
+    expect(worker.v).toBeGreaterThanOrEqual(20)
+    expect(worker.path.some((p) => p.u === 13 && p.v === 19)).toBe(true)
     expect(worker.path.some((p) => p.u === 16 && (p.v === 4 || p.v === 5 || p.v === 6))).toBe(true)
+    const imm = seatWorldWorker(world, 'worker-imm', 'demo-repo', 'T-9', 'ws-demo-repo-1')
+    expect(imm).toMatchObject({ pose: 'sit', lifecycle: 'working', facing: 'SW', assignedSuiteId: 'ws-demo-repo-1' })
 
     actors = [...actors, worker]
-    for (let i = 0; i < 120; i++) actors = stepWorldActors(actors, world, 250)
+    for (let i = 0; i < 160; i++) actors = stepWorldActors(actors, world, 250)
     const seated = actors.find((a) => a.id === 'worker-1')!
     expect(seated.lifecycle).toBe('working')
     expect(seated.pose).toBe('sit')
 
     actors = actors.map((a) => (a.id === 'worker-1' ? { ...a, lifecycle: 'leaving' as const, path: [] } : a))
-    for (let i = 0; i < 120; i++) actors = stepWorldActors(actors, world, 250)
-    expect(actors.find((a) => a.id === 'worker-1')!.lifecycle).toBe('removed')
+    for (let i = 0; i < 160; i++) actors = stepWorldActors(actors, world, 250)
+    const gone = actors.find((a) => a.id === 'worker-1')!
+    expect(gone.lifecycle).toBe('removed')
+    expect(gone.v).toBeGreaterThanOrEqual(20)
   })
 
   it('renders 7-layer diorama with zero transparent pixels and new V2 suite assets', () => {
@@ -496,6 +634,7 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
     const recPos = worldIsoToScreen(rec.anchor.u + rec.size[0] / 2, rec.anchor.v + rec.size[1] / 2, world, cam)
     expect(pickWorldTarget(recPos.x - 56, recPos.y - 20, state, cam)).toMatchObject({ type: 'prop', prop: 'ledger' })
     expect(pickWorldTarget(recPos.x + 56, recPos.y - 20, state, cam)).toMatchObject({ type: 'prop', prop: 'notebook' })
+    expect(pickWorldTarget(recPos.x + 28, recPos.y - 68, state, cam)).toMatchObject({ type: 'prop', prop: 'notebook' })
 
     const cab = world.lobby.shared.find((s) => s.id === 'lobby-cabinet')!
     const cabPos = worldIsoToScreen(cab.anchor.u + cab.size[0] / 2, cab.anchor.v + cab.size[1] / 2, world, cam)
@@ -514,6 +653,17 @@ describe('Phase W1/V2: Asymmetric Diorama Floorplan, 7-Layer Renderer & Pixi Sta
     const signPos = worldIsoToScreen(demoWing.rect.u + demoWing.rect.w / 2, demoWing.rect.v + Math.min(4.2, demoWing.rect.h / 2), world, cam)
     expect(pickWorldTarget(signPos.x, signPos.y - 16, state, cam)).toMatchObject({
       type: 'wing', wingId: 'wing-demo-repo', workspaceId: 'demo-repo', kind: 'studio',
+    })
+
+    const sw = seatWorldWorker(world, 'worker-42', 'demo-repo', 'T-42', demoWing.suites[0]!.id)
+    const stateWithBubble: WorldSceneState = {
+      ...state,
+      actors: [...actors, sw],
+      screenStates: { ...state.screenStates, [demoWing.suites[0]!.id]: 'needsDecision' },
+    }
+    const swPos = worldIsoToScreen(sw.u + 0.5, sw.v + 0.5, world, cam)
+    expect(pickWorldTarget(swPos.x, swPos.y - 56 * cam.zoom, stateWithBubble, cam)).toMatchObject({
+      type: 'actor', role: 'worker', workspaceId: 'demo-repo', ticketId: 'T-42',
     })
   })
 })

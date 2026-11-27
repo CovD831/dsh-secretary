@@ -107,7 +107,7 @@ export function PropNotebook({ open, onClose, onChanged }: { open: boolean; onCl
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', fontSize: 11 }}>
                 <label><input type="checkbox" checked={resident} onChange={e => setResident(e.target.checked)} /> 常驻 resident</label>
                 <label><input type="checkbox" checked={overrideTombstone} onChange={e => setOverrideTombstone(e.target.checked)} /> 覆写墓碑</label>
-                <button type="submit" disabled={busy || !statement.trim()} style={{ ...btnStyle(true), marginLeft: 'auto' }}>落笔归档</button>
+                <button type="submit" className="dsh-px-btn" disabled={busy || !statement.trim()} style={{ ...nineSliceButtonStyle(false, busy || !statement.trim(), 'gold'), marginLeft: 'auto' }}>落笔归档</button>
               </div>
             </form>
             <div style={{ maxHeight: 240, overflowY: 'auto', display: 'grid', gap: 6 }}>
@@ -134,8 +134,8 @@ export function PropNotebook({ open, onClose, onChanged }: { open: boolean; onCl
                   {p.verbatimQuote && <blockquote style={{ margin: '0 0 4px', paddingLeft: 6, borderLeft: `2px solid ${OFFICE_THEME.woodDark}`, opacity: 0.9 }}>{p.verbatimQuote}</blockquote>}
                   <div style={{ fontWeight: 600, marginBottom: 6 }}>{p.statement}</div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <button type="button" disabled={busy} style={btnStyle(true)} onClick={() => { void decidePatch(idx, 'approve') }}>准入归档</button>
-                    <button type="button" disabled={busy} style={btnStyle(false)} onClick={() => { void decidePatch(idx, 'dismiss') }}>撕掉忽略</button>
+                    <button type="button" className="dsh-px-btn" disabled={busy} style={nineSliceButtonStyle(false, busy, 'approve')} onClick={() => { void decidePatch(idx, 'approve') }}>准入归档</button>
+                    <button type="button" className="dsh-px-btn" disabled={busy} style={btnStyle(false)} onClick={() => { void decidePatch(idx, 'dismiss') }}>撕掉忽略</button>
                   </div>
                 </div>
               ))}

@@ -108,26 +108,28 @@ export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClo
     } catch (err) { setNotice(err instanceof Error ? err.message : String(err)) } finally { setBusy(false) }
   }
 
+  const switchTab = (next: DrawerTab) => { setTab(next); setNotice('') }
+
   return (
     <DiegeticModal open={open} title="机要文件柜" subtitle="墙角 · 工作区、沙箱熔断与秘书形象管线" variant="walnut" width={920} onClose={onClose}>
       <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <button type="button" style={btnStyle(tab === 'workspaces')} onClick={() => setTab('workspaces')}>工作区档案</button>
-        <button type="button" style={btnStyle(tab === 'executor')} onClick={() => setTab('executor')}>沙箱审批与熔断锁</button>
-        <button type="button" style={btnStyle(tab === 'avatars')} onClick={() => setTab('avatars')}>秘书形象定制</button>
+        <button type="button" className="dsh-px-btn" style={btnStyle(tab === 'workspaces')} onClick={() => switchTab('workspaces')}>工作区档案</button>
+        <button type="button" className="dsh-px-btn" style={btnStyle(tab === 'executor')} onClick={() => switchTab('executor')}>沙箱审批与熔断锁</button>
+        <button type="button" className="dsh-px-btn" style={btnStyle(tab === 'avatars')} onClick={() => switchTab('avatars')}>秘书形象定制</button>
       </div>
       {notice && <p style={{ ...DIEGETIC_WALNUT_CARD, backgroundColor: '#3A2E28', margin: '0 0 10px', fontSize: 12 }}>{notice}</p>}
 
       {tab === 'workspaces' && (
         <form onSubmit={e => { void saveWorkspaces(e) }} style={{ display: 'grid', gap: 10 }}>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" style={btnStyle()} onClick={() => setWsList(prev => [...prev, { id: `ws-${prev.length + 1}`, repository: '/srv/repos/app', baseBranch: 'main', branchPrefix: 'agent/', isolation: 'I2' }])}>新增工作区</button>
-            <button type="submit" disabled={busy} style={btnStyle(true)}>保存工作区档案</button>
+            <button type="button" className="dsh-px-btn" style={btnStyle()} onClick={() => setWsList(prev => [...prev, { id: `ws-${prev.length + 1}`, repository: '/srv/repos/app', baseBranch: 'main', branchPrefix: 'agent/', isolation: 'I2' }])}>新增工作区</button>
+            <button type="submit" className="dsh-px-btn" disabled={busy} style={nineSliceButtonStyle(false, busy, 'gold')}>保存工作区档案</button>
           </div>
           {wsList.map((ws, idx) => (
             <div key={idx} style={{ ...boxStyle, display: 'grid', gap: 6 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <strong>#{idx + 1} {ws.id}</strong>
-                <button type="button" style={btnStyle()} onClick={() => setWsList(prev => prev.filter((_, i) => i !== idx))}>删除</button>
+                <button type="button" className="dsh-px-btn" style={nineSliceButtonStyle(false, false, 'danger')} onClick={() => setWsList(prev => prev.filter((_, i) => i !== idx))}>删除</button>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 1fr', gap: 6 }}>
                 <input aria-label={`工作区ID-${idx}`} style={inputStyle} value={ws.id} onChange={e => setWsList(p => p.map((x, i) => i === idx ? { ...x, id: e.target.value } : x))} placeholder="id" />
@@ -156,7 +158,7 @@ export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClo
         <form onSubmit={e => { void saveExecutor(e) }} style={{ ...boxStyle, display: 'grid', gap: 10 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span>全局执行器状态：<strong>{paused ? '已暂停' : '运行中'}</strong></span>
-            <button type="button" disabled={busy} style={btnStyle(paused)} onClick={() => { void togglePause() }}>{paused ? '恢复执行器' : '暂停执行器'}</button>
+            <button type="button" className="dsh-px-btn" disabled={busy} style={nineSliceButtonStyle(false, busy, paused ? 'approve' : 'danger')} onClick={() => { void togglePause() }}>{paused ? '恢复执行器' : '暂停执行器'}</button>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
             <label style={{ fontSize: 11 }}>审批模式
@@ -183,7 +185,7 @@ export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClo
               </div>
             </label>
           </div>
-          <div><button type="submit" disabled={busy} style={btnStyle(true)}>保存沙箱与熔断配置</button></div>
+          <div><button type="submit" className="dsh-px-btn" disabled={busy} style={nineSliceButtonStyle(false, busy, 'gold')}>保存沙箱与熔断配置</button></div>
         </form>
       )}
 
@@ -192,13 +194,24 @@ export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClo
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
             {avatars.items.map(pack => (
               <div key={pack.id} style={{ ...boxStyle, outline: avatars.activeId === pack.id ? `2px solid ${OFFICE_THEME.borderGold}` : 'none' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                  <strong>{pack.name}</strong>
-                  <span style={{ fontSize: 10 }}>
-                    {pack.provider === 'remote-ai' ? '远程生图' : pack.provider === 'local-remix' ? '本地色板重混' : '预置'} · {pack.quantized ? '46色已量化' : '未量化'}
-                  </span>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+                  <img
+                    src={pack.portraitUrls.neutral}
+                    alt={`${pack.name} 预览`}
+                    width={40}
+                    height={40}
+                    style={{ display: 'block', imageRendering: 'pixelated', border: `1px solid ${OFFICE_THEME.borderWood}`, flexShrink: 0 }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
+                      <strong>{pack.name}</strong>
+                      <span style={{ fontSize: 10 }}>
+                        {pack.provider === 'remote-ai' ? '远程生图' : pack.provider === 'local-remix' ? '本地色板重混' : '预置'} · {pack.quantized ? '46色已量化' : '未量化'}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11, opacity: 0.8 }}>outOfPalette: {pack.outOfPaletteCount}</div>
+                  </div>
                 </div>
-                <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 6 }}>outOfPalette: {pack.outOfPaletteCount}</div>
                 <button type="button" disabled={busy || avatars.activeId === pack.id} style={btnStyle(avatars.activeId === pack.id)} onClick={() => { void selectAvatar(pack.id) }}>
                   {avatars.activeId === pack.id ? '当前启用' : '启用此形象'}
                 </button>
@@ -212,7 +225,7 @@ export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClo
               <input aria-label="外观描述词" required style={inputStyle} placeholder="外观/服饰描述词 prompt" value={avPrompt} onChange={e => setAvPrompt(e.target.value)} />
               <input aria-label="随机种子" type="number" style={inputStyle} placeholder="seed (可选)" value={avSeed} onChange={e => setAvSeed(e.target.value)} />
             </div>
-            <div><button type="submit" disabled={busy} style={btnStyle(true)}>生成并量化入库</button></div>
+            <div><button type="submit" className="dsh-px-btn" disabled={busy} style={nineSliceButtonStyle(false, busy, 'gold')}>生成并量化入库</button></div>
           </form>
         </div>
       )}

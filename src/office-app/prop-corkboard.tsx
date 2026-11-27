@@ -20,7 +20,7 @@ const DEFAULT_HOLDOUT_CASES: ApiRequest<'POST rsi/holdout'>['body']['cases'] = [
 
 const pinCard: CSSProperties = { ...DIEGETIC_PARCHMENT_CARD, padding: 10 }
 const inputStyle: CSSProperties = { ...DIEGETIC_LIGHT_INPUT, fontSize: 11 }
-const btnStyle: CSSProperties = nineSliceButtonStyle(true)
+const btnStyle: CSSProperties = nineSliceButtonStyle(false, false, 'gold')
 const pct = (v: number | undefined) => v === undefined ? 'unmeasured' : `${(v * 100).toFixed(1)}%`
 
 /** 后墙《体检与校准软木板》：4 张软木钉板卡片展示在线体检、ECE 校准与 LOO/Holdout 实证。 */
@@ -34,9 +34,11 @@ export function PropCorkboard({ open, onClose, onChanged }: { open: boolean; onC
   const [holdoutRes, setHoldoutRes] = useState<ApiResponse<'POST rsi/holdout'>>()
   const [busy, setBusy] = useState(false)
 
-  const load = useCallback(async () => {
-    try { setWb(await officeCall('GET rsi/workbench')); setError('') }
-    catch (err) { setError(err instanceof Error ? err.message : String(err)) }
+  const load = useCallback(async (mode?: 'production' | 'e2e') => {
+    try {
+      setWb(mode ? await officeCall('GET rsi/workbench', { query: { mode } }) : await officeCall('GET rsi/workbench'))
+      setError('')
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)) }
   }, [])
 
   useEffect(() => { if (open) void load() }, [open, load])
@@ -89,7 +91,22 @@ export function PropCorkboard({ open, onClose, onChanged }: { open: boolean; onC
             </table>
           </div>
           <div style={pinCard}>
-            <strong style={{ display: 'block', marginBottom: 6, fontSize: 13 }}>钉卡 3 · Seen&gt;=3 候选草案 &amp; TemperatureScaler / ECE</strong>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <strong style={{ fontSize: 13 }}>钉卡 3 · 根因前筛 · 候选草案 &amp; ECE</strong>
+              <button type="button" style={{ ...btnStyle, fontSize: 10, padding: '2px 6px' }} onClick={() => { void load(wb.collectionMode === 'production' ? 'e2e' : 'production') }}>
+                {wb.collectionMode === 'production' ? '切至 E2E 前筛' : '切至 3日生产档'}
+              </button>
+            </div>
+            {(wb.routedClusters?.length ?? 0) > 0 && (
+              <div style={{ display: 'grid', gap: 3, marginBottom: 6, fontSize: 10 }}>
+                {wb.routedClusters!.slice(0, 6).map(({ cluster: c, decision }) => (
+                  <div key={c.key} style={{ display: 'flex', justifyContent: 'space-between', gap: 4, background: OFFICE_THEME.parchment, border: `1px solid ${OFFICE_THEME.woodMid}`, padding: '2px 5px' }}>
+                    <span><code>{c.key}</code> (seen={c.refs.length}{c.explainedSymptoms.length > 0 ? `, 折叠=${c.explainedSymptoms.length}` : ''})</span>
+                    <strong style={{ color: decision.tier === 'human_spec_ruling' ? OFFICE_THEME.needsDecision : OFFICE_THEME.inkDark }}>{decision.tier}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
             <div style={{ fontSize: 11, marginBottom: 6 }}>
               T={wb.scaler.temperature.toFixed(3)} · b={wb.scaler.bias.toFixed(3)} · samples {wb.scaler.sampleCount} · ECE: <strong>{wb.calibration.ece !== undefined ? wb.calibration.ece.toFixed(4) : 'unmeasured'}</strong>
             </div>
@@ -114,7 +131,7 @@ export function PropCorkboard({ open, onClose, onChanged }: { open: boolean; onC
             <strong style={{ display: 'block', marginBottom: 6, fontSize: 13 }}>钉卡 4 · LOO 消融与密封 Holdout 验证</strong>
             <textarea aria-label="LOO 消融样例" rows={3} style={{ ...inputStyle, fontFamily: 'monospace', marginBottom: 6 }} value={ablationJson} onChange={e => setAblationJson(e.target.value)} />
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-              <button type="button" disabled={busy} style={btnStyle} onClick={() => { void runAblation() }}>运行全注册表消融 (LOO)</button>
+              <button type="button" className="dsh-px-btn" disabled={busy} style={btnStyle} onClick={() => { void runAblation() }}>运行全注册表消融 (LOO)</button>
               {ablationRes && <span style={{ fontSize: 11 }}>cases {ablationRes.baseline.totalCases} · catches {ablationRes.baseline.catches} · net {ablationRes.baseline.netBenefit.toFixed(2)}</span>}
             </div>
             {ablationRes && (
@@ -128,7 +145,7 @@ export function PropCorkboard({ open, onClose, onChanged }: { open: boolean; onC
                 <input aria-label="挂载点" style={inputStyle} value={point} onChange={e => setPoint(e.target.value)} placeholder="point" />
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <button type="submit" disabled={busy} style={btnStyle}>开封密封 Holdout 验证</button>
+                <button type="submit" className="dsh-px-btn" disabled={busy} style={btnStyle}>开封密封 Holdout 验证</button>
                 <span style={{ fontSize: 10 }}>已开封：{Object.keys(wb.openedHoldouts).length}</span>
               </div>
               {holdoutRes && (

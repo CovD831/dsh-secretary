@@ -83,7 +83,7 @@ export function HandoverSheet({ entry, onClose }: HandoverSheetProps) {
         }}>
           <strong style={{ fontSize: 12, color: OFFICE_THEME.woodDark }}>M0 溯源印章：</strong>
           {handover.evidenceRefs.length > 0 ? handover.evidenceRefs.map(ref => (
-            <button key={ref} type="button" onClick={() => { void inspectRef(ref) }} style={{
+            <button key={ref} type="button" className="dsh-px-btn" onClick={() => { void inspectRef(ref) }} style={{
               ...nineSliceButtonStyle(selectedRef === ref),
               color: OFFICE_THEME.parchment, padding: '2px 8px', fontSize: 12,
             }}>

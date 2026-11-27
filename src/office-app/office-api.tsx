@@ -60,7 +60,7 @@ export function subscribeOfficeStream(onMessage: (msg: OfficeRealtimeMessage) =>
   const forward = (event: string) => (ev: MessageEvent) => {
     try { onMessage({ event, data: JSON.parse(String(ev.data)) as Record<string, unknown> }) } catch { /* ignore malformed frame */ }
   }
-  for (const name of ['ready', 'spine', 'ruling.queued', 'ruling.decided', 'domain', 'message']) {
+  for (const name of ['ready', 'spine', 'ruling.queued', 'ruling.decided', 'domain', 'message', 'subagent']) {
     es.addEventListener(name, forward(name) as EventListener)
   }
   return () => { es.close() }
@@ -96,14 +96,15 @@ export function DiegeticModal({
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
     }}>
       <div onClick={e => e.stopPropagation()} style={{
-        borderStyle: 'solid', borderWidth: 14, borderImageSource: `url(${UI_SKIN_URLS.panel9Slice})`,
-        borderImageSlice: '20 fill', borderImageRepeat: 'stretch', backgroundColor: OFFICE_THEME.bgPanel,
+        backgroundColor: OFFICE_THEME.bgPanel, border: `2px solid ${OFFICE_THEME.outline}`, borderRadius: 4,
+        boxShadow: `inset 0 0 0 2px #5A463A, inset 0 2px 0 2px ${OFFICE_THEME.woodWarm}, 0 6px 0 ${OFFICE_THEME.outline}`,
         color: OFFICE_THEME.inkCream, imageRendering: 'pixelated', boxSizing: 'border-box',
         width: '100%', maxWidth: width, maxHeight: '86vh',
-        display: 'flex', flexDirection: 'column', overflow: 'hidden', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        fontFamily: "'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, -apple-system, sans-serif",
       }}>
         <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 12px 10px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px',
           borderBottom: `2px solid ${OFFICE_THEME.borderGold}`, background: OFFICE_THEME.bgDeep,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -111,10 +112,11 @@ export function DiegeticModal({
             <strong style={{ fontSize: 16, letterSpacing: 0.5, color: OFFICE_THEME.borderGold }}>{title}</strong>
             {subtitle && <span style={{ marginLeft: 4, fontSize: 12, color: OFFICE_THEME.parchmentSoft }}>{subtitle}</span>}
           </div>
-          <button type="button" aria-label="关闭器物面板" onClick={onClose} style={{
-            borderStyle: 'solid', borderWidth: 6, borderImageSource: `url(${UI_SKIN_URLS.btnIdle9Slice})`,
-            borderImageSlice: '14 fill', borderImageRepeat: 'stretch', background: OFFICE_THEME.woodDark,
-            color: OFFICE_THEME.inkCream, imageRendering: 'pixelated', padding: '2px 8px', cursor: 'pointer', fontSize: 12,
+          <button type="button" className="dsh-px-btn" aria-label="关闭器物面板" onClick={onClose} style={{
+            background: OFFICE_THEME.woodDark, color: OFFICE_THEME.inkCream,
+            border: `2px solid ${OFFICE_THEME.outline}`, borderRadius: 3,
+            boxShadow: `inset 0 2px 0 ${OFFICE_THEME.woodMid}, inset 0 -2px 0 #2C211B, 0 2px 0 ${OFFICE_THEME.outline}`,
+            padding: '4px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600,
           }}>收起 [ESC]</button>
         </div>
         <div style={{ ...BODY_STYLE[variant], padding: 14, overflowY: 'auto', flex: 1 }}>{children}</div>

@@ -74,14 +74,22 @@ describe('Phase O4: 4 Diegetic Governance Prop Modals', () => {
           { id: 'anti-skip', dirName: 'anti-skip', source: 'state', admitted: true, kind: 'counter-rule', point: 'verify.rerun', stage: 'shadow', enforce: false, casesCount: 2, stats: { triggers: 2, allow: 1, deny: 0, unmeasured: 1 } },
         ],
       }),
-      'GET deposits/ledger': () => ({ records: [], markdown: '# LEDGER\n- gate-safe (observe)' }),
+      'GET deposits/ledger': () => ({
+        records: [
+          { id: 'workflow-1-gate', dirName: 'workflow-1-gate', packageDir: '/tmp/w1', kind: 'gate', point: 'verify.completion', stage: 'observe', enforce: false, casesCount: 3, status: 'registered', manifest: { id: 'workflow-1-gate', kind: 'gate', point: 'verify.completion', enforce: true } },
+          { id: 'anti-skip', dirName: 'anti-skip', packageDir: '/tmp/as', kind: 'counter-rule', point: 'verify.rerun', stage: 'shadow', enforce: false, casesCount: 2, status: 'registered', manifest: { id: 'anti-skip', kind: 'counter-rule', point: 'verify.rerun' } },
+        ],
+        markdown: '# LEDGER\n- gate-safe (observe)',
+      }),
       'POST deposits/gate-safe/stage': () => ({ ok: true, id: 'gate-safe', fromStage: 'observe', toStage: 'enforce' }),
+      'POST deposits/workflow-1-gate/stage': () => ({ ok: true, id: 'workflow-1-gate', fromStage: 'observe', toStage: 'enforce' }),
     })
     const onChanged = await mountProp('ledger')
     expect(document.body.textContent).toContain('D5 宪法禁升强制')
     const enforceBtns = [...document.querySelectorAll<HTMLButtonElement>('button')].filter(b => b.textContent === 'enforce')
     expect(enforceBtns[0]!.disabled).toBe(false)
     expect(enforceBtns[1]!.disabled).toBe(true)
+    expect(enforceBtns[2]!.disabled).toBe(false)
 
     await act(async () => { enforceBtns[0]!.click() })
     await flush()
@@ -196,8 +204,11 @@ describe('Phase O4: 4 Diegetic Governance Prop Modals', () => {
     await act(async () => { byText('暂停执行器').click() })
     await flush()
     expect(reqs.find(r => r.path === 'executor/pause')?.body).toEqual({ paused: true })
+    expect(document.body.textContent).toContain('全局执行器已暂停')
 
     await act(async () => { byText('秘书形象定制').click() })
+    expect(document.body.textContent).not.toContain('全局执行器已暂停')
+    expect(document.querySelector<HTMLImageElement>('img[alt="胡桃木默认 预览"]')?.src).toContain('/a.png')
     expect(document.querySelector('input[type="file"]')).toBeNull()
     await act(async () => {
       setField(byLabel<HTMLInputElement>('形象名称'), '夜班秘书')

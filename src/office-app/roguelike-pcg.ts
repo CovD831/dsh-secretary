@@ -70,6 +70,8 @@ export function generateBuildingSeedPlan(seed: number): BuildingSeedPlan {
   const f0: WingFloorStyle = rng() < 0.5 ? 'honey_oak' : 'warm_parquet'
   const f1: WingFloorStyle = rng() < 0.5 ? 'honey_oak' : 'warm_parquet'
   const f2: WingFloorStyle = f0 === f1 ? (f0 === 'honey_oak' ? 'warm_parquet' : 'honey_oak') : (rng() < 0.5 ? 'honey_oak' : 'warm_parquet')
+  const cs = [...COMBOS]
+  for (let i = cs.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [cs[i], cs[j]] = [cs[j]!, cs[i]!] }
   const r0 = pick(rng, RUGS_HIGHRES)
   const r1 = pick(rng, RUGS_ALL.filter((r) => r !== r0))
   const r2 = pick(rng, RUGS_ALL.filter((r) => r !== r1))
@@ -77,7 +79,7 @@ export function generateBuildingSeedPlan(seed: number): BuildingSeedPlan {
     skeleton: { lobbyTopV, leftV, leftEndV, rightTopV, splitV, receptionV, bookshelfV, lampV, plantV },
     doors: [leftDoorV, upperDoorV, lowerDoorV], rightLinkPrefs,
     shapes: [pick(rng, SHAPES), pick(rng, SHAPES), shape2], chamferSE,
-    combos: [pick(rng, COMBOS), pick(rng, COMBOS), pick(rng, COMBOS)],
+    combos: [cs[0]!, cs[1]!, cs[2]!],
     floors: [f0, f1, f2], rugs: [r0, r1, r2],
   }
 }
@@ -119,9 +121,9 @@ export function buildProceduralRecipe(
 
   const slotTag = slot === 'left' ? 17 : slot === 'topRight' ? 53 : 97
   const rng = pcgRng((Math.imul(s, 0x85ebca6b) ^ (slotTag * 31) ^ (hasWs ? 131 : 7)) >>> 0)
-  const storage = rng() < 0.62 ? 'bookshelf' : 'file_cabinet'
-  const altStorage = storage === 'bookshelf' ? 'file_cabinet' : 'bookshelf'
-  const util = rng() < 0.55 ? 'water_cooler' : 'printer_copier'
+  const techPod = combo === 'agile-scrum-bay' || combo === 'atelier-split'
+  const storage = techPod ? 'file_cabinet' : rng() < 0.65 ? 'bookshelf' : 'file_cabinet'
+  const util = techPod ? 'printer_copier' : rng() < 0.6 ? 'water_cooler' : 'printer_copier'
   const addExtras = (items: BlueprintItem[], backX: number, plantPos: readonly [number, number], extraSideV?: number) => {
     items.push({ role: 'wall1', assetId: storage, kind: 'shared', zone: 'backWall', pref: [backX, 0], facing: 'SW', seatOff: null })
     if (extraSideV !== undefined) items.push({ role: 'wall2', assetId: util, kind: 'shared', zone: 'sideWall', pref: [0, extraSideV], facing: 'SE', seatOff: null })
@@ -207,35 +209,53 @@ export function buildProceduralRecipe(
     const items: BlueprintItem[] = combo === 'war-room-collab'
       ? [{ role: 'ws1', assetId: 'collab_table', kind: 'workstation', zone: 'focal', pref: [pick(rng, [4, 5]), 3], facing: 'SE', seatOff: [1, -1] }]
       : combo === 'paired-dev-pod'
-        ? [{ role: 'ws1', assetId: 'desk_cluster', kind: 'workstation', zone: 'focal', pref: [pick(rng, [4, 5]), 3], facing: 'SW', seatOff: [1, -1] }]
+        ? [
+            { role: 'ws1', assetId: 'desk_cluster', kind: 'workstation', zone: 'focal', pref: [pick(rng, [3, 4]), 3], facing: 'SW', seatOff: [1, -1] },
+            { role: 'ws2', assetId: 'worker_desk', kind: 'workstation', zone: 'row', pref: [8, 3], facing: 'SW', seatOff: [1, -1] },
+          ]
         : combo === 'exec-library-lounge'
           ? [
               { role: 'ws1', assetId: 'exec_desk', kind: 'workstation', zone: 'focal', pref: [3, 3], facing: 'SW', seatOff: [1, -1] },
               { role: 'ws2', assetId: 'worker_desk', kind: 'workstation', zone: 'row', pref: [7, 3], facing: 'SW', seatOff: [1, -1], alignRowWith: 'ws1' },
+              { role: 'lounge', assetId: 'armchair_green', kind: 'shared', zone: 'focal', pref: [8, 6], facing: 'SW', seatOff: null },
             ]
-          : [
-              { role: 'ws1', assetId: 'worker_desk', kind: 'workstation', zone: 'row', pref: [3, 3], facing: 'SW', seatOff: [1, -1] },
-              { role: 'ws2', assetId: 'worker_desk', kind: 'workstation', zone: 'row', pref: [6, 3], facing: 'SW', seatOff: [1, -1], alignRowWith: 'ws1' },
-            ]
+          : combo === 'atelier-split'
+            ? [
+                { role: 'ws1', assetId: 'desk_cluster', kind: 'workstation', zone: 'focal', pref: [2, 3], facing: 'SW', seatOff: [1, -1] },
+                { role: 'lounge', assetId: 'sofa_lounge', kind: 'shared', zone: 'focal', pref: [7, 4], facing: 'SW', seatOff: null },
+                { role: 'pair1', assetId: 'lamp_table', kind: 'shared', zone: 'focal', pref: [9, 4], facing: 'SW', seatOff: null, pairWith: 'lounge' },
+              ]
+            : [
+                { role: 'ws1', assetId: 'worker_desk', kind: 'workstation', zone: 'row', pref: [2, 3], facing: 'SW', seatOff: [1, -1] },
+                { role: 'ws2', assetId: 'worker_desk', kind: 'workstation', zone: 'row', pref: [5, 3], facing: 'SW', seatOff: [1, -1], alignRowWith: 'ws1' },
+                { role: 'ws3', assetId: 'worker_desk', kind: 'workstation', zone: 'row', pref: [8, 3], facing: 'SW', seatOff: [1, -1], alignRowWith: 'ws1' },
+              ]
     return addExtras(items, pick(rng, [8, 9]), [0, rect.h - 2], pick(rng, [1, 2]))
   }
 
   const brItems: BlueprintItem[] = combo === 'war-room-collab'
     ? [{ role: 'ws1', assetId: 'collab_table', kind: 'workstation', zone: 'focal', pref: [4, 3], facing: 'SE', seatOff: [1, -1] }]
     : combo === 'paired-dev-pod'
-      ? [{ role: 'ws1', assetId: 'desk_cluster', kind: 'workstation', zone: 'focal', pref: [4, 3], facing: 'SW', seatOff: [1, -1] }]
+      ? [
+          { role: 'ws1', assetId: 'desk_cluster', kind: 'workstation', zone: 'focal', pref: [2, 3], facing: 'SW', seatOff: [1, -1] },
+          { role: 'ws2', assetId: 'worker_desk', kind: 'workstation', zone: 'row', pref: [8, 3], facing: 'SW', seatOff: [1, -1] },
+        ]
       : combo === 'agile-scrum-bay'
         ? [
             { role: 'ws1', assetId: 'worker_desk', kind: 'workstation', zone: 'row', pref: [2, 3], facing: 'SW', seatOff: [1, -1] },
-            { role: 'ws2', assetId: 'worker_desk', kind: 'workstation', zone: 'row', pref: [6, 3], facing: 'SW', seatOff: [1, -1], alignRowWith: 'ws1' },
+            { role: 'ws2', assetId: 'worker_desk', kind: 'workstation', zone: 'row', pref: [5, 3], facing: 'SW', seatOff: [1, -1], alignRowWith: 'ws1' },
+            { role: 'ws3', assetId: 'worker_desk', kind: 'workstation', zone: 'row', pref: [8, 3], facing: 'SW', seatOff: [1, -1], alignRowWith: 'ws1' },
           ]
-        : [
-            { role: 'ws1', assetId: 'exec_desk', kind: 'workstation', zone: 'focal', pref: [3, 3], facing: 'SW', seatOff: [1, -1] },
-            { role: 'ws2', assetId: 'worker_desk', kind: 'workstation', zone: 'row', pref: [7, 3], facing: 'SW', seatOff: [1, -1], alignRowWith: 'ws1' },
-          ]
-  if (combo === 'atelier-split' && rect.h >= 10) {
-    brItems.push({ role: 'lounge', assetId: 'armchair_green', kind: 'shared', zone: 'focal', pref: [3, 6], facing: 'SE', seatOff: null })
-    brItems.push({ role: 'pair1', assetId: 'lamp_table', kind: 'shared', zone: 'focal', pref: [3, 5], facing: 'SE', seatOff: null, pairWith: 'lounge' })
-  }
-  return addExtras(brItems, pick(rng, [6, 7, 8]), [8, 0])
+        : combo === 'atelier-split'
+          ? [
+              { role: 'ws1', assetId: 'desk_cluster', kind: 'workstation', zone: 'focal', pref: [2, 3], facing: 'SW', seatOff: [1, -1] },
+              { role: 'lounge', assetId: 'sofa_lounge', kind: 'shared', zone: 'focal', pref: [7, 5], facing: 'SW', seatOff: null },
+              { role: 'pair1', assetId: 'lamp_table', kind: 'shared', zone: 'focal', pref: [9, 5], facing: 'SW', seatOff: null, pairWith: 'lounge' },
+            ]
+          : [
+              { role: 'ws1', assetId: 'exec_desk', kind: 'workstation', zone: 'focal', pref: [2, 3], facing: 'SW', seatOff: [1, -1] },
+              { role: 'ws2', assetId: 'worker_desk', kind: 'workstation', zone: 'row', pref: [6, 3], facing: 'SW', seatOff: [1, -1], alignRowWith: 'ws1' },
+              { role: 'lounge', assetId: 'armchair_green', kind: 'shared', zone: 'focal', pref: [7, 6], facing: 'SW', seatOff: null },
+            ]
+  return addExtras(brItems, pick(rng, [2, 8]), [8, 0], 5)
 }

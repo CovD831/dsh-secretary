@@ -26,16 +26,20 @@ function mergeRules(proj: readonly DepositProjectionItem[], records: readonly Di
   const empty = { triggers: 0, allow: 0, deny: 0, unmeasured: 0 }
   for (const p of proj) {
     map.set(p.id, {
-      id: p.id, kind: p.kind, point: p.point, stage: p.stage ?? 'shadow', enforce: Boolean(p.enforce),
+      id: p.id, kind: p.kind, point: p.point, stage: p.stage ?? 'shadow', enforce: p.kind !== 'counter-rule' && p.enforce !== false,
       admitted: p.admitted, casesCount: p.casesCount, stats: p.stats,
       ...(p.violations?.length ? { error: p.violations.map(v => v.reason).join('; ') } : {}),
     })
   }
   for (const r of records) {
     const prev = map.get(r.id)
+    const kind = r.kind ?? prev?.kind
+    const canEnforce = r.manifest
+      ? r.manifest.kind !== 'counter-rule' && r.manifest.enforce !== false
+      : (prev?.enforce ?? (kind !== 'counter-rule' && (r.stage !== 'enforce' || r.enforce)))
     map.set(r.id, {
-      id: r.id, kind: r.kind ?? prev?.kind, point: r.point ?? prev?.point, signal: r.signal,
-      stage: r.stage, enforce: r.enforce, admitted: r.status !== 'rejected' && r.status !== 'failed-cases',
+      id: r.id, kind, point: r.point ?? prev?.point, signal: r.signal,
+      stage: r.stage, enforce: canEnforce, admitted: r.status !== 'rejected' && r.status !== 'failed-cases',
       status: r.status, casesCount: r.casesCount, stats: prev?.stats ?? empty,
       ...(r.error ?? prev?.error ? { error: r.error ?? prev?.error } : {}),
     })
@@ -118,7 +122,7 @@ export function PropLedger({ open, onClose, onChanged }: { open: boolean; onClos
                   const locked = d5Locked && stage === 'enforce'
                   const disabled = busyId === item.id || item.stage === stage || locked
                   return (
-                    <button key={stage} type="button" disabled={disabled} style={stampStyle(item.stage === stage, disabled)}
+                    <button key={stage} type="button" className="dsh-px-btn" disabled={disabled} style={stampStyle(item.stage === stage, disabled)}
                       title={locked ? 'D5 宪法禁升强制' : `切换至 ${stage}`}
                       onClick={() => { void changeStage(item.id, stage) }}>
                       {stage}
@@ -130,7 +134,7 @@ export function PropLedger({ open, onClose, onChanged }: { open: boolean; onClos
           )
         })}
         <div style={{ marginTop: 12 }}>
-          <button type="button" style={stampStyle(ledgerOpen)} onClick={() => setLedgerOpen(v => !v)}>
+          <button type="button" className="dsh-px-btn" style={stampStyle(ledgerOpen)} onClick={() => setLedgerOpen(v => !v)}>
             {ledgerOpen ? '收起 LEDGER.md 原文卷轴' : '展开 LEDGER.md 原文卷轴'}
           </button>
           {ledgerOpen && <pre style={{ ...DIEGETIC_PARCHMENT_CARD, marginTop: 8, padding: 10, fontSize: 11, overflowX: 'auto', whiteSpace: 'pre-wrap' }}>{data.markdown}</pre>}

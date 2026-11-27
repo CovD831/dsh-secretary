@@ -60,12 +60,12 @@ function rectFootprint(u: number, v: number, w: number, h: number): GridPoint[] 
 export function makeWorldChairs(suite: RoomEntity): (RoomEntity & { zOff?: number })[] {
   if (suite.assetId === 'collab_table') return []
   if (suite.assetId === 'desk_cluster') return [
-    { id: `chair-${suite.id}-ne`, assetId: 'office_chair', suiteKind: 'shared', anchor: { u: suite.anchor.u + 0.55, v: suite.anchor.v - 1.85 }, size: [1, 1], facing: 'SW', mirrorX: true, footprint: [], zOff: -6 },
+    { id: `chair-${suite.id}-ne`, assetId: 'office_chair', suiteKind: 'shared', anchor: { u: suite.anchor.u + 0.72, v: suite.anchor.v - 2.22 }, size: [1, 1], facing: 'SW', mirrorX: true, footprint: [], zOff: -6 },
     { id: `chair-${suite.id}-sw`, assetId: 'back_chair', suiteKind: 'shared', anchor: { u: suite.anchor.u + 1.15, v: suite.anchor.v + 2.45 }, size: [1, 1], facing: 'NE', mirrorX: false, footprint: [], zOff: 6 },
   ]
   const isRec = suite.suiteKind === 'reception', isExec = suite.assetId === 'exec_desk', faceSE = isRec || suite.facing === 'SE'
-  const u = isRec ? suite.anchor.u - 0.7 : isExec ? suite.anchor.u + 0.95 : faceSE ? suite.anchor.u - 0.55 : suite.anchor.u + 0.45
-  const v = isRec ? suite.anchor.v + 0.9 : isExec ? suite.anchor.v - 0.95 : faceSE ? suite.anchor.v + 0.45 : suite.anchor.v - 0.55
+  const u = isRec ? suite.anchor.u - 0.88 : isExec ? suite.anchor.u + 1.14 : faceSE ? suite.anchor.u - 0.73 : suite.anchor.u + 0.60
+  const v = isRec ? suite.anchor.v + 1.05 : isExec ? suite.anchor.v - 1.32 : faceSE ? suite.anchor.v + 0.60 : suite.anchor.v - 0.73
   return [{ id: `chair-${suite.id}`, assetId: 'office_chair', suiteKind: 'shared', anchor: { u, v }, size: [1, 1], facing: faceSE ? 'SE' : 'SW', mirrorX: !faceSE, footprint: [], zOff: -6 }]
 }
 export function extractWallCorners(segs: readonly WallSegment3D[]): { u: number; v: number; h: number; fg: boolean }[] {
@@ -151,16 +151,16 @@ export function populateWingFurniture(
 }
 
 export function buildCorridorNetwork(
-  buildingRows: number, wings: readonly WorldWingPlan[], rng: () => number, lobbyTopV = 0, splitV = 10,
+  buildingRows: number, wings: readonly WorldWingPlan[], rng: () => number, lobbyTopV = 0, splitV = 10, hasTopRight = true,
 ): { corridorCells: GridPoint[]; corridorBranches: CorridorBranchSpec[]; networkMetrics: CorridorNetworkMetrics } {
   const cellMap = new Map<string, GridPoint>()
   for (let v = lobbyTopV; v < buildingRows; v++) {
-    const uEnd = v < splitV ? 16 : 17
+    const uEnd = hasTopRight && v < splitV ? 16 : 17
     for (let u = 10; u < uEnd; u++) cellMap.set(cellKey(u, v), { u, v })
   }
   const branches: CorridorBranchSpec[] = [
-    { from: { u: 13.0, v: 14 }, to: { u: 13.0, v: buildingRows - 1 }, width: 2 + Math.floor(rng() * 2), hasRunner: true },
-    { from: { u: 16, v: splitV }, to: { u: 22, v: splitV }, width: 2, hasRunner: false },
+    { from: { u: 13.0, v: Math.max(14, buildingRows - 6) }, to: { u: 13.0, v: buildingRows - 1 }, width: 2 + Math.floor(rng() * 2), hasRunner: true },
+    ...(hasTopRight ? [{ from: { u: 16, v: splitV }, to: { u: 22, v: splitV }, width: 2, hasRunner: false }] : []),
   ]
   const studios = wings.filter((w) => w.kind === 'studio'), roomCount = studios.length + 1
   const edgeCount = Math.max(0, roomCount - 1) + 1 + (studios.length >= 4 ? 1 : 0)

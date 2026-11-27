@@ -1,10 +1,10 @@
 /** 左下 384×480 秘书立绘与底部 9-Slice 铆钉木金对话框：日常对话态与单栈待裁拍板态切换。 */
-import { type RefObject, useEffect, useMemo, useState } from 'react'
+import { type RefObject, useEffect, useMemo, useRef, useState } from 'react'
 import type { AvatarPackSummary } from '../app/avatar-pipeline.ts'
 import type { FourWayAttribution, RulingDecision, RulingItem, RulingOrigin } from '../app/ruling-queue.ts'
 import type { SecretaryExpression, SecretaryFeedEntry } from '../app/tools/secretary-core.ts'
 import { OFFICE_THEME } from './office-api.tsx'
-import { NINE_SLICE_PANEL, NINE_SLICE_SLOT, nineSliceButtonStyle } from './ui-skin.tsx'
+import { NINE_SLICE_PANEL, NINE_SLICE_SLOT, PIXEL_UI_FONT, nineSliceButtonStyle } from './ui-skin.tsx'
 
 export interface NpcDialogProps {
   readonly feed: readonly SecretaryFeedEntry[]
@@ -74,10 +74,23 @@ export function NpcDialog({
   const [busy, setBusy] = useState(false)
   const [dots, setDots] = useState(1)
   const [error, setError] = useState<string | null>(null)
+  const historyRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     setSelectedOption(undefined); setNote(''); setAttribution('missing_rule'); setCaptureAsRule(false)
   }, [activeRuling?.id])
+
+  useEffect(() => {
+    if (!historyOpen) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopImmediatePropagation?.(); setHistoryOpen(false) } }
+    const onDown = (e: globalThis.MouseEvent) => {
+      const el = e.target as HTMLElement | null
+      if (historyRef.current && !historyRef.current.contains(el) && !el?.closest?.('[data-history-toggle]')) setHistoryOpen(false)
+    }
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('mousedown', onDown)
+    return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('mousedown', onDown) }
+  }, [historyOpen])
 
   useEffect(() => {
     if (!secretaryThinking) { setDots(1); return }
@@ -95,6 +108,8 @@ export function NpcDialog({
   const repliedBossText = latestSayIdx > 0 && feed[latestSayIdx - 1]?.role === 'boss' ? feed[latestSayIdx - 1]!.text : null
   const latestHandover = useMemo(() => [...feed].reverse().find(e => e.kind === 'handover' && e.handover), [feed])
   const effectiveOption = selectedOption ?? activeRuling?.options.find(o => o.recommended)?.id ?? activeRuling?.options[0]?.id
+  const isNegativeApprovalOption = activeRuling?.kind !== 'secretary_ask'
+    && /^(?:reject|deny|veto|block|opt[-_]?deny|opt[-_]?reject)$/i.test(effectiveOption?.trim() ?? '')
   const isCollapsed = Boolean(collapsed) && !activeRuling && !gateBlocked && !secretaryThinking
   const latestText = latestSay?.text ?? '老板好，办公室已就绪。点按场景器物可查阅卷宗，或直接在此吩咐任务。'
 
@@ -126,31 +141,34 @@ export function NpcDialog({
 
   const panelBox = { ...NINE_SLICE_PANEL, display: 'flex' as const }
   const inputBox = {
-    ...NINE_SLICE_SLOT, flex: 1, color: OFFICE_THEME.inkCream, padding: '4px 8px',
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    ...NINE_SLICE_SLOT, flex: 1, color: OFFICE_THEME.inkCream, padding: '6px 10px',
+    fontFamily: PIXEL_UI_FONT, outline: 'none',
   }
   const btnIdle = nineSliceButtonStyle(false)
   const btnActive = nineSliceButtonStyle(true)
-  const btnGold = { ...btnActive, background: OFFICE_THEME.borderGold, color: OFFICE_THEME.inkDark, fontWeight: 700 }
-  const btnPaper = { ...btnIdle, background: OFFICE_THEME.parchment, color: OFFICE_THEME.inkDark, fontWeight: 700 }
+  const btnGold = nineSliceButtonStyle(false, busy || !draft.trim(), 'gold')
+  const btnPaper = nineSliceButtonStyle(false, false, 'parchment')
+  const btnApprove = nineSliceButtonStyle(false, busy, 'approve')
+  const btnWarn = nineSliceButtonStyle(false, busy, 'warn')
+  const btnDanger = nineSliceButtonStyle(false, busy, 'danger')
 
   return (
-    <div style={isCollapsed ? { position: 'absolute', left: 246, right: 326, bottom: 12, zIndex: 20 } : { position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 20 }}>
+    <div style={isCollapsed ? { position: 'absolute', left: 244, right: 298, bottom: 12, zIndex: 20 } : { position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 20 }}>
       {historyOpen && (
-        <div role="region" aria-label="对话历史" style={{
+        <div ref={historyRef} role="region" aria-label="对话历史" style={{
           ...NINE_SLICE_PANEL, position: 'absolute', right: 24, bottom: '100%', marginBottom: 8, width: 520,
-          maxHeight: 280, overflowY: 'auto', padding: 10, zIndex: 25,
+          maxHeight: 232, overflowY: 'auto', padding: 12, zIndex: 25,
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-            <strong>历史回看 ({feed.length})</strong>
-            <button type="button" onClick={() => setHistoryOpen(false)} style={btnIdle}>收起</button>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <strong style={{ color: OFFICE_THEME.borderGold }}>历史回看 ({feed.length})</strong>
+            <button type="button" className="dsh-px-btn" onClick={() => setHistoryOpen(false)} style={btnIdle}>收起</button>
           </div>
           {feed.length === 0 ? <p style={{ opacity: 0.7 }}>暂无对话记录。</p> : feed.slice(-20).map(item => (
             <div key={item.id} style={{ padding: '6px 0', borderBottom: `1px solid ${OFFICE_THEME.borderWood}` }}>
               <span style={{ color: OFFICE_THEME.borderGold, marginRight: 6 }}>[{item.role === 'boss' ? '老板' : '秘书'}]</span>
               <span>{item.text}</span>
               {item.handover && (
-                <button type="button" onClick={() => onOpenHandover(item)} style={{ ...btnPaper, marginLeft: 8, padding: '1px 6px' }}>公文纸</button>
+                <button type="button" className="dsh-px-btn" onClick={() => onOpenHandover(item)} style={{ ...btnPaper, marginLeft: 8, padding: '2px 7px', fontSize: 11 }}>公文纸</button>
               )}
             </div>
           ))}
@@ -158,31 +176,31 @@ export function NpcDialog({
       )}
 
       {isCollapsed ? (
-        <div style={{ ...panelBox, minHeight: 56, padding: '2px 6px', alignItems: 'center', gap: 8 }}>
-          <button type="button" aria-label="展开秘书立绘" onClick={onExpand} style={{ ...NINE_SLICE_SLOT, padding: 0, cursor: 'pointer', flexShrink: 0 }}>
+        <div style={{ ...panelBox, minHeight: 54, padding: '6px 10px', alignItems: 'center', gap: 8 }}>
+          <button type="button" className="dsh-px-slot" aria-label="展开秘书立绘" onClick={onExpand} style={{ ...NINE_SLICE_SLOT, padding: 0, cursor: 'pointer', flexShrink: 0, overflow: 'hidden' }}>
             <img src={portraitSrc} alt={`秘书立绘缩略 (${mood})`} data-mood={mood} width={40} height={40} style={{ display: 'block', imageRendering: 'pixelated' }} />
           </button>
-          <div style={{ flex: '0 1 200px', minWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }}>{latestText}</div>
-          <input ref={inputRef} type="text" aria-label="向秘书发话" placeholder="直接吩咐秘书调度或询问进度…" value={draft}
+          <div style={{ flex: '0 1 190px', minWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }}>{latestText}</div>
+          <input ref={inputRef} className="dsh-px-input" type="text" aria-label="向秘书发话" placeholder="直接吩咐秘书调度或询问进度…（按 / 快速输入）" value={draft}
             onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void handleSend() }}
-            style={{ ...inputBox, minWidth: 120, fontSize: 12 }} />
-          <button type="button" disabled={busy || !draft.trim()} onClick={() => void handleSend()} style={{ ...btnGold, fontSize: 12, padding: '4px 10px' }}>发送</button>
-          {latestHandover && <button type="button" onClick={() => onOpenHandover(latestHandover)} style={{ ...btnPaper, fontSize: 11 }}>展开三段式公文纸</button>}
-          <button type="button" onClick={() => setHistoryOpen(v => !v)} style={btnIdle}>历史回看 ({feed.length})</button>
-          <button type="button" onClick={onExpand} style={btnActive}>展开立绘</button>
+            style={{ ...inputBox, minWidth: 100, fontSize: 12 }} />
+          <button type="button" className="dsh-px-btn" disabled={busy || !draft.trim()} onClick={() => void handleSend()} style={{ ...btnGold, fontSize: 12, padding: '5px 12px', flexShrink: 0 }}>发送</button>
+          {latestHandover && <button type="button" className="dsh-px-btn" onClick={() => onOpenHandover(latestHandover)} style={{ ...btnPaper, fontSize: 11, flexShrink: 0 }}>展开三段式公文纸</button>}
+          <button type="button" data-history-toggle="1" className="dsh-px-btn" onClick={() => setHistoryOpen(v => !v)} style={{ ...nineSliceButtonStyle(historyOpen), flexShrink: 0 }}>历史回看 ({feed.length})</button>
+          <button type="button" className="dsh-px-btn" onClick={onExpand} style={{ ...btnActive, flexShrink: 0 }}>展开立绘</button>
         </div>
       ) : (
         <>
           <img src={portraitSrc} alt={`秘书立绘 (${mood})`} data-mood={mood} width={384} height={480}
             style={{ position: 'absolute', left: 24, bottom: 16, width: 384, height: 480, imageRendering: 'pixelated', pointerEvents: 'none', zIndex: 20 }} />
-          <div style={{ ...panelBox, minHeight: 220, padding: '12px 20px 12px 424px', flexDirection: 'column', gap: 10 }}>
+          <div style={{ ...panelBox, minHeight: 220, padding: '14px 20px 14px 424px', flexDirection: 'column', gap: 10 }}>
             {activeRuling ? (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ background: OFFICE_THEME.needsDecision, color: OFFICE_THEME.inkCream, padding: '2px 8px', borderRadius: 2, fontSize: 12, fontWeight: 700 }}>
+                  <span style={{ background: '#9E2F2C', color: OFFICE_THEME.inkCream, border: `1px solid ${OFFICE_THEME.needsDecision}`, padding: '2px 8px', borderRadius: 3, fontSize: 12, fontWeight: 700 }}>
                     {ORIGIN_LABELS[activeRuling.kind]}{activeRuling.toolName ? ` · ${activeRuling.toolName}` : ''}
                   </span>
-                  <span style={{ background: OFFICE_THEME.woodDark, color: OFFICE_THEME.borderGold, border: `1px solid ${OFFICE_THEME.borderGold}`, padding: '2px 8px', borderRadius: 2, fontSize: 12 }}>
+                  <span style={{ background: OFFICE_THEME.woodDark, color: OFFICE_THEME.borderGold, border: `1px solid ${OFFICE_THEME.borderGold}`, padding: '2px 8px', borderRadius: 3, fontSize: 12 }}>
                     待办 {pendingCount}
                   </span>
                   <strong style={{ fontSize: 16, flex: 1 }}>{activeRuling.question}</strong>
@@ -192,26 +210,27 @@ export function NpcDialog({
                     {activeRuling.options.slice(0, 3).map(opt => {
                       const active = effectiveOption === opt.id
                       return (
-                        <button key={opt.id} type="button" onClick={() => setSelectedOption(opt.id)} style={{
-                          ...NINE_SLICE_SLOT, textAlign: 'left', padding: '6px 8px', cursor: 'pointer', width: '100%',
+                        <button key={opt.id} type="button" className="dsh-px-btn" onClick={() => setSelectedOption(opt.id)} style={{
+                          ...NINE_SLICE_SLOT, textAlign: 'left', padding: '7px 10px', cursor: 'pointer', width: '100%',
                           background: active ? OFFICE_THEME.woodMid : OFFICE_THEME.bgDeep, color: OFFICE_THEME.inkCream,
-                          outline: active ? `2px solid ${OFFICE_THEME.borderGold}` : 'none',
+                          borderColor: active ? OFFICE_THEME.borderGold : OFFICE_THEME.borderWood,
+                          boxShadow: active ? `0 0 0 1px ${OFFICE_THEME.outline}, inset 0 1px 0 ${OFFICE_THEME.borderGold}` : NINE_SLICE_SLOT.boxShadow,
                         }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700 }}>
                             <span>{opt.label}</span>
                             {opt.recommended && <span style={{ color: OFFICE_THEME.borderGold, fontSize: 11 }}>★ 推荐</span>}
                           </div>
-                          <div style={{ fontSize: 12, opacity: 0.82, marginTop: 2 }}>{opt.consequence}</div>
+                          <div style={{ fontSize: 12, opacity: 0.85, marginTop: 2 }}>{opt.consequence}</div>
                         </button>
                       )
                     })}
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <input type="text" aria-label="裁决附言" placeholder="可选：补充裁决附言或修正要求…" value={note} onChange={e => setNote(e.target.value)}
+                  <input className="dsh-px-input" type="text" aria-label="裁决附言" placeholder="可选：补充裁决附言或修正要求…" value={note} onChange={e => setNote(e.target.value)}
                     style={{ ...inputBox, minWidth: 180, fontSize: 13 }} />
                   <select aria-label="四分类归因" value={attribution} onChange={e => setAttribution(e.target.value as FourWayAttribution)}
-                    style={{ ...NINE_SLICE_SLOT, color: OFFICE_THEME.inkCream, padding: '4px 6px', fontSize: 12 }}>
+                    style={{ ...NINE_SLICE_SLOT, color: OFFICE_THEME.inkCream, padding: '5px 8px', fontSize: 12 }}>
                     {ATTRIBUTIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
                   </select>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer' }}>
@@ -221,11 +240,15 @@ export function NpcDialog({
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', gap: 8 }}>
-                    <button type="button" disabled={busy} onClick={() => void handleDecide('approve')} style={{ ...btnIdle, background: OFFICE_THEME.done, color: OFFICE_THEME.inkDark, fontWeight: 700, fontSize: 13 }}>批准</button>
-                    <button type="button" disabled={busy} onClick={() => void handleDecide('revise')} style={{ ...btnIdle, background: OFFICE_THEME.stuck, color: OFFICE_THEME.inkDark, fontWeight: 700, fontSize: 13 }}>打回修改</button>
-                    <button type="button" disabled={busy} onClick={() => void handleDecide('reject')} style={{ ...btnIdle, background: OFFICE_THEME.needsDecision, color: OFFICE_THEME.inkCream, fontWeight: 700, fontSize: 13 }}>否决</button>
+                    {isNegativeApprovalOption ? (
+                      <button type="button" className="dsh-px-btn" disabled={busy} onClick={() => void handleDecide('reject')} style={{ ...btnDanger, fontSize: 13, padding: '6px 14px' }}>确认拦截</button>
+                    ) : (
+                      <button type="button" className="dsh-px-btn" disabled={busy} onClick={() => void handleDecide('approve')} style={{ ...btnApprove, fontSize: 13, padding: '6px 14px' }}>批准</button>
+                    )}
+                    <button type="button" className="dsh-px-btn" disabled={busy} onClick={() => void handleDecide('revise')} style={{ ...btnWarn, fontSize: 13, padding: '6px 14px' }}>打回修改</button>
+                    <button type="button" className="dsh-px-btn" disabled={busy} onClick={() => void handleDecide('reject')} style={{ ...btnDanger, fontSize: 13, padding: '6px 14px' }}>否决</button>
                   </div>
-                  <button type="button" onClick={() => setHistoryOpen(v => !v)} style={btnIdle}>历史回看 ({feed.length})</button>
+                  <button type="button" data-history-toggle="1" className="dsh-px-btn" onClick={() => setHistoryOpen(v => !v)} style={nineSliceButtonStyle(historyOpen)}>历史回看 ({feed.length})</button>
                 </div>
               </>
             ) : (
@@ -233,7 +256,7 @@ export function NpcDialog({
                 {secretaryThinking && (
                   <div role="status" aria-label="秘书思考中" style={{
                     ...NINE_SLICE_SLOT, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
-                    flexWrap: 'wrap', padding: '4px 10px', fontSize: 13,
+                    flexWrap: 'wrap', padding: '5px 10px', fontSize: 13,
                   }}>
                     <span>
                       <strong style={{ color: OFFICE_THEME.borderGold }}>你：</strong>
@@ -243,22 +266,22 @@ export function NpcDialog({
                   </div>
                 )}
                 {!secretaryThinking && repliedBossText && (
-                  <div style={{ fontSize: 12, color: OFFICE_THEME.borderGold, opacity: 0.88 }}>
+                  <div style={{ fontSize: 12, color: OFFICE_THEME.borderGold, opacity: 0.9 }}>
                     回应「{repliedBossText.length > 44 ? `${repliedBossText.slice(0, 44)}…` : repliedBossText}」：
                   </div>
                 )}
-                <div style={{ fontSize: 18, lineHeight: 1.5, minHeight: 46, opacity: secretaryThinking ? 0.72 : 1 }}>{latestText}</div>
+                <div style={{ fontSize: 17, lineHeight: 1.55, minHeight: 46, opacity: secretaryThinking ? 0.72 : 1 }}>{latestText}</div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 'auto' }}>
-                  <input ref={inputRef} type="text" aria-label="向秘书发话" placeholder="直接吩咐秘书调度或询问进度…" value={draft}
+                  <input ref={inputRef} className="dsh-px-input" type="text" aria-label="向秘书发话" placeholder="直接吩咐秘书调度或询问进度…（按 / 快速输入）" value={draft}
                     onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void handleSend() }}
-                    style={{ ...inputBox, minWidth: 240, fontSize: 14 }} />
-                  <button type="button" disabled={busy || !draft.trim()} onClick={() => void handleSend()} style={{ ...btnGold, fontSize: 14, padding: '6px 14px' }}>发送</button>
+                    style={{ ...inputBox, minWidth: 240, fontSize: 13 }} />
+                  <button type="button" className="dsh-px-btn" disabled={busy || !draft.trim()} onClick={() => void handleSend()} style={{ ...btnGold, fontSize: 13, padding: '6px 16px' }}>发送</button>
                   {latestHandover && (
-                    <button type="button" onClick={() => onOpenHandover(latestHandover)} style={{ ...btnPaper, fontSize: 13 }}>展开三段式公文纸</button>
+                    <button type="button" className="dsh-px-btn" onClick={() => onOpenHandover(latestHandover)} style={{ ...btnPaper, fontSize: 12, padding: '6px 11px' }}>展开三段式公文纸</button>
                   )}
-                  <button type="button" onClick={() => setHistoryOpen(v => !v)} style={{ ...btnIdle, fontSize: 13 }}>历史回看 ({feed.length})</button>
+                  <button type="button" data-history-toggle="1" className="dsh-px-btn" onClick={() => setHistoryOpen(v => !v)} style={{ ...nineSliceButtonStyle(historyOpen), fontSize: 12, padding: '6px 11px' }}>历史回看 ({feed.length})</button>
                   {onCollapse && (
-                    <button type="button" onClick={onCollapse} style={{ ...btnActive, fontSize: 13 }}>收起巡视</button>
+                    <button type="button" className="dsh-px-btn" onClick={onCollapse} style={{ ...btnActive, fontSize: 12, padding: '6px 11px' }}>收起巡视</button>
                   )}
                 </div>
               </>

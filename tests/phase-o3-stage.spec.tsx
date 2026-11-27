@@ -154,7 +154,7 @@ describe('Phase O3 Pixel Office Stage', () => {
         return new Response(JSON.stringify({ items, totalMatched: items.length, headSeq: 9, nextSinceSeq: null, hasMore: false }), { status: 200 })
       }
       if (path === 'secretary/messages') return new Response(JSON.stringify({ triggerId: 'trig-1', received: 'stored' }), { status: 200 })
-      if (path === 'rulings/r-1/decide') { activeRuling = null; pendingCount = 0; return new Response(JSON.stringify({ ok: true }), { status: 200 }) }
+      if (path === 'rulings/r-1/decide' || path === 'rulings/r-2/decide') { activeRuling = null; pendingCount = 0; return new Response(JSON.stringify({ ok: true }), { status: 200 }) }
       return new Response('{}', { status: 200 })
     }))
   })
@@ -170,6 +170,10 @@ describe('Phase O3 Pixel Office Stage', () => {
     await act(async () => { root!.render(<StageApp />) })
     await waitText('已整理交接公文。')
     expect(document.querySelector('canvas[aria-label="像素办公室主舞台"]')).toBeTruthy()
+    await act(async () => { byText('历史回看 (2)')!.click() })
+    const histEl = document.querySelector<HTMLElement>('[aria-label="对话历史"]')!
+    expect(histEl.style.maxHeight).toBe('232px')
+    await act(async () => { byText('收起')!.click() })
 
     const input = document.querySelector<HTMLInputElement>('input[aria-label="向秘书发话"]')!
     await act(async () => { setInputValue(input, '请检查 PR #42') })
@@ -192,11 +196,17 @@ describe('Phase O3 Pixel Office Stage', () => {
     await act(async () => { MockEventSource.instances[0]!.emit('ruling.queued', { id: 'r-1' }) })
 
     await waitText('工蜂请求执行 git push --force，是否放行？')
+    const dockContainer = byText('门牌簿')!.parentElement!
+    expect(dockContainer.style.top).toBe('58px')
+    expect(dockContainer.style.bottom).toBe('auto')
     const portrait = document.querySelector<HTMLImageElement>('img[alt="秘书立绘 (concerned)"]')!
     expect(portrait.src).toContain('/assets/f1-proof/portrait_concerned.png')
     expect(byText('待办 2')).toBeTruthy()
+    expect(byText('确认拦截')).toBeTruthy()
+    expect(byText('批准')).toBeUndefined()
 
     await act(async () => { byText('仅放行本次')!.click() })
+    expect(byText('批准')).toBeTruthy()
     const sel = document.querySelector<HTMLSelectElement>('select[aria-label="四分类归因"]')!
     await act(async () => { setInputValue(sel, 'wrong_rule') })
     await act(async () => { byText('批准')!.click() })
@@ -207,6 +217,24 @@ describe('Phase O3 Pixel Office Stage', () => {
       expect(decideCall!.body).not.toHaveProperty('id')
       expect((decideCall!.body as Record<string, unknown>)['optionId']).toBe('opt-allow')
       expect((decideCall!.body as Record<string, unknown>)['attribution']).toBe('wrong_rule')
+    })
+
+    activeRuling = {
+      id: 'r-2', kind: 'dsh_approval', status: 'pending', createdAt: '2026-11-26T08:07:00Z',
+      question: '工蜂请求写入 .env.staging，是否放行？', toolName: 'write', allowFreeText: true,
+      options: [
+        { id: 'reject', label: '拒绝并要求改方案', consequence: '拦截高危写入', recommended: true },
+        { id: 'approve', label: '放行本次操作', consequence: '允许写一次' },
+      ],
+    }
+    await act(async () => { MockEventSource.instances[0]!.emit('ruling.queued', { id: 'r-2' }) })
+    await waitText('确认拦截')
+    await act(async () => { byText('确认拦截')!.click() })
+    await vi.waitFor(() => {
+      const denyCall = calls.find(c => c.method === 'POST' && c.path === 'rulings/r-2/decide')
+      expect(denyCall).toBeTruthy()
+      expect((denyCall!.body as Record<string, unknown>)['decision']).toBe('reject')
+      expect((denyCall!.body as Record<string, unknown>)['optionId']).toBe('reject')
     })
 
     spineItems = [{ seq: 9, at: new Date().toISOString(), id: 'sp-9', stream: 'gate', type: 'gate.evaluated', payload: { verdict: { kind: 'deny' } } }]
@@ -339,18 +367,18 @@ describe('Phase O3 Pixel Office Stage', () => {
     await act(async () => { root!.render(<StageApp />) })
     await waitText('已整理交接公文。')
 
-    expect(document.querySelector('[aria-label="楼层小地图"]')).toBeTruthy()
+    expect(document.querySelector('[aria-label="园区小地图"]')).toBeTruthy()
     expect(document.querySelector('button[aria-label="查看房间卷宗-default"]')).toBeTruthy()
     expect(document.querySelector('button[aria-label="查看房间卷宗-repo-alpha"]')).toBeTruthy()
     expect(document.querySelector('img[width="384"]')).toBeNull()
 
     await act(async () => { byText('展开立绘')!.click() })
     expect(document.querySelector('img[width="384"]')).toBeTruthy()
-    expect(document.querySelector('[aria-label="楼层小地图"]')).toBeNull()
+    expect(document.querySelector('[aria-label="园区小地图"]')).toBeNull()
 
     await act(async () => { byText('收起巡视')!.click() })
     expect(document.querySelector('img[width="384"]')).toBeNull()
-    expect(document.querySelector('[aria-label="楼层小地图"]')).toBeTruthy()
+    expect(document.querySelector('[aria-label="园区小地图"]')).toBeTruthy()
 
     const zoom2Btn = document.querySelector<HTMLButtonElement>('button[aria-label="近景视角"]')!
     const zoom1Btn = document.querySelector<HTMLButtonElement>('button[aria-label="全楼视角"]')!
@@ -377,5 +405,130 @@ describe('Phase O3 Pixel Office Stage', () => {
     await act(async () => { seedInput.dispatchEvent(new FocusEvent('focusout', { bubbles: true })) })
     expect(seedInput.value).toBe('1')
     expect(localStorage.getItem('dsh_office_world_seed')).toBe('1')
+  })
+
+  it('renders 4+ workspaces on single ground plane without 1F/2F tabs, plus nested subagent HUD & drawer breakdown', async () => {
+    const origFetch = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('/settings')) {
+        return new Response(JSON.stringify({
+          policyVersion: 'v1',
+          blocks: {
+            policy: { value: {}, revision: 1 }, eval: { value: {}, revision: 1 }, executor: { value: {}, revision: 1 },
+            workspaces: {
+              value: [
+                { id: 'w2', repository: '/srv/2', baseBranch: 'main', branchPrefix: 'b/', isolation: 'I2' },
+                { id: 'w3', repository: '/srv/3', baseBranch: 'main', branchPrefix: 'b/', isolation: 'I2' },
+                { id: 'w4', repository: '/srv/4', baseBranch: 'main', branchPrefix: 'b/', isolation: 'I2' },
+              ],
+              revision: 1,
+            },
+          },
+          sources: [], environment: { root: '/srv/default', variables: [] },
+        }), { status: 200 })
+      }
+      if (u.includes('tickets?state=open')) {
+        return new Response(JSON.stringify({
+          items: [{
+            id: 't-101', title: '并行多代理调研', state: 'open', stage: 'working', action: 'running', workspace: 'w4',
+            actions: { retry: false, stop: true }, strength: 'high', assignments: 1, inputs: 0, undelivered: 0,
+            sessionId: 'worker-t-101', summary: '调研子代理协作中', createdAt: '2026-11-26T08:00:00Z', updatedAt: '2026-11-26T08:02:00Z', threads: [],
+            subagents: [
+              { id: 'sub-a1', parentSessionId: 'worker-t-101', status: 'running', depth: 1, preset: 'research' },
+              { id: 'sub-b2', parentSessionId: 'sub-a1', status: 'idle', depth: 2, preset: 'standard' },
+            ],
+          }],
+          next_offset: null,
+        }), { status: 200 })
+      }
+      return origFetch(url, init)
+    }))
+    await act(async () => { root!.render(<StageApp />) })
+    await waitText('1 工作中 · +2 子代理')
+    expect(document.querySelector('button[aria-label="切换至2F"]')).toBeNull()
+    expect(document.querySelector('button[aria-label="切换至1F"]')).toBeNull()
+    expect(document.querySelector('button[aria-label="小地图-w4"]')).toBeTruthy()
+    expect(document.querySelector('button[aria-label="查看房间卷宗-w4"]')).toBeTruthy()
+
+    await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="查看房间卷宗-w4"]')!.click() })
+    await waitText('活跃嵌套子代理 (2)')
+    expect(document.querySelector('[aria-label="活跃嵌套子代理"]')?.textContent).toContain('L1')
+    expect(document.querySelector('[aria-label="活跃嵌套子代理"]')?.textContent).toContain('L2')
+    expect(document.querySelector('[aria-label="活跃嵌套子代理"]')?.textContent).toContain('sub-b2')
+  })
+
+  it('loads recently ended tickets in WorkerDrawer when open room tickets are empty', async () => {
+    const origFetch = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('tickets?state=open')) return new Response(JSON.stringify({ items: [], next_offset: null }), { status: 200 })
+      if (u.includes('tickets?state=ended')) {
+        return new Response(JSON.stringify({
+          items: [{
+            id: 't-ended-alpha', title: '已完结修复工单', state: 'ended', stage: 'ended', action: 'ready', workspace: 'repo-alpha',
+            actions: { retry: false, stop: false }, strength: 'high', assignments: 1, inputs: 0, undelivered: 0,
+            sessionId: 'worker-t-ended-alpha', summary: 'npm test 5/5 通过', createdAt: '2026-11-26T08:00:00Z', updatedAt: '2026-11-26T08:02:00Z', threads: [],
+          }],
+          next_offset: null,
+        }), { status: 200 })
+      }
+      if (u.includes('tickets/t-ended-alpha/transcript')) {
+        return new Response(JSON.stringify({
+          ticketId: 't-ended-alpha', sessionId: 'worker-t-ended-alpha', headSeq: 5, truncated: false,
+          entries: [{ id: 'e-done', at: '2026-11-26T08:01:55Z', kind: 'gate', summary: 'verify.rerun -> allow', status: 'ok' }],
+        }), { status: 200 })
+      }
+      return origFetch(url, init)
+    }))
+    await act(async () => { root!.render(<StageApp />) })
+    await waitText('已整理交接公文。')
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="查看房间卷宗-repo-alpha"]')!.click()
+    })
+    await waitText('已完结修复工单')
+    await waitText('verify.rerun -> allow')
+  })
+
+  it('supports keyboard shortcuts (/, 1/2, two-step Escape) and alert jump chip to attention room', async () => {
+    const origFetch = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes('tickets?state=open')) {
+        return new Response(JSON.stringify({
+          items: [{
+            id: 't-alert', title: '越界审批待定', state: 'open', stage: 'person', action: 'answer', workspace: 'repo-alpha',
+            actions: { retry: false, stop: false }, strength: 'high', assignments: 1, inputs: 0, undelivered: 0,
+            sessionId: 'worker-t-alert', summary: '需要老板拍板', createdAt: '2026-11-26T08:00:00Z', updatedAt: '2026-11-26T08:02:00Z', threads: [],
+          }],
+          next_offset: null,
+        }), { status: 200 })
+      }
+      return origFetch(url, init)
+    }))
+    await act(async () => { root!.render(<StageApp />) })
+    const alertChip = await waitText('1 待处理')
+    await act(async () => { alertChip.click() })
+    await waitText('repo-alpha')
+
+    await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true })) })
+    expect(document.activeElement).toBe(document.querySelector('input[aria-label="向秘书发话"]'))
+    ;(document.activeElement as HTMLElement)?.blur()
+
+    const zoom2Btn = document.querySelector<HTMLButtonElement>('button[aria-label="近景视角"]')!
+    const zoom1Btn = document.querySelector<HTMLButtonElement>('button[aria-label="全楼视角"]')!
+    await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: '2', bubbles: true })) })
+    expect(zoom2Btn.style.background).not.toBe(zoom1Btn.style.background)
+    await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true })) })
+    expect(zoom1Btn.style.background).not.toBe(zoom2Btn.style.background)
+
+    await act(async () => { byText('展开立绘')!.click() })
+    await act(async () => { byText('历史回看 (2)')!.click() })
+    expect(document.querySelector('[aria-label="对话历史"]')).toBeTruthy()
+    await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    expect(document.querySelector('[aria-label="对话历史"]')).toBeNull()
+    expect(document.querySelector('img[width="384"]')).toBeTruthy()
+    await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    expect(document.querySelector('img[width="384"]')).toBeNull()
+    expect(document.querySelector('[aria-label="园区小地图"]')).toBeTruthy()
   })
 })
