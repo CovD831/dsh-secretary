@@ -60,7 +60,7 @@ describe('后端全链路真机级集成与灾难恢复闭环', () => {
     const spine = await readSpineProjection(s2, stateDir, { limit: 10 })
     const deps = await readDepositsProjection(s2, stateDir)
     expect(spine.items.map(i => i.seq)).toEqual([1, 2, 3])
-    expect(deps.admittedCount).toBe(7)
+    expect(deps.admittedCount).toBe(9)
     expect(deps.items.find(d => d.id === 'verify.changed-paths')?.stats.allow).toBe(1)
 
     await g2.shutdown()

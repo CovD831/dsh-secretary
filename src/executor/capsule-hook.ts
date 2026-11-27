@@ -1,9 +1,7 @@
-/** 执行器发射前机械 1-Hop 切片、关键词 rg 定位与自适应派发钩子。 */
-import { execFile } from 'node:child_process'
+/** 执行器发射前机械 1-Hop 切片、关键词 rg 定位、风险分诊与自适应派发钩子。 */
 import { existsSync } from 'node:fs'
-import { readdir, readFile, realpath, stat } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve } from 'node:path'
-import { promisify } from 'node:util'
+import { realpath, stat } from 'node:fs/promises'
+import { isAbsolute, relative, resolve } from 'node:path'
 import { assembleCapsule, sliceWorkspaceContext, type ContextCapsule, type PitfallNote, type SliceResult } from '../context/index.ts'
 import type { Assignment, Ticket } from '../core/index.ts'
 import { DEFAULT_ADAPTIVE_DISPATCH_PARAMS, type ThinkingTier } from '../judgement/gates/index.ts'
@@ -12,11 +10,10 @@ import {
   type JudgementRegistry, type PlaybookCandidate, type Verdict,
 } from '../judgement/index.ts'
 import type { SpineDraft } from '../spine/types.ts'
+import { DSH_BUNDLED_RG, locateFilesByKeywords } from './keyword-locator.ts'
+import { classifyWorkflowRisk, renderElevatedWorkflowNotice, type WorkflowRiskResult } from './workflow-risk.ts'
 
-const execFileAsync = promisify(execFile)
-const DSH_BUNDLED_RG = '/Applications/DeepSeek Harness.app/Contents/Resources/app.asar.unpacked/dsh/node_modules/@vscode/ripgrep-darwin-arm64/bin/rg'
 const IGNORE_DIRS = new Set(['.git', 'node_modules', 'dist', 'lib', 'coverage', '.next', '.local'])
-const CODE_FILE_RE = /\.(?:ts|tsx|mts|cts|js|mjs|jsx|py|go|rs)$/
 const STOP_WORDS = new Set([
   'the', 'and', 'for', 'with', 'from', 'that', 'this', 'into', 'fix', 'add', 'update', 'change', 'check', 'please',
   'bot', 'src', 'test', 'tests', 'file', 'files', 'code', 'issue', 'bug', 'feature', 'work', 'ticket', 'task',
@@ -33,6 +30,7 @@ export interface LaunchDispatchPlan {
 export interface PreparedLaunchCapsule {
   readonly verdict: Verdict
   readonly dispatch?: LaunchDispatchPlan
+  readonly workflowRisk?: WorkflowRiskResult
   readonly blocked?: readonly [string, ...string[]]
   readonly capsule: ContextCapsule
   readonly slice: SliceResult
@@ -166,49 +164,7 @@ export function extractSearchKeywords(texts: readonly (string | undefined)[]): s
   return [...seen]
 }
 
-async function walkCodeFiles(root: string, dir = root, out: string[] = []): Promise<string[]> {
-  const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
-  for (const ent of entries) {
-    if (IGNORE_DIRS.has(ent.name)) continue
-    const full = join(dir, ent.name)
-    if (ent.isDirectory()) await walkCodeFiles(root, full, out)
-    else if (ent.isFile() && CODE_FILE_RE.test(ent.name)) out.push(relative(root, full).replace(/\\/g, '/'))
-  }
-  return out
-}
-
-async function locateFilesByKeywords(workspaceDir: string, keywords: readonly string[], rgBin?: string): Promise<string[]> {
-  if (!workspaceDir.trim() || keywords.length === 0) return []
-  let rootReal: string
-  try { rootReal = await realpath(resolve(workspaceDir)) } catch { return [] }
-  const scores = new Map<string, number>()
-  const bump = (rel: string, weight = 1) => {
-    const posix = rel.replace(/\\/g, '/').replace(/^\.\//, '')
-    if (!posix || posix.startsWith('..') || !CODE_FILE_RE.test(posix)) return
-    const bonus = /(?:^|\/)tests?\//.test(posix) || /\.(?:spec|test)\./.test(posix) ? 0.5 : 2
-    scores.set(posix, (scores.get(posix) ?? 0) + weight * bonus)
-  }
-  const bin = rgBin ?? (existsSync(DSH_BUNDLED_RG) ? DSH_BUNDLED_RG : 'rg')
-  try {
-    const ignoreGlobs = [...IGNORE_DIRS].flatMap(d => ['--glob', `!${d}`])
-    const args = ['-l', '-F', '-i', ...ignoreGlobs, ...keywords.flatMap(k => ['-e', k]), '--', '.']
-    const res = await execFileAsync(bin, args, { cwd: rootReal, timeout: 4000, maxBuffer: 1024 * 1024 }).catch((err: unknown) => {
-      if ((err as { code?: unknown } | null)?.code === 1) return { stdout: '' }
-      throw err
-    })
-    for (const line of res.stdout.split(/\r?\n/).filter(Boolean)) bump(line, 1)
-  } catch {
-    const files = await walkCodeFiles(rootReal)
-    for (const rel of files) {
-      const content = await readFile(join(rootReal, rel), 'utf8').catch(() => '')
-      const lower = content.toLowerCase()
-      for (const kw of keywords) if (lower.includes(kw.toLowerCase())) bump(rel, 1)
-    }
-  }
-  return [...scores.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 8).map(([f]) => f)
-}
-
-/** 发射前提取工作区 1-Hop 切片（显式路径优先，缺失时走关键词 rg 定位）、计算自适应派发档位并记录事件脊。 */
+/** 发射前提取工作区 1-Hop 切片（显式路径优先，缺失时走关键词 rg 定位）、风险分诊与自适应派发并记入 M0。 */
 export async function prepareLaunchCapsule(input: LaunchCapsuleInput): Promise<PreparedLaunchCapsule | undefined> {
   const { ticket, assignment, workspaceDir, triggerText, registry, recordSpine } = input
   const texts = [triggerText, ticket.title, ticket.execution?.assignment]
@@ -220,10 +176,19 @@ export async function prepareLaunchCapsule(input: LaunchCapsuleInput): Promise<P
   }
   const retryCount = input.retryCount ?? countFailedRetries(ticket.assignments)
   const verifyCmds = ticket.execution?.verifyCommands
+  const initialRisk = classifyWorkflowRisk({
+    paths: entryFiles.length > 0 ? entryFiles : candidates, title: ticket.title,
+    assignment: ticket.execution?.assignment, triggerText, retryCount,
+  })
   const matchedPlaybooks = input.playbooks?.length
-    ? matchDepositPlaybooks({ deposits: input.playbooks, workspace: ticket.execution?.workspace, entryFiles, title: ticket.title, ...(triggerText ? { triggerText } : {}) })
+    ? matchDepositPlaybooks({
+        deposits: input.playbooks, workspace: ticket.execution?.workspace, entryFiles,
+        title: ticket.title, ...(triggerText ? { triggerText } : {}), riskTier: initialRisk.tier,
+      })
     : []
-  if (entryFiles.length === 0 && retryCount === 0 && (!verifyCmds || verifyCmds.length === 0) && matchedPlaybooks.length === 0) return undefined
+  if (entryFiles.length === 0 && retryCount === 0 && (!verifyCmds || verifyCmds.length === 0) && matchedPlaybooks.length === 0 && initialRisk.tier === 'fast') {
+    return undefined
+  }
 
   const resolvedRg = input.rgBin ?? (existsSync(DSH_BUNDLED_RG) ? DSH_BUNDLED_RG : undefined)
   const slice: SliceResult = entryFiles.length > 0
@@ -245,11 +210,23 @@ export async function prepareLaunchCapsule(input: LaunchCapsuleInput): Promise<P
     ...(input.allowTeam !== undefined ? { allowTeam: input.allowTeam } : {}),
   })
   const dispatch = extractDispatchPlan(evaluation.verdict)
+  const riskPaths = slice.targetFiles.length > 0 ? slice.targetFiles : candidates
+  const workflowRisk = classifyWorkflowRisk({
+    paths: riskPaths, title: ticket.title, assignment: ticket.execution?.assignment, triggerText, retryCount,
+    ...(dispatch ? { executionMode: dispatch.executionMode } : {}),
+  })
+  const finalPlaybooks = input.playbooks?.length && (workflowRisk.tier !== initialRisk.tier || slice.targetFiles.length > entryFiles.length)
+    ? matchDepositPlaybooks({
+        deposits: input.playbooks, workspace: ticket.execution?.workspace, entryFiles: riskPaths,
+        title: ticket.title, ...(triggerText ? { triggerText } : {}), riskTier: workflowRisk.tier,
+      })
+    : matchedPlaybooks
   const blocked = evaluation.verdict.kind === 'deny' ? evaluation.verdict.blockers : undefined
   const budgetBytes = input.maxBytes ?? DEFAULT_ADAPTIVE_DISPATCH_PARAMS.max_capsule_bytes
-  const playbookBlock = renderPlaybookCapsuleBlock(matchedPlaybooks, Math.min(4096, budgetBytes))
+  const playbookBlock = renderPlaybookCapsuleBlock(finalPlaybooks, Math.min(4096, budgetBytes))
   const verifyHeader = verifyCmds?.length ? `## 标准验证命令\n\`\`\`verify\n${verifyCmds.join('\n')}\n\`\`\`\n\n` : ''
-  const prefix = verifyHeader + (playbookBlock.text ? `${playbookBlock.text}\n\n` : '')
+  const riskNotice = renderElevatedWorkflowNotice(workflowRisk)
+  const prefix = verifyHeader + (riskNotice ? `${riskNotice}\n\n` : '') + (playbookBlock.text ? `${playbookBlock.text}\n\n` : '')
   const prefixBytes = Buffer.byteLength(prefix, 'utf8')
   const baseCapsule = assembleCapsule(slice, Math.max(0, budgetBytes - (prefixBytes <= budgetBytes ? prefixBytes : 0)))
   const fullText = prefix && prefixBytes <= budgetBytes ? prefix + baseCapsule.text : baseCapsule.text
@@ -279,6 +256,7 @@ export async function prepareLaunchCapsule(input: LaunchCapsuleInput): Promise<P
         retryCount,
         verdict: evaluation.verdict,
         ...(dispatch ? { dispatch } : {}),
+        workflowRisk,
         ...(blocked ? { blocked } : {}),
         capsuleBytes: capsule.usedBytes,
         overflow: capsule.overflow,
@@ -292,6 +270,7 @@ export async function prepareLaunchCapsule(input: LaunchCapsuleInput): Promise<P
   return {
     verdict: evaluation.verdict,
     ...(dispatch ? { dispatch } : {}),
+    workflowRisk,
     ...(blocked ? { blocked } : {}),
     capsule,
     slice,

@@ -50,6 +50,23 @@ export {
   type ReproTerminalState,
 } from './repro-status.ts'
 export {
+  DEFAULT_COMMAND_CONTRACT_PARAMS,
+  createCommandContractGate,
+  evaluateCommandContract,
+  inspectVerifyCommand,
+  verifyCommandContractGate,
+  type CommandContractCtx,
+  type CommandContractParams,
+} from './command-contract.ts'
+export {
+  DEFAULT_CHANGE_TEST_COVERAGE_PARAMS,
+  createChangeTestCoverageGate,
+  evaluateChangeTestCoverage,
+  verifyChangeTestCoverageGate,
+  type ChangeTestCoverageCtx,
+  type ChangeTestCoverageParams,
+} from './change-test-coverage.ts'
+export {
   DEFAULT_REPLY_DESK_PARAMS,
   createReplyDeskGate,
   evaluateReplyDesk,

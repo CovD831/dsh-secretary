@@ -141,7 +141,7 @@ describe('P3 capsule pollution, worktree double-prepare, and domain-agnostic ker
     expect(ids).not.toContain('verify.repro-evidence')
     expect(ids).not.toContain('outward.reply-desk')
     const deps = await readDepositsProjection(store, stateDir)
-    expect(deps.admittedCount).toBe(7)
+    expect(deps.admittedCount).toBe(9)
 
     gov.registry.register(compileDeclarativeEntry({
       id: 'user.intake-nonempty', kind: 'gate', version: 1, point: 'intake.received',
@@ -217,7 +217,7 @@ describe('P3 capsule pollution, worktree double-prepare, and domain-agnostic ker
     expect(ledger).toContain('intake.bug-quadruple')
 
     const proj = await readDepositsProjection(store, stateDir)
-    expect(proj.admittedCount).toBe(9)
+    expect(proj.admittedCount).toBe(11)
     expect(proj.items.find(i => i.id === 'outbox.no-secret-token')?.admitted).toBe(true)
     expect(proj.items.find(i => i.id === 'intake.bug-quadruple')?.admitted).toBe(true)
 

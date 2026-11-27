@@ -1,0 +1,78 @@
+[
+  {
+    "name": "green-real-verify-command",
+    "expected": "allow",
+    "ctx": {
+      "codeChangedPaths": ["src/app/runtime.ts"],
+      "verifyCommands": ["pnpm typecheck", "pnpm test"]
+    }
+  },
+  {
+    "name": "green-compound-echo-prefix-and-cleanup",
+    "expected": "allow",
+    "ctx": {
+      "codeChangedPaths": ["src/app/runtime.ts"],
+      "verifyCommands": [
+        "echo \"=== run tests ===\" && pnpm test",
+        "rm -f tmp.db || true && node --test"
+      ]
+    }
+  },
+  {
+    "name": "green-docs-only-skip",
+    "expected": "allow",
+    "ctx": {
+      "codeChangedPaths": [],
+      "verifyCommands": []
+    }
+  },
+  {
+    "name": "red-noop-true-command",
+    "expected": "deny",
+    "ctx": {
+      "codeChangedPaths": ["src/calc.ts"],
+      "verifyCommands": ["true"]
+    }
+  },
+  {
+    "name": "red-tail-swallow-or-true",
+    "expected": "deny",
+    "ctx": {
+      "codeChangedPaths": ["src/calc.ts"],
+      "verifyCommands": ["pnpm test || true"]
+    }
+  },
+  {
+    "name": "red-swallow-or-echo-and-pipe-cat",
+    "expected": "deny",
+    "ctx": {
+      "codeChangedPaths": ["src/calc.ts"],
+      "verifyCommands": ["pnpm test || echo ok", "pnpm test | cat", "sh -c \"pnpm test || true\""]
+    }
+  },
+  {
+    "name": "red-node-exit-zero-noop",
+    "expected": "deny",
+    "ctx": {
+      "codeChangedPaths": ["src/calc.ts"],
+      "verifyCommands": ["node -e \"process.exit(0)\""]
+    }
+  },
+  {
+    "name": "unmeasured-empty-commands-for-code",
+    "expected": "unmeasured",
+    "expectedCause": "no-evidence",
+    "ctx": {
+      "codeChangedPaths": ["src/calc.ts"],
+      "verifyCommands": []
+    }
+  },
+  {
+    "name": "unmeasured-missing-code-changed-paths",
+    "expected": "unmeasured",
+    "expectedCause": "missing-input",
+    "ctx": {
+      "verifyCommands": ["pnpm test"]
+    }
+  }
+]

@@ -205,11 +205,14 @@ describe('Milestone 2: Zero-Code Building Blocks, 10 Seed Deposits & PreExecute 
     expect(ev.observed.some(o => o.id === 'verify.no-tmp-write' && o.outcome === 'deny')).toBe(true)
   })
 
-  it('admits and runs red/green + mutant cases for all 10 deposit packages under deposits/, enforcing D5 & LEDGER.md', async () => {
+  it('admits and runs red/green + mutant cases for all 12 deposit packages under deposits/, enforcing D5 & LEDGER.md', async () => {
     const depositsRoot = join(process.cwd(), 'deposits')
     const dirs = (await readdir(depositsRoot, { withFileTypes: true })).filter(d => d.isDirectory()).map(d => d.name).sort()
-    expect(dirs.length).toBe(10)
-    expect(dirs).toEqual(expect.arrayContaining(['seen-three-friction', 'stale-ticket-patrol', 'secret-path-guard', 'replay-ci-evaluator']))
+    expect(dirs.length).toBe(12)
+    expect(dirs).toEqual(expect.arrayContaining([
+      'seen-three-friction', 'stale-ticket-patrol', 'secret-path-guard', 'replay-ci-evaluator',
+      'verify-command-contract', 'verify-change-test-coverage',
+    ]))
 
     for (const dirName of dirs) {
       const loaded = await loadDepositPackage(join(depositsRoot, dirName))
@@ -226,7 +229,7 @@ describe('Milestone 2: Zero-Code Building Blocks, 10 Seed Deposits & PreExecute 
     const report = await discoverAndRegisterDeposits({ registry, dirs: [depositsRoot] })
     expect(report.rejectedIds).toEqual([])
     expect(report.failedCaseIds).toEqual([])
-    expect(report.registeredIds.length).toBe(10)
+    expect(report.registeredIds.length).toBe(12)
 
     const { events, appender } = makeSpineCollector()
     const frictionLoaded = await loadDepositPackage(join(depositsRoot, 'seen-three-friction'))

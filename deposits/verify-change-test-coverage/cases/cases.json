@@ -1,0 +1,62 @@
+[
+  {
+    "name": "green-with-test-changes",
+    "expected": "allow",
+    "ctx": {
+      "taskType": "feature",
+      "codeChangedPaths": ["src/calc.ts"],
+      "testChangedPaths": ["tests/calc.spec.ts"],
+      "changedCodeLines": 55
+    }
+  },
+  {
+    "name": "green-small-change-below-threshold",
+    "expected": "allow",
+    "ctx": {
+      "taskType": "feature",
+      "codeChangedPaths": ["src/calc.ts"],
+      "testChangedPaths": [],
+      "changedCodeLines": 10
+    }
+  },
+  {
+    "name": "green-docs-exempt",
+    "expected": "allow",
+    "ctx": {
+      "taskType": "docs",
+      "codeChangedPaths": ["scripts/gen-doc.mjs"],
+      "testChangedPaths": [],
+      "changedCodeLines": 80
+    }
+  },
+  {
+    "name": "red-substantial-code-without-tests",
+    "expected": "deny",
+    "ctx": {
+      "taskType": "feature",
+      "codeChangedPaths": ["src/calc.ts"],
+      "testChangedPaths": [],
+      "changedCodeLines": 45
+    }
+  },
+  {
+    "name": "unmeasured-missing-line-count",
+    "expected": "unmeasured",
+    "expectedCause": "no-evidence",
+    "ctx": {
+      "taskType": "feature",
+      "codeChangedPaths": ["src/calc.ts"],
+      "testChangedPaths": [],
+      "changedCodeLines": null
+    }
+  },
+  {
+    "name": "unmeasured-missing-changed-paths",
+    "expected": "unmeasured",
+    "expectedCause": "missing-input",
+    "ctx": {
+      "taskType": "feature",
+      "testChangedPaths": []
+    }
+  }
+]

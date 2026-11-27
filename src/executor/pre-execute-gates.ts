@@ -13,14 +13,18 @@ import {
   auditProvisionedWorktree, collectGitStatus, computeWorkspaceRevision,
   findRevertedSessionPaths, hashWorkspaceFileSync, resolveProvisionedAnchor,
 } from './git-workspace-snapshot.ts'
+import { runReadyAcceptanceChecks, type CompletionCodeMetrics } from './completion-metrics.ts'
 import { inferTicketTaskType, runVerifyRerunPhase } from './red-green-probe.ts'
 import { resolveRootTicketId } from './runtime-guard.ts'
 import { buildSessionSandboxRunner } from './sandbox-runner.ts'
+import type { WorkflowRiskResult } from './workflow-risk.ts'
 
 const SHELL_TOOL_RE = /^(?:bash|pwsh|bash_persistent|pwsh_persistent|sh|shell|powershell|zsh|cmd)$/i
 const EDITOR_BLIND_RE = /^str_replace_editor$/i
 const MAX_OBSERVED_TICKETS = 500
-const BUILTIN_VERIFY_POINTS = new Set(['verify.changed-paths', 'verify.secret-path-guard', 'verify.rerun'])
+const BUILTIN_VERIFY_POINTS = new Set([
+  'verify.changed-paths', 'verify.secret-path-guard', 'verify.rerun', 'verify.command-contract', 'verify.change-test-coverage',
+])
 
 declare module '../judgement/types.ts' {
   interface PointCatalog { 'verify.secret-path-guard': { readonly changedPaths: readonly string[] } }
@@ -262,9 +266,25 @@ export class PreExecuteCompletionGuard {
       }
     }
 
+    const verifyCommands = ticket?.execution?.verifyCommands ?? []
+    let readyMeta: { metrics: CompletionCodeMetrics; workflowRisk: WorkflowRiskResult } | undefined
+    if (isReadyReport) {
+      const acc = await runReadyAcceptanceChecks({
+        workdir, store: this.deps.store, rootId, ...(this.deps.memoryDir ? { memoryDir: this.deps.memoryDir } : {}),
+        ...(shellAudit?.base ? { shellBase: shellAudit.base } : {}), registry: this.deps.registry, gen, entries, union,
+        untrackedPaths: effGit.untrackedPaths, verifyCommands, taskType, ticket,
+      })
+      readyMeta = { metrics: acc.metrics, workflowRisk: acc.workflowRisk }
+      for (const c of acc.checks) {
+        this.appendGateEvent(rootId, exec, c.point, c.ev, c.extra)
+        if (c.ev.registered > 0 && (c.ev.verdict.kind === 'deny' || c.ev.verdict.kind === 'unmeasured')) {
+          return { kind: 'deny', reason: formatBlockReason(c.point, c.ev) }
+        }
+      }
+    }
+
     const customPoints = [...new Set(entries.filter(e => e.kind === 'gate' && e.stage !== 'retired' && e.point?.startsWith('verify.') && !BUILTIN_VERIFY_POINTS.has(e.point)).map(e => e.point!))]
     const rerunActive = entries.length === 0 || entries.some(e => e.kind === 'gate' && e.point === 'verify.rerun' && (e.stage === 'enforce' || e.stage === 'observe'))
-    const verifyCommands = ticket?.execution?.verifyCommands ?? []
     let commandResults: ExecuteVerifyRerunReport['results'] = []
     if (verifyCommands.length > 0 && (rerunActive || customPoints.length > 0)) {
       const revision = await computeWorkspaceRevision(workdir, effGit, effectiveSessionDiffPaths)
@@ -287,7 +307,9 @@ export class PreExecuteCompletionGuard {
     for (const pt of customPoints) {
       const customEval = await evaluatePointAtGeneration(this.deps.registry, pt as Point, {
         ...args, ticketId: rootId, taskType, declaredPaths, changedPaths: union,
-        sessionDiffPaths: effectiveSessionDiffPaths, gitDirtyPaths: effGit.gitDirtyPaths, untrackedPaths: effGit.untrackedPaths, commands: commandResults,
+        sessionDiffPaths: effectiveSessionDiffPaths, gitDirtyPaths: effGit.gitDirtyPaths, untrackedPaths: effGit.untrackedPaths,
+        commands: commandResults, verifyCommands,
+        ...(readyMeta ? { ...readyMeta.metrics, workflowRisk: readyMeta.workflowRisk } : {}),
       } as never, gen)
       this.appendGateEvent(rootId, exec, pt, customEval, { taskType, checkedCount: union.length })
       if (customEval.registered > 0 && (customEval.verdict.kind === 'deny' || customEval.verdict.kind === 'unmeasured')) {

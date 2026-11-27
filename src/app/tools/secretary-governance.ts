@@ -2,7 +2,10 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { telemetryToSpineInput, validateDepositDraft, writeDepositDraftPackage, type DepositDraft } from '../../authoring/index.ts'
-import { createAdaptiveDispatchGate, createChangedPathsGate, createVerifyRerunGate } from '../../judgement/gates/index.ts'
+import {
+  createAdaptiveDispatchGate, createChangeTestCoverageGate, createChangedPathsGate,
+  createCommandContractGate, createVerifyRerunGate,
+} from '../../judgement/gates/index.ts'
 import {
   RESERVED_BUILTIN_DEPOSIT_IDS, auditRequires, compileDeclarativeEntry, evaluateCompiledEntry, loadDepositPackage,
   runDepositCases, validateAndNormalizePlaybook, validateDeclarativeRule, type AnyGateDef, type DeclarativeRule, type DepositManifest, type MandateBinding,
@@ -19,7 +22,9 @@ import {
 } from './secretary-governance-schemas.ts'
 import { tool, type Tool } from './tool.ts'
 
-const BUILTIN_EXECUTABLE_IDS = new Set(['ticket.adaptive-dispatch', 'verify.changed-paths', 'verify.rerun'])
+const BUILTIN_EXECUTABLE_IDS = new Set([
+  'ticket.adaptive-dispatch', 'verify.changed-paths', 'verify.rerun', 'verify.command-contract', 'verify.change-test-coverage',
+])
 const stripUndefined = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 async function resolveTriggerSpineEnvelope(
@@ -97,6 +102,8 @@ function buildStandaloneGateFn(draft: DepositDraft, raw?: RawDraft): (ctx: unkno
   const bound = extractDefaultParams(draft.params)
   if (draft.id === 'verify.changed-paths') return ctx => createChangedPathsGate(bound).gate(ctx as never)
   if (draft.id === 'verify.rerun') return ctx => createVerifyRerunGate(bound).gate(ctx as never)
+  if (draft.id === 'verify.command-contract') return ctx => createCommandContractGate(bound).gate(ctx as never)
+  if (draft.id === 'verify.change-test-coverage') return ctx => createChangeTestCoverageGate(bound).gate(ctx as never)
   if (draft.id === 'ticket.adaptive-dispatch') return ctx => createAdaptiveDispatchGate(bound).gate(ctx as never)
   if (raw?.rule !== undefined) {
     const entry = compileDeclarativeEntry(draftToManifest(draft, raw), bound)
@@ -111,7 +118,7 @@ function buildStandaloneGateFn(draft: DepositDraft, raw?: RawDraft): (ctx: unkno
 }
 
 function buildReplayGate(gov: GovernanceRuntime, draft: DepositDraft, raw?: RawDraft): ReplayGateFn<unknown> {
-  if (draft.id === 'verify.changed-paths' || draft.id === 'verify.rerun' || draft.id === 'ticket.adaptive-dispatch' || raw?.rule !== undefined) return buildStandaloneGateFn(draft, raw)
+  if (BUILTIN_EXECUTABLE_IDS.has(draft.id) || raw?.rule !== undefined) return buildStandaloneGateFn(draft, raw)
   if (gov.registry.list().some(g => g.kind === 'gate' && g.id === draft.id)) {
     return async (ctx): Promise<Verdict> => {
       const ev = await gov.registry.evaluate(draft.point as Point, ctx as never), hit = [...ev.ran, ...ev.observed].find(r => r.id === draft.id)

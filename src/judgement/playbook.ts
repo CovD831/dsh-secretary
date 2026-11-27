@@ -12,7 +12,7 @@ const PLAYBOOK_HEADINGS = new Set(['操作手册', 'playbook', 'sop'])
 const MAX_SUMMARY = 300, MAX_STEP = 500, MAX_STEPS = 30, MAX_SECTION = 8192, MAX_GENERATIONS = 500
 
 export interface PlaybookCandidate { readonly id: string; readonly stage: Stage; readonly playbook: PlaybookSpec }
-export interface MatchedPlaybook extends PlaybookCandidate { readonly matchedBy: readonly ('workspace' | 'glob' | 'keyword' | 'default')[] }
+export interface MatchedPlaybook extends PlaybookCandidate { readonly matchedBy: readonly ('workspace' | 'glob' | 'keyword' | 'riskTier' | 'default')[] }
 export interface PlaybookRenderResult { readonly text: string; readonly matchedIds: string[]; readonly fullIds: string[]; readonly indexOnlyIds: string[]; readonly usedBytes: number }
 export interface RegistryGeneration { readonly hash: string; readonly capturedAt: string; readonly stages: Record<string, Stage>; readonly versions: Record<string, number> }
 
@@ -67,10 +67,14 @@ export function validateAndNormalizePlaybook(raw: unknown, prose: string): { pla
       for (const key of ['workspaces', 'globs', 'keywords'] as const) {
         if (raw['when'][key] !== undefined && !isStrArr(raw['when'][key])) issues.push({ field: `playbook.when.${key}`, reason: `playbook.when.${key} 必须为非空字符串数组` })
       }
+      const rtRaw = raw['when']['riskTiers']
+      const rtOk = rtRaw === undefined || (Array.isArray(rtRaw) && rtRaw.length > 0 && rtRaw.every(t => t === 'fast' || t === 'elevated'))
+      if (!rtOk) issues.push({ field: 'playbook.when.riskTiers', reason: 'playbook.when.riskTiers 必须为包含 fast/elevated 的非空数组' })
       when = {
         ...(isStrArr(raw['when']['workspaces']) ? { workspaces: raw['when']['workspaces'] } : {}),
         ...(isStrArr(raw['when']['globs']) ? { globs: raw['when']['globs'] } : {}),
         ...(isStrArr(raw['when']['keywords']) ? { keywords: raw['when']['keywords'] } : {}),
+        ...(Array.isArray(rtRaw) && rtOk ? { riskTiers: rtRaw as ('fast' | 'elevated')[] } : {}),
       }
     }
   }
@@ -90,6 +94,7 @@ export function validateAndNormalizePlaybook(raw: unknown, prose: string): { pla
 export function matchDepositPlaybooks(input: {
   readonly deposits: readonly { readonly id: string; readonly stage: Stage; readonly playbook?: PlaybookSpec }[]
   readonly workspace?: string; readonly entryFiles?: readonly string[]; readonly title?: string; readonly triggerText?: string
+  readonly riskTier?: 'fast' | 'elevated'
 }): MatchedPlaybook[] {
   const haystack = `${input.title ?? ''}\n${input.triggerText ?? ''}`.toLowerCase()
   const files = (input.entryFiles ?? []).map(f => f.replace(/\\/g, '/').replace(/^\.\//, ''))
@@ -97,13 +102,14 @@ export function matchDepositPlaybooks(input: {
   for (const d of input.deposits) {
     if (!d.playbook || (d.stage !== 'observe' && d.stage !== 'enforce')) continue
     const w = d.playbook.when
-    if (!w || (!w.workspaces?.length && !w.globs?.length && !w.keywords?.length)) {
+    if (!w || (!w.workspaces?.length && !w.globs?.length && !w.keywords?.length && !w.riskTiers?.length)) {
       matched.push({ id: d.id, stage: d.stage, playbook: d.playbook, matchedBy: ['default'] }); continue
     }
-    const by: ('workspace' | 'glob' | 'keyword')[] = []
+    const by: ('workspace' | 'glob' | 'keyword' | 'riskTier')[] = []
     if (w.workspaces?.length && input.workspace && w.workspaces.includes(input.workspace)) by.push('workspace')
     if (w.globs?.length && files.length > 0) { const res = w.globs.map(globToRegex); if (files.some(f => res.some(re => re.test(f)))) by.push('glob') }
     if (w.keywords?.length && haystack.trim() !== '' && w.keywords.some(kw => haystack.includes(kw.toLowerCase()))) by.push('keyword')
+    if (w.riskTiers?.length && input.riskTier && w.riskTiers.includes(input.riskTier)) by.push('riskTier')
     if (by.length > 0) matched.push({ id: d.id, stage: d.stage, playbook: d.playbook, matchedBy: by })
   }
   return matched

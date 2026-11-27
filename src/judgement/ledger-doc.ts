@@ -5,8 +5,8 @@ import type { SpineAppender, SourceRef } from '../spine/types.ts'
 import { compileDeclarativeEntry } from './declarative.ts'
 import { loadDepositPackage, runDepositCases, type DepositCase, type DepositCasesReport, type DepositViolation } from './deposit.ts'
 import {
-  createAdaptiveDispatchGate, createChangedPathsGate, createIssueIntakeGate,
-  createReplyDeskGate, createReproStatusGate, createVerifyRerunGate,
+  createAdaptiveDispatchGate, createChangeTestCoverageGate, createChangedPathsGate, createCommandContractGate,
+  createIssueIntakeGate, createReplyDeskGate, createReproStatusGate, createVerifyRerunGate,
   issueIntakeGate, replyDeskGate, reproStatusGate,
 } from './gates/index.ts'
 import type { ExtendedJudgementRegistry } from './registry.ts'
@@ -71,15 +71,17 @@ const VALID_STAGES = new Set<Stage>(['shadow', 'observe', 'enforce', 'retired'])
 export const OSS_SEEDED_GATE_IDS: ReadonlySet<string> = new Set(['intake.bug-quadruple', 'verify.repro-evidence', 'outward.reply-desk'])
 export const RESERVED_BUILTIN_DEPOSIT_IDS: ReadonlySet<string> = new Set([
   'workspace.gc.safety', 'ticket.dispatch.isolation-ceiling', 'ticket.adaptive-dispatch',
-  'verify.changed-paths', 'verify.rerun', 'intake.bug-quadruple', 'verify.repro-evidence',
-  'outward.reply-desk', 'verify.secret-path-guard', 'replay.ci-evaluator',
-  'friction.seen-three', 'ticket.stale-patrol',
+  'verify.changed-paths', 'verify.rerun', 'verify.command-contract', 'verify.change-test-coverage',
+  'intake.bug-quadruple', 'verify.repro-evidence', 'outward.reply-desk', 'verify.secret-path-guard',
+  'replay.ci-evaluator', 'friction.seen-three', 'ticket.stale-patrol',
 ])
 
 const BUILTIN_FACTORIES: Readonly<Record<string, () => AnyGateDef>> = {
   'ticket.adaptive-dispatch': () => createAdaptiveDispatchGate(),
   'verify.changed-paths': () => createChangedPathsGate(),
   'verify.rerun': () => createVerifyRerunGate(),
+  'verify.command-contract': () => createCommandContractGate(),
+  'verify.change-test-coverage': () => createChangeTestCoverageGate(),
   'intake.bug-quadruple': () => createIssueIntakeGate(),
   'verify.repro-evidence': () => createReproStatusGate(),
   'outward.reply-desk': () => createReplyDeskGate(),

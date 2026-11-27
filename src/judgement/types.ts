@@ -196,6 +196,7 @@ export interface PlaybookWhen {
   readonly workspaces?: readonly string[]
   readonly globs?: readonly string[]
   readonly keywords?: readonly string[]
+  readonly riskTiers?: readonly ('fast' | 'elevated')[]
 }
 export interface PlaybookSpec {
   readonly summary: string
