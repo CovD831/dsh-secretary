@@ -18,9 +18,10 @@ import {
 } from '../memory/index.ts'
 import {
   buildCalibratedGateRecord, collectOnlineRsiSnapshot, computeExpectedCalibrationError, evaluateSealedHoldout,
-  fitTemperatureScaler, readM0Events, runLeaveOneOutAblation, splitByFamily,
+  fitTemperatureScaler, readM0Events, routeProblemCluster, runLeaveOneOutAblation, splitByFamily,
   type AblationCase, type CalibratedGateRecord, type ExpectedCalibrationReport, type HoldoutEvaluationResult,
-  type LeaveOneOutResult, type OnlineCollectionResult, type ReplayCase, type TemperatureScaler,
+  type LeaveOneOutResult, type OnlineCollectionResult, type ProblemCluster, type ReplayCase, type TemperatureScaler,
+  type TierRouteDecision,
 } from '../rsi/index.ts'
 import { loadSafeCandidateEntry } from './governance-drafts.ts'
 import type { GovernanceRuntime } from './governance.ts'
@@ -38,12 +39,19 @@ export interface MemoryStudioView {
   readonly metrics: MemoryBelievabilityMetrics
 }
 
+export interface RoutedProblemCluster {
+  readonly cluster: ProblemCluster
+  readonly decision: TierRouteDecision
+}
+
 export interface RsiWorkbenchView {
   readonly snapshot: OnlineCollectionResult
   readonly scaler: TemperatureScaler
   readonly calibratedRecords: CalibratedGateRecord[]
   readonly calibration: ExpectedCalibrationReport
   readonly openedHoldouts: Record<string, string>
+  readonly collectionMode?: 'production' | 'e2e'
+  readonly routedClusters?: readonly RoutedProblemCluster[]
 }
 
 export function depositDirsOf(stateDir: string): readonly string[] {
@@ -229,14 +237,21 @@ export async function decideMemoryPatch(
   return { ok: false, writeResult, reason: writeResult.reason }
 }
 
-/** 聚合统计 RSI、四分归因、L1–L13 回填、Seen>=3 Rung 1 候选与预筛校准 ECE 工作台数据。 */
+/** 聚合统计 RSI、四分归因、L1–L13 回填、根因前筛分档与预筛校准 ECE 工作台数据。 */
 export async function readRsiStudioView(
   gov: GovernanceRuntime,
   persistence?: Pick<SessionPersistence, 'flush' | 'open'>,
+  options?: { readonly collectionMode?: 'production' | 'e2e' },
 ): Promise<RsiWorkbenchView> {
+  const collectionMode = options?.collectionMode ?? (process.env['DSH_RSI_COLLECTION_MODE'] === 'production' ? 'production' : 'e2e')
+  const workspaceDirs = Object.fromEntries(gov.workspaces.list().map(w => [w.id, w.repository]))
   const snapshot = await collectOnlineRsiSnapshot({
-    db: gov.storeRef.db, memoryDir: gov.memoryDir, ...(persistence ? { persistence } : {}),
+    db: gov.storeRef.db, memoryDir: gov.memoryDir, collectionMode, workspaceDirs, ...(persistence ? { persistence } : {}),
   })
+  const routedClusters: RoutedProblemCluster[] = (snapshot.problemClusters ?? [])
+    .map(cluster => ({ cluster, decision: routeProblemCluster(cluster.features) }))
+    .sort((a, b) => (Number(b.cluster.qualifiesForRung1) - Number(a.cluster.qualifiesForRung1))
+      || ((b.cluster.refs.length + b.cluster.explainedSymptoms.length) - (a.cluster.refs.length + a.cluster.explainedSymptoms.length)))
   const fitted = fitTemperatureScaler(snapshot.calibratedRecords)
   const storedScaler = gov.storeRef.get(KV.governance.temperatureScaler)
   const scaler = fitted.fitted ? fitted : (storedScaler ?? fitted)
@@ -247,7 +262,7 @@ export async function readRsiStudioView(
   }, scaler))
   const calibration = computeExpectedCalibrationError(calibratedRecords)
   const openedHoldouts = gov.storeRef.get(KV.governance.openedHoldouts) ?? {}
-  return { snapshot, scaler, calibratedRecords, calibration, openedHoldouts }
+  return { snapshot, scaler, calibratedRecords, calibration, openedHoldouts, collectionMode, routedClusters }
 }
 
 /** 运行全注册表留一消融（识别冗余规则与冲突对）。 */

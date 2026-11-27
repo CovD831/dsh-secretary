@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 import { assembleCapsule, buildCapsuleSections, matchPitfalls, measureSectionsBytes } from './capsule.ts'
 import type { CallSite, ImportedSignatureBlock, SliceRequest, SliceResult } from './types.ts'
 
-export { assembleCapsule, matchPitfalls }
+export { assembleCapsule, matchPitfalls, parseRelativeImports, resolveLocalImport, walkWorkspaceFiles }
 
 const execFileAsync = promisify(execFile)
 const IGNORED_DIRS = new Set(['.git', 'node_modules', 'dist', 'lib', 'coverage', '.next'])

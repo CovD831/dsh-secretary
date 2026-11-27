@@ -3,6 +3,7 @@ import type { DepositDraft } from '../authoring/types.ts'
 import type { EvaluationReading, Point } from '../judgement/types.ts'
 import type { EvidenceRef, SourceRef, SpineDraft, SpineSource, Taint } from '../spine/types.ts'
 import type { Verdict } from '../judgement/types.ts'
+import type { ProblemCluster } from './problem-clustering.ts'
 
 export type ExpectedOutcome = 'defect' | 'clean' | 'unknown'
 export type SplitBucket = 'train' | 'validation' | 'holdout'
@@ -269,6 +270,7 @@ export interface OnlineCollectionResult {
   readonly taskRecords: readonly TaskBehaviorRecord[]; readonly behavioralMetrics: BehavioralMetricsReading
   readonly replayCases: readonly ReplayCase[]; readonly joinedSessionMetrics: readonly JoinedSessionMetricRow[]
   readonly attribution: AttributionSummary; readonly clusters: readonly FrictionCluster[]
+  readonly problemClusters?: readonly ProblemCluster[]
   readonly candidateDrafts: readonly DepositDraft[]; readonly minedSopDrafts?: readonly DepositDraft[]
   readonly calibratedRecords: readonly CalibratedGateRecord[]
   readonly effectivenessReading: EvaluationReading; readonly windowComparison: WindowComparison

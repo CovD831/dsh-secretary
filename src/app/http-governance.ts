@@ -164,7 +164,8 @@ export function governanceRoutes(
     'GET deposits/ledger': async () => syncDepositsAndLedger(requireGov()),
     'GET deposits/drafts': ({ query }) => {
       const inc = query.includeOnlineCandidates !== '0' && query.includeOnlineCandidates !== 'false'
-      return listDepositDrafts(requireGov(), { includeOnlineCandidates: inc })
+      const collectionMode = query.mode === 'e2e' ? 'e2e' : query.mode === 'production' ? 'production' : undefined
+      return listDepositDrafts(requireGov(), { includeOnlineCandidates: inc, ...(collectionMode ? { collectionMode } : {}) })
     },
     'POST deposits/drafts/adopt': async ({ body }) => {
       const parsed = AdoptDraftBody.parse(await body())
@@ -189,7 +190,10 @@ export function governanceRoutes(
       if (!Number.isInteger(idx) || idx < 0) fail400('Invalid patch index')
       return decideMemoryPatch(requireGov(), idx, parsed.decision)
     },
-    'GET rsi/workbench': () => readRsiStudioView(requireGov(), runtime.persistence),
+    'GET rsi/workbench': ({ query }) => {
+      const collectionMode = query.mode === 'e2e' ? 'e2e' : query.mode === 'production' ? 'production' : undefined
+      return readRsiStudioView(requireGov(), runtime.persistence, collectionMode ? { collectionMode } : undefined)
+    },
     'POST rsi/ablation': async ({ body }) => {
       const parsed = AblationBody.parse(await body())
       return runRsiAblationCheck(requireGov(), parsed.cases as AblationCase[])

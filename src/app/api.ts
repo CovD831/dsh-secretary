@@ -69,7 +69,7 @@ export interface Api {
   'GET secretary/feed': { response: { items: SecretaryFeedEntry[]; activeRuling: RulingItem | null; pendingCount: number } }
   'POST secretary/messages': { body: { text: string; threadId?: string }; response: { triggerId: string; received: string } }
   'GET deposits/ledger': { response: { records: readonly DiscoveredDepositRecord[]; markdown: string } }
-  'GET deposits/drafts': { query?: { includeOnlineCandidates?: boolean | '0' | '1' | 'true' | 'false' }; response: DepositDraftEntry[] }
+  'GET deposits/drafts': { query?: { includeOnlineCandidates?: boolean | '0' | '1' | 'true' | 'false'; mode?: 'production' | 'e2e' }; response: DepositDraftEntry[] }
   'POST deposits/drafts/adopt': {
     body: { draftId?: string; draft?: Record<string, unknown>; cases?: readonly DepositFixtureCase[]; overrides?: Record<string, unknown>; installShadow?: boolean; actorId?: string }
     response: AdoptDepositDraftResult
@@ -87,7 +87,7 @@ export interface Api {
     response: UserDirectMemoryResult
   }
   'POST memory/patches/:index': { body: { decision: 'approve' | 'dismiss' }; response: { ok: boolean; writeResult?: WriteResult; reason?: string } }
-  'GET rsi/workbench': { response: RsiWorkbenchView }
+  'GET rsi/workbench': { query?: { mode?: 'production' | 'e2e' }; response: RsiWorkbenchView }
   'POST rsi/ablation': {
     body: { cases: { id: string; family: string; input: unknown; expectedOutcome: 'defect' | 'clean' | 'unknown'; point?: string }[] }
     response: LeaveOneOutResult

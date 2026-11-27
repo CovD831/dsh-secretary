@@ -94,3 +94,26 @@ export {
   mineWorkflowSopDrafts,
   type MineWorkflowSopInput,
 } from './sop-miner.ts'
+export {
+  buildWorkspaceOneHopGraph,
+  clusterProblemEvents,
+  evaluateClusterQuality,
+  toClusterDraft,
+  type ClusterProblemOptions,
+  type ClusterQualityReport,
+  type ProblemCluster,
+  type ProblemClusterFeatures,
+  type ProblemRootKind,
+  type SafetyDirection,
+} from './problem-clustering.ts'
+export {
+  buildTierEscalationGate,
+  DEFAULT_TIER_COST_PROFILE,
+  DEFAULT_TIER_ROUTER_PARAMS,
+  routeProblemCluster,
+  UNROUTED_FAST_LANE_GATE,
+  type ExperimentTier,
+  type TierCostProfile,
+  type TierRouteDecision,
+  type TierRouterParams,
+} from './tier-router.ts'

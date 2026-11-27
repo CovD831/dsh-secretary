@@ -3,7 +3,7 @@ import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { evaluateCompiledEntry, type RegistryEntry } from '../judgement/index.ts'
 import { readCachedShardEvents } from '../projection/shard-cache.ts'
-import { readM0Events } from '../rsi/index.ts'
+import { buildWorkspaceOneHopGraph, clusterProblemEvents, readM0Events } from '../rsi/index.ts'
 import type { SourceRef, SpineEnvelope } from '../spine/index.ts'
 import type { GovernanceRuntime } from './governance.ts'
 import type { Store } from './store.ts'
@@ -106,19 +106,14 @@ export async function runStandingOrderPatrol(
   const frictionOrders = gov.registry.standingOrders('friction.repeated')
   const verifyOrders = gov.registry.standingOrders('verify.failed')
   if (m0Events.length > 0 && (hasFrictionGate || frictionOrders.length > 0 || verifyOrders.length > 0)) {
-    const clusters = new Map<string, { seenCount: number; workspaces: Set<string> }>()
+    const wsDirs = Object.fromEntries(gov.workspaces.list().map(w => [w.id, w.repository]))
+    const oneHopGraph = Object.keys(wsDirs).length > 0 ? await buildWorkspaceOneHopGraph(wsDirs) : undefined
+    const patrolInput = m0Events.filter(ev => !(ev.type === 'gate.evaluated' && (ev.payload as { point?: unknown })?.point === 'deposit.friction'))
+    const problemClusters = clusterProblemEvents(patrolInput, { mode: 'e2e', ...(oneHopGraph ? { oneHopGraph } : {}) })
     for (const ev of m0Events) {
       const p = (ev.payload ?? {}) as Record<string, unknown>
       const tid = typeof p['ticketId'] === 'string' ? p['ticketId'] : ev.stream.startsWith('ticket:') ? ev.stream.slice(7) : undefined
       const vKind = (p['verdict'] as { kind?: unknown } | undefined)?.kind
-      const isFric = (ev.type === 'worker.tool_finished' && p['isError'] === true) || ev.type === 'ticket.circuit_broken'
-        || (ev.type === 'gate.evaluated' && p['point'] !== 'deposit.friction' && (vKind === 'deny' || vKind === 'unmeasured'))
-      if (isFric) {
-        const key = typeof p['clusterKey'] === 'string' ? p['clusterKey'] : ev.type === 'worker.tool_finished' ? `tool:${String(p['toolName'] ?? 'unknown')}` : `gate:${String(p['point'] ?? ev.type)}`
-        const ws = (typeof p['workspace'] === 'string' ? p['workspace'] : tid ? gov.storeRef.tickets.get(tid)?.execution?.workspace : undefined) ?? tid ?? 'global'
-        const cur = clusters.get(key) ?? { seenCount: 0, workspaces: new Set<string>() }
-        cur.seenCount += 1; cur.workspaces.add(ws); clusters.set(key, cur)
-      }
       if (ev.type === 'gate.evaluated' && typeof p['point'] === 'string' && p['point'].startsWith('verify.') && p['point'] !== 'deposit.friction' && vKind === 'deny') {
         const blockers = Array.isArray(p['verdict'] && (p['verdict'] as { blockers?: unknown }).blockers) ? ((p['verdict'] as { blockers: unknown[] }).blockers).length : 1
         for (const order of verifyOrders) {
@@ -134,25 +129,26 @@ export async function runStandingOrderPatrol(
         }
       }
     }
-    for (const [key, c] of clusters) {
-      const dedupKey = `${key}:${c.seenCount}`, distinctWorkspaces = c.workspaces.size
+    for (const c of problemClusters) {
+      const key = c.key, seenCount = c.refs.length
+      const dedupKey = `${key}:${seenCount}`, distinctWorkspaces = c.workspaces.length > 0 ? c.workspaces.length : Math.max(1, c.ticketIds.length)
       if (hasFrictionGate && !seenSignals.has(`deposit.friction:${dedupKey}`)) {
         seenSignals.add(`deposit.friction:${dedupKey}`)
-        const evRes = await gov.registry.evaluate('deposit.friction' as never, { seenCount: c.seenCount, distinctWorkspaces } as never)
+        const evRes = await gov.registry.evaluate('deposit.friction' as never, { seenCount, distinctWorkspaces } as never)
         gov.appender.append({
-          id: `patrol:fric-gate:${key}:${c.seenCount}`, at: now.toISOString(), stream: `deposit:${key}`,
+          id: `patrol:fric-gate:${key}:${seenCount}`, at: now.toISOString(), stream: `deposit:${key}`,
           type: 'gate.evaluated', source: { kind: 'system', ref: 'governance.patrol' }, evidence: [], taint: 'trusted',
-          payload: { point: 'deposit.friction', dedupKey, clusterKey: key, seenCount: c.seenCount, distinctWorkspaces, verdict: evRes.verdict, ran: evRes.ran, observed: evRes.observed },
+          payload: { point: 'deposit.friction', dedupKey, clusterKey: key, seenCount, distinctWorkspaces, verdict: evRes.verdict, ran: evRes.ran, observed: evRes.observed },
         })
       }
       for (const order of frictionOrders) {
         if (seenSignals.has(`${order.id}:${dedupKey}`)) continue
         seenSignals.add(`${order.id}:${dedupKey}`)
-        const verdict = await evaluateCompiledEntry(order as unknown as RegistryEntry, { signal: 'friction.repeated', elapsedMs: Number.MAX_SAFE_INTEGER, isolation: 'I1', payload: { patternId: key, seenCount: c.seenCount, distinctWorkspaces } })
+        const verdict = await evaluateCompiledEntry(order as unknown as RegistryEntry, { signal: 'friction.repeated', elapsedMs: Number.MAX_SAFE_INTEGER, isolation: 'I1', payload: { patternId: key, seenCount, distinctWorkspaces } })
         gov.appender.append({
-          id: `patrol:fric:${order.id}:${key}:${c.seenCount}`, at: now.toISOString(), stream: `deposit:${key}`,
+          id: `patrol:fric:${order.id}:${key}:${seenCount}`, at: now.toISOString(), stream: `deposit:${key}`,
           type: 'standing_order.evaluated', source: { kind: 'system', ref: 'governance.patrol' }, evidence: [], taint: 'trusted',
-          payload: { orderId: order.id, signal: 'friction.repeated', dedupKey, clusterKey: key, seenCount: c.seenCount, distinctWorkspaces, verdict, action: order.action },
+          payload: { orderId: order.id, signal: 'friction.repeated', dedupKey, clusterKey: key, seenCount, distinctWorkspaces, verdict, action: order.action },
         })
       }
     }

@@ -181,7 +181,10 @@ function inspectDraft(draft: DepositDraft, raw?: Record<string, unknown>) {
 }
 
 /** 列出 `<stateDir>/deposit-drafts/*.json` 草稿及可选合并在线 RSI 候选（同 ID 以磁盘为准，防软链逃逸）。 */
-export async function listDepositDrafts(gov: GovernanceRuntime, options: { includeOnlineCandidates?: boolean } = {}): Promise<DepositDraftEntry[]> {
+export async function listDepositDrafts(
+  gov: GovernanceRuntime,
+  options: { includeOnlineCandidates?: boolean; collectionMode?: 'production' | 'e2e' } = {},
+): Promise<DepositDraftEntry[]> {
   const draftsDir = resolve(gov.stateDir, 'deposit-drafts')
   const byId = new Map<string, DepositDraftEntry>()
   const dirStat = await lstat(draftsDir).catch(() => undefined)
@@ -202,7 +205,9 @@ export async function listDepositDrafts(gov: GovernanceRuntime, options: { inclu
     }
   }
   if (options.includeOnlineCandidates !== false) {
-    const snap = await collectOnlineRsiSnapshot({ db: gov.storeRef.db, memoryDir: gov.memoryDir }).catch(() => undefined)
+    const mode = options.collectionMode ?? (process.env['DSH_RSI_COLLECTION_MODE'] === 'e2e' ? 'e2e' : 'production')
+    const workspaceDirs = Object.fromEntries(gov.workspaces.list().map(w => [w.id, w.repository]))
+    const snap = await collectOnlineRsiSnapshot({ db: gov.storeRef.db, memoryDir: gov.memoryDir, collectionMode: mode, workspaceDirs }).catch(() => undefined)
     for (const cand of snap?.candidateDrafts ?? []) {
       if (!byId.has(cand.id)) byId.set(cand.id, { id: cand.id, source: 'online-rsi', draft: cand, ...inspectDraft(cand) })
     }

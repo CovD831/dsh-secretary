@@ -79,6 +79,15 @@ export function StudioRsi() {
       </table>
     </Section>
     <Section title={t('studio.rsi.draftsTitle')} count={snapshot.candidateDrafts.length} icon="plus">
+      {(wb.routedClusters?.length ?? 0) > 0 && <ul className="dt-list dt-cards">
+        {wb.routedClusters!.slice(0, 8).map(({ cluster: c, decision }) => <li key={c.key} className="dt-card">
+          <div className="dt-row-title">
+            <span className="dt-mono">{c.key}</span>
+            <Tag tone="outline">{`seen=${c.refs.length} fold=${c.explainedSymptoms.length}`}</Tag>
+            <Tag tone={decision.escalateFromFastLane ? 'warning' : 'success'}>{decision.tier}</Tag>
+          </div>
+        </li>)}
+      </ul>}
       {snapshot.candidateDrafts.length ? <ul className="dt-list dt-cards">{snapshot.candidateDrafts.map(d => <li key={d.id} className="dt-card">
         <div className="dt-row-title"><span className="dt-mono">{d.id}</span><Tag tone="info">{d.point}</Tag><Tag tone="outline">{d.stage ?? 'shadow'}</Tag></div>
         <p className="dt-hint">{d.intent}</p>

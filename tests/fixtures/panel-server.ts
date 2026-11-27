@@ -448,7 +448,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     return { triggerId: 'desk-1', received: 'stored' }
   } },
   'GET deposits/ledger': { answer: () => server.depositsLedger ?? ({ records: [], markdown: '# Deposits Ledger' }) },
-  'GET deposits/drafts': { query: ['includeOnlineCandidates'], answer: () => [] },
+  'GET deposits/drafts': { query: ['includeOnlineCandidates', 'mode'], answer: () => [] },
   'POST deposits/drafts/adopt': { body: true, answer: () => ({ ok: false, reason: 'mock-panel-server' }) },
   'POST governance/patrol': { answer: () => ({ checkedTickets: 0, evaluated: 0, reminded: 0 }) },
   'POST deposits/:id/stage': { body: true, answer: ({ params, body }) => {
@@ -494,7 +494,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     }
     return { ok: true }
   } },
-  'GET rsi/workbench': { answer: () => server.rsiWorkbench ?? ({
+  'GET rsi/workbench': { query: ['mode'], answer: () => server.rsiWorkbench ?? ({
     snapshot: {
       eventCount: 0, taskRecords: [], replayCases: [], joinedSessionMetrics: [],
       labelCounts: { 'L1:verify_failed': 0, 'L2:gate_denied_fixed': 0, 'L3:rework_retry': 0, 'L4:circuit_broken': 0, 'L5:tool_error': 0, 'L6:escalation_queued': 0, 'L7:ruling_decided': 0, 'L8:memory_rejected': 0, 'L9:memory_corrected': 0, 'L10:recall_dropped': 0, 'L11:unmeasured_gap': 0, 'L12:external_taint': 0, 'L13:draft_abandoned': 0 },

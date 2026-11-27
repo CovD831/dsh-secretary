@@ -1,13 +1,12 @@
-/** M0 在线事件采集、L1–L13 天然标签回填、四分归因分母统计与 Seen>=3 跨 3 自然日 Rung 1 候选提取。 */
+/** M0 在线事件采集、L1–L13 天然标签回填、四分归因分母统计与 Seen>=3 / E2E Rung 1 候选提取。 */
 import { lstat, readdir, readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import type { DepositDraft } from '../authoring/types.ts'
-import { isValidScopeStage } from '../judgement/registry.ts'
-import { BASE_SCOPES } from '../judgement/types.ts'
 import type { SourceRef, SpineEnvelope } from '../spine/types.ts'
 import { compareWindows, computeBehavioralMetrics, toEvaluationReading } from './evaluator.ts'
+import { buildWorkspaceOneHopGraph, clusterProblemEvents, toClusterDraft } from './problem-clustering.ts'
 import { mineWorkflowSopDrafts } from './sop-miner.ts'
 import { createPersistenceSessionReader, extractSessionPtr, joinNativeSessionMetrics, type SessionEventsReader } from './trace-bridge.ts'
 import type {
@@ -16,7 +15,6 @@ import type {
 } from './types.ts'
 
 const SHARD_FILE_RE = /^\d{4}-\d{2}-\d{2}\.jsonl$/
-const KNOWN_SCOPES = new Set<string>(BASE_SCOPES)
 const ALL_LABELS: readonly NaturalBackfillLabel[] = [
   'L1:verify_failed', 'L2:gate_denied_fixed', 'L3:rework_retry', 'L4:circuit_broken',
   'L5:tool_error', 'L6:escalation_queued', 'L7:ruling_decided', 'L8:memory_rejected',
@@ -28,6 +26,9 @@ export interface OnlineCollectOptions {
   readonly events?: readonly SpineEnvelope[]; readonly db?: DatabaseSync; readonly memoryDir?: string
   readonly persistence?: Pick<SessionPersistence, 'flush' | 'open'>; readonly readSessionEvents?: SessionEventsReader
   readonly baselineWindow?: WindowSample; readonly windowDurationMs?: number; readonly minSeen?: number; readonly minDistinctDays?: number
+  readonly collectionMode?: 'production' | 'e2e'
+  readonly workspaceDirs?: Readonly<Record<string, string>>
+  readonly oneHopGraph?: Readonly<Record<string, readonly string[]>>
 }
 
 function parseEnvelope(raw: string): SpineEnvelope | undefined {
@@ -84,24 +85,6 @@ function ticketIdOf(ev: SpineEnvelope): string | undefined {
   if (isRec(ev.payload) && typeof ev.payload['ticketId'] === 'string' && ev.payload['ticketId'].trim()) return ev.payload['ticketId'].trim()
   if (ev.stream.startsWith('ticket:')) return ev.stream.slice(7) || undefined
   return undefined
-}
-
-function toClusterDraft(key: string, category: string, point: string | undefined, toolName: string | undefined,
-  attribution: FourWayAttribution | undefined, refs: readonly SourceRef[], distinctDays: readonly string[], seenCount: number): DepositDraft {
-  const safeSlug = key.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'cluster'
-  const validPoint = point && isValidScopeStage(point, KNOWN_SCOPES) ? point : 'verify.preflight'
-  return {
-    id: `friction.${safeSlug}`, name: `在线摩擦候选 (${category})`, version: 1, author: 'rsi-online-collector',
-    scope: 'private', kind: 'counter-rule', level: 'object', point: validPoint,
-    trigger: { on: category, mode: 'on-event' }, requires: ['ticket.id'],
-    params: { min_seen: { type: 'number', default: 3, min: 1 }, min_distinct_days: { type: 'number', default: 3, min: 1 } },
-    exceptions: ['仅作为 Rung 1 候选提议呈现，须补齐正反例并经离线回放后方可晋升'],
-    repairHint: `同类摩擦 (${key}) 已跨越 ${distinctDays.length} 个自然日累计 ${seenCount} 次，请补充判据并核验。`,
-    intent: `针对高频跨日摩擦 ${key}（归因: ${attribution ?? 'missing_rule'}）生成 Rung 1 规则草案。`,
-    rubricBody: `在 ${distinctDays.join(', ')} 观测到 ${seenCount} 次 ${category}${toolName ? ` (${toolName})` : ''}，建为影子提案。`,
-    enforce: false, stage: 'shadow', actionClass: 'observe', action: { name: 'proposal.create' },
-    origin: { kind: 'friction-mined', refs: refs.map(r => `m0:${r.seq}#${r.id}`) }, cases: [],
-  }
 }
 
 /** 采集 M0 事件并执行 L1–L13 回填、四分归因、行为指标计算与 Rung 1 候选提取。 */
@@ -307,14 +290,30 @@ export async function collectOnlineRsiSnapshot(options: OnlineCollectOptions): P
     ? { failures: defectTickets, opportunities: totalTickets, ...(options.windowDurationMs !== undefined ? { durationMs: options.windowDurationMs } : {}) }
     : (half > 0 ? { failures: replayCases.slice(half).filter(c => c.expectedOutcome === 'defect').length, opportunities: replayCases.length - half } : { failures: 0, opportunities: 0 })
 
+  const mode = options.collectionMode ?? 'production'
+  const resolvedGraph = options.oneHopGraph ?? (options.workspaceDirs ? await buildWorkspaceOneHopGraph(options.workspaceDirs) : undefined)
+  const problemClusters = clusterProblemEvents(events, {
+    mode,
+    ...(options.minSeen !== undefined ? { minSeen: options.minSeen } : {}),
+    ...(options.minDistinctDays !== undefined ? { minDistinctDays: options.minDistinctDays } : {}),
+    ...(resolvedGraph ? { oneHopGraph: resolvedGraph } : {}),
+  })
   const minedSopDrafts = mineWorkflowSopDrafts({ events, joinedSessionMetrics, replayCases, labelHits })
   const seenDraftIds = new Set(candidateDrafts.map(d => d.id))
+  if (mode === 'e2e') {
+    for (const pc of problemClusters) {
+      if (pc.qualifiesForRung1 && pc.draft && !seenDraftIds.has(pc.draft.id)) {
+        seenDraftIds.add(pc.draft.id)
+        candidateDrafts.push(pc.draft)
+      }
+    }
+  }
   for (const d of minedSopDrafts) if (!seenDraftIds.has(d.id)) { seenDraftIds.add(d.id); candidateDrafts.push(d) }
 
   return {
     eventCount: events.length, labelHits, labelCounts, taskRecords,
     behavioralMetrics: computeBehavioralMetrics(taskRecords), replayCases, joinedSessionMetrics,
-    attribution, clusters, candidateDrafts, minedSopDrafts, calibratedRecords,
+    attribution, clusters, problemClusters, candidateDrafts, minedSopDrafts, calibratedRecords,
     effectivenessReading: toEvaluationReading(cleanTickets, defectTickets + cleanTickets), windowComparison: compareWindows(beforeWin, afterWin),
   }
 }
