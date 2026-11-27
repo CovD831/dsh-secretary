@@ -2,6 +2,7 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { readSpineProjection } from '../projection/index.ts'
+import { unwrapToolCall, unwrapToolResult } from '../rsi/sop-miner.ts'
 import { redactValue } from '../spine/redact.ts'
 import type { Store } from './store.ts'
 
@@ -99,20 +100,19 @@ function mapSessionEvents(events: readonly SessionEvent[]): TranscriptEntry[] {
         }
       }
     } else if (ev.type === 'tool/call') {
-      callNames.set(String(ev.data.callId), ev.data.name)
-      out.push({ id: `sess:${seq ?? out.length}:tc`, at, kind: 'tool_call', summary: ev.data.name, ...(seq !== undefined ? { seq } : {}) })
+      const call = unwrapToolCall(ev.data)
+      if (call.callId) callNames.set(call.callId, call.name || 'tool')
+      out.push({ id: `sess:${seq ?? out.length}:tc`, at, kind: 'tool_call', summary: call.name || 'tool', ...(seq !== undefined ? { seq } : {}) })
     } else if (ev.type === 'tool/result') {
-      const msg = ev.data?.message
-      const callId = String(msg?.toolCallId ?? msg?.source?.callId ?? '')
-      const toolName = callNames.get(callId) ?? 'tool'
-      const isError = Boolean(msg?.isError)
-      const text = redactValue(extractText(msg?.content)).value
+      const res = unwrapToolResult(ev.data)
+      const toolName = callNames.get(res.callId) ?? 'tool'
+      const text = redactValue(res.text).value
       const tail = clipTail(text, 400)
       out.push({
         id: `sess:${seq ?? out.length}:tr`, at, kind: 'tool_result',
-        summary: `${toolName}${isError ? ' (error)' : ''}`,
+        summary: `${toolName}${res.isError ? ' (error)' : ''}`,
         ...(tail ? { detail: tail } : {}),
-        status: isError ? 'error' : 'ok',
+        status: res.isError ? 'error' : 'ok',
         ...(seq !== undefined ? { seq } : {}),
       })
     }

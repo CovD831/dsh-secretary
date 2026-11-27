@@ -139,6 +139,7 @@ export function ticketExecution(ticket: Ticket, outcome: Extract<AssessmentOutco
     ...(workspace ? { workspace } : {}),
     ...(outcome.dispatchKey ? { dispatchKey: outcome.dispatchKey } : {}),
     ...(verifyCommands?.length ? { verifyCommands } : {}),
+    ...(outcome.taskType ? { taskType: outcome.taskType } : {}),
   }
 }
 /** Character limits for inline assignment and trigger text in worker messages; longer text is read via its resource. */

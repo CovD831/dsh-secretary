@@ -179,4 +179,22 @@ describe('P1 Trace-to-SOP Miner', () => {
     const joined = await joinNativeSessionMetrics(envs, () => noisyLog)
     expect(mineWorkflowSopDrafts({ events: envs, joinedSessionMetrics: joined })).toHaveLength(0)
   })
+
+  it('兼容缺失 message 包装的扁平 tool/call、tool/result 与 snake_case usage', async () => {
+    const legacyEvents = [
+      { type: 'tool/call', seq: 0, time: 1000, data: { id: 'call-1', toolName: 'bash', arguments: { command: 'npm test' } } },
+      { type: 'tool/result', seq: 1, time: 1500, data: { callId: 'call-1', toolName: 'bash', isError: true, content: '{"exitCode":1,"stdout":"","stderr":"fail"}' } },
+      { type: 'assistant/message', seq: 2, time: 2000, data: { usage: { input_tokens: 180, output_tokens: 45 }, message: { content: [{ type: 'text', text: 'done' }] } } },
+    ] as unknown as SessionEvent[]
+
+    const steps = extractSessionStepSequence(legacyEvents)
+    expect(steps).toHaveLength(1)
+    expect(steps[0]).toMatchObject({ stepIndex: 0, tool: 'bash', phase: 'verify', skeleton: 'pnpm test', isError: true, exitCode: 1 })
+
+    const envs = [spineEv(1, 't-legacy', 'ticket.ended', { outcome: 'completed' }, 's-legacy')]
+    const rows = await joinNativeSessionMetrics(envs, () => legacyEvents)
+    expect(rows[0]!.failedCommandCount).toBe(1)
+    expect(rows[0]!.tokens).toMatchObject({ inputTokens: 180, outputTokens: 45, totalTokens: 225 })
+    expect(rows[0]!.steps).toHaveLength(1)
+  })
 })

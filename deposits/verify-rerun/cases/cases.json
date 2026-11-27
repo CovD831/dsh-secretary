@@ -107,5 +107,89 @@
       },
       "redGreen": null
     }
+  },
+  {
+    "name": "green-bugfix-with-red-green-proof",
+    "expected": "allow",
+    "ctx": {
+      "taskType": "bugfix",
+      "builderRole": "builder",
+      "claimedDone": true,
+      "rerun": {
+        "command": "pnpm exec vitest run tests/bugfix.spec.ts",
+        "exitCode": 0,
+        "verifierRole": "verifier"
+      },
+      "redGreen": {
+        "command": "pnpm exec vitest run tests/bugfix.spec.ts",
+        "exitCodeWithoutFix": 1,
+        "exitCodeWithFix": 0,
+        "verifierRole": "verifier"
+      }
+    }
+  },
+  {
+    "name": "red-bugfix-missing-red-phase",
+    "expected": "deny",
+    "ctx": {
+      "taskType": "bugfix",
+      "builderRole": "builder",
+      "claimedDone": true,
+      "rerun": {
+        "command": "pnpm exec vitest run tests/bugfix.spec.ts",
+        "exitCode": 0,
+        "verifierRole": "verifier"
+      },
+      "redGreen": {
+        "command": "pnpm exec vitest run tests/bugfix.spec.ts",
+        "exitCodeWithoutFix": 0,
+        "exitCodeWithFix": 0,
+        "verifierRole": "verifier"
+      }
+    }
+  },
+  {
+    "name": "unmeasured-bugfix-sandbox-denied",
+    "expected": "unmeasured",
+    "expectedCause": "no-sandbox",
+    "ctx": {
+      "taskType": "bugfix",
+      "builderRole": "builder",
+      "claimedDone": true,
+      "rerun": {
+        "command": "pnpm exec vitest run tests/bugfix.spec.ts",
+        "exitCode": 0,
+        "verifierRole": "verifier"
+      },
+      "redGreen": {
+        "command": "pnpm exec vitest run tests/bugfix.spec.ts",
+        "exitCodeWithoutFix": 1,
+        "exitCodeWithFix": 0,
+        "verifierRole": "verifier",
+        "sandboxDenied": true
+      }
+    }
+  },
+  {
+    "name": "unmeasured-bugfix-timed-out",
+    "expected": "unmeasured",
+    "expectedCause": "timeout",
+    "ctx": {
+      "taskType": "bugfix",
+      "builderRole": "builder",
+      "claimedDone": true,
+      "rerun": {
+        "command": "pnpm exec vitest run tests/bugfix.spec.ts",
+        "exitCode": 0,
+        "verifierRole": "verifier"
+      },
+      "redGreen": {
+        "command": "pnpm exec vitest run tests/bugfix.spec.ts",
+        "exitCodeWithoutFix": 124,
+        "exitCodeWithFix": 0,
+        "verifierRole": "verifier",
+        "timedOut": true
+      }
+    }
   }
 ]

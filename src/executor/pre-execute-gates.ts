@@ -4,13 +4,18 @@ import { isAbsolute, relative } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Store } from '../app/store.ts'
 import type { Ticket } from '../core/index.ts'
-import { executeVerifyRerunCommands, type ExecuteVerifyRerunOptions, type ExecuteVerifyRerunReport } from '../judgement/gates/verify-rerun.ts'
+import type { ExecuteVerifyRerunOptions, ExecuteVerifyRerunReport } from '../judgement/gates/verify-rerun.ts'
 import { evaluatePointAtGeneration, type ExtendedJudgementRegistry, type JudgementRegistry, type Point, type PointEvaluation } from '../judgement/index.ts'
 import { KV, type PersistedCompletionObs } from '../kv.ts'
 import { redactValue } from '../spine/redact.ts'
 import type { SpineAppender } from '../spine/types.ts'
-import { auditProvisionedWorktree, collectGitStatus, computeWorkspaceRevision, hashWorkspaceFileSync } from './git-workspace-snapshot.ts'
+import {
+  auditProvisionedWorktree, collectGitStatus, computeWorkspaceRevision,
+  findRevertedSessionPaths, hashWorkspaceFileSync, resolveProvisionedAnchor,
+} from './git-workspace-snapshot.ts'
+import { inferTicketTaskType, runVerifyRerunPhase } from './red-green-probe.ts'
 import { resolveRootTicketId } from './runtime-guard.ts'
+import { buildSessionSandboxRunner } from './sandbox-runner.ts'
 
 const SHELL_TOOL_RE = /^(?:bash|pwsh|bash_persistent|pwsh_persistent|sh|shell|powershell|zsh|cmd)$/i
 const EDITOR_BLIND_RE = /^str_replace_editor$/i
@@ -18,9 +23,7 @@ const MAX_OBSERVED_TICKETS = 500
 const BUILTIN_VERIFY_POINTS = new Set(['verify.changed-paths', 'verify.secret-path-guard', 'verify.rerun'])
 
 declare module '../judgement/types.ts' {
-  interface PointCatalog {
-    'verify.secret-path-guard': { readonly changedPaths: readonly string[] }
-  }
+  interface PointCatalog { 'verify.secret-path-guard': { readonly changedPaths: readonly string[] } }
 }
 
 interface TicketObservation {
@@ -47,6 +50,8 @@ function formatBlockReason(point: string, ev: PointEvaluation): string {
 export class PreExecuteCompletionGuard {
   private readonly observed = new Map<string, TicketObservation>()
   private readonly realpathCache = new Map<string, string>()
+  private readonly localRerunCache = new Map<string, ExecuteVerifyRerunReport>()
+  private readonly probeMetaCache = new Map<string, { base?: string; reason?: string }>()
   private readonly disposers: Array<() => void> = []
 
   constructor(private readonly deps: PreExecuteCompletionGuardDeps) {
@@ -96,10 +101,8 @@ export class PreExecuteCompletionGuard {
     return () => this.dispose()
   }
 
-  /** 卸载所有事件监听。 */
   dispose(): void { while (this.disposers.length > 0) this.disposers.pop()?.() }
 
-  /** 读取某工单累计的工具观测状态（测试与诊断用只读视图）。 */
   getObservation(ticketId: string) {
     const obs = this.observed.get(ticketId)
     return {
@@ -205,17 +208,15 @@ export class PreExecuteCompletionGuard {
     const ticket: Ticket | undefined = this.deps.store.tickets.get(rootId), obs = this.ensureObs(rootId)
     const gen = this.deps.store.get?.(KV.governance.ticketGenerations)?.[rootId]
     const workdir = ticket?.execution?.directory ?? exec.agent?.session?.header?.cwd
+    const cowPaths = this.deps.store.settings().workspaces?.find(w => w.id === ticket?.execution?.workspace)?.cowPaths
     const git = await collectGitStatus(workdir)
-    const declaredPaths: string[] | null = Array.isArray(args['declared_paths'])
-      ? args['declared_paths'].map(String)
-      : (isReadyReport ? [] : null)
-    const sessionDiffPaths = [...obs.sessionDiffs]
-    const taskType: 'bugfix' | 'feature' = /\b(?:fix|bug|bugfix|repair|regression|hotfix)\b|修复|排障|缺陷/i.test(`${ticket?.title ?? ''} ${ticket?.execution?.assignment ?? ''}`) ? 'bugfix' : 'feature'
+    const declaredPaths: string[] | null = Array.isArray(args['declared_paths']) ? args['declared_paths'].map(String) : (isReadyReport ? [] : null)
+    const sessionDiffPaths = [...obs.sessionDiffs], taskType = inferTicketTaskType(ticket)
 
     let effectiveSawShell = obs.sawShellWrite, effectiveUnmeasured = [...obs.unmeasuredTools], effGit = git
     let shellAudit: { unlocked: boolean; base?: string; reason?: string } | undefined
+    const revertedSet = new Set<string>()
     if (obs.sawShellWrite && !obs.sawUnmeasuredTool && effectiveUnmeasured.every(t => SHELL_TOOL_RE.test(t))) {
-      const cowPaths = this.deps.store.settings().workspaces?.find(w => w.id === ticket?.execution?.workspace)?.cowPaths
       const audit = await auditProvisionedWorktree({
         rootId, workdir, store: this.deps.store, sessionDiffs: obs.sessionDiffs, structuredDigests: obs.structuredDigests,
         ...(this.deps.memoryDir ? { memoryDir: this.deps.memoryDir } : {}), ...(cowPaths ? { cowPaths } : {}),
@@ -223,16 +224,27 @@ export class PreExecuteCompletionGuard {
       if (audit.ok) {
         effectiveSawShell = false; effectiveUnmeasured = []
         effGit = { gitDirtyPaths: audit.gitDirtyPaths, untrackedPaths: audit.untrackedPaths, headRev: git.headRev }
+        for (const rp of audit.revertedPaths) revertedSet.add(rp)
         shellAudit = { unlocked: true, base: audit.base }
       } else { shellAudit = { unlocked: false, reason: audit.reason } }
+    } else if (!obs.sawShellWrite && !obs.sawUnmeasuredTool && obs.sessionDiffs.size > 0 && effGit.gitDirtyPaths !== null && effGit.untrackedPaths !== null) {
+      const anchor = await resolveProvisionedAnchor(this.deps.store, rootId, this.deps.memoryDir)
+      const nonShellRev = await findRevertedSessionPaths({
+        workdir, sessionDiffs: obs.sessionDiffs, dirty: new Set(effGit.gitDirtyPaths), untracked: new Set(effGit.untrackedPaths),
+        ...(anchor ? { anchor } : { allowNonShellTrackedRevert: true }), ...(cowPaths ? { cowPaths } : {}),
+      })
+      for (const rp of nonShellRev) revertedSet.add(rp)
     }
 
+    const revertedPaths = [...revertedSet].sort()
+    const effectiveSessionDiffPaths = sessionDiffPaths.filter(p => !revertedSet.has(p))
+    const revMeta = revertedPaths.length > 0 ? { revertedPaths } : {}
     const pathEval = await evaluatePointAtGeneration(this.deps.registry, 'verify.changed-paths', {
-      declaredPaths, sessionDiffPaths, gitDirtyPaths: effGit.gitDirtyPaths, untrackedPaths: effGit.untrackedPaths,
+      declaredPaths, sessionDiffPaths: effectiveSessionDiffPaths, gitDirtyPaths: effGit.gitDirtyPaths, untrackedPaths: effGit.untrackedPaths,
       sawShellWrite: effectiveSawShell, sawUnmeasuredTool: obs.sawUnmeasuredTool,
       ...(effectiveUnmeasured.length > 0 ? { unmeasuredTools: effectiveUnmeasured } : {}),
     }, gen)
-    this.appendGateEvent(rootId, exec, 'verify.changed-paths', pathEval, { declaredPaths, gitHead: git.headRev, ...(shellAudit ? { shellAudit } : {}) })
+    this.appendGateEvent(rootId, exec, 'verify.changed-paths', pathEval, { declaredPaths, gitHead: git.headRev, ...(shellAudit ? { shellAudit } : {}), ...revMeta })
     const blindDetected = effectiveSawShell || obs.sawUnmeasuredTool || effectiveUnmeasured.length > 0
     const pureSkip = declaredPaths === null && !blindDetected && pathEval.verdict.kind === 'unmeasured'
       && pathEval.verdict.cause === 'all-skipped' && pathEval.ran.every(r => r.skip === 'not-applicable')
@@ -241,10 +253,10 @@ export class PreExecuteCompletionGuard {
     }
 
     const entries = 'list' in this.deps.registry ? this.deps.registry.list() : []
-    const union = [...new Set([...(declaredPaths ?? []), ...sessionDiffPaths, ...(effGit.gitDirtyPaths ?? []), ...(effGit.untrackedPaths ?? [])])]
+    const union = [...new Set([...(declaredPaths ?? []), ...effectiveSessionDiffPaths, ...(effGit.gitDirtyPaths ?? []), ...(effGit.untrackedPaths ?? [])])]
     if (entries.some(e => e.kind === 'gate' && e.point === 'verify.secret-path-guard')) {
       const guardEval = await evaluatePointAtGeneration(this.deps.registry, 'verify.secret-path-guard', { changedPaths: union }, gen)
-      this.appendGateEvent(rootId, exec, 'verify.secret-path-guard', guardEval, { checkedCount: union.length })
+      this.appendGateEvent(rootId, exec, 'verify.secret-path-guard', guardEval, { checkedCount: union.length, ...revMeta })
       if (guardEval.registered > 0 && (guardEval.verdict.kind === 'deny' || guardEval.verdict.kind === 'unmeasured')) {
         return { kind: 'deny', reason: formatBlockReason('verify.secret-path-guard', guardEval) }
       }
@@ -255,20 +267,19 @@ export class PreExecuteCompletionGuard {
     const verifyCommands = ticket?.execution?.verifyCommands ?? []
     let commandResults: ExecuteVerifyRerunReport['results'] = []
     if (verifyCommands.length > 0 && (rerunActive || customPoints.length > 0)) {
-      const revision = await computeWorkspaceRevision(workdir, effGit, sessionDiffPaths)
-      const runCommand = this.deps.runVerifyCommand ?? this.buildSessionSandboxRunner(exec.agent?.session)
-      const rerunReport = await executeVerifyRerunCommands(verifyCommands, workdir ?? '', {
-        ticketId: rootId, revision, builderRole: 'worker', verifierRole: 'verifier', taskType, signal: exec.signal,
-        runCommand,
-        ...(this.deps.rerunCache ? { cache: this.deps.rerunCache } : {}),
-        ...(this.deps.verifyTimeoutMs !== undefined ? { timeoutMs: this.deps.verifyTimeoutMs } : {}),
+      const revision = await computeWorkspaceRevision(workdir, effGit, effectiveSessionDiffPaths)
+      const phase = await runVerifyRerunPhase({
+        rootId, workdir, store: this.deps.store, registry: this.deps.registry, gen,
+        ...(this.deps.memoryDir ? { memoryDir: this.deps.memoryDir } : {}), ...(cowPaths ? { cowPaths } : {}),
+        verifyCommands, revision, taskType, rerunActive, timeoutMs: this.deps.verifyTimeoutMs ?? 120_000, signal: exec.signal,
+        cache: this.deps.rerunCache ?? this.localRerunCache, probeMetaCache: this.probeMetaCache,
+        runCommand: this.deps.runVerifyCommand ?? buildSessionSandboxRunner(this.deps.context, exec.agent?.session, workdir),
       })
-      commandResults = rerunReport.results
-      if (rerunActive) {
-        const rerunEval = await evaluatePointAtGeneration(this.deps.registry, 'verify.rerun', rerunReport.ctx, gen)
-        this.appendGateEvent(rootId, exec, 'verify.rerun', rerunEval, { cmdHash: rerunReport.cmdHash, cached: rerunReport.cached, results: rerunReport.results, taskType })
-        if (rerunEval.registered > 0 && (rerunEval.verdict.kind === 'deny' || rerunEval.verdict.kind === 'unmeasured')) {
-          return { kind: 'deny', reason: formatBlockReason('verify.rerun', rerunEval) }
+      commandResults = phase.commandResults
+      if (rerunActive && phase.rerunEval && phase.rerunExtra) {
+        this.appendGateEvent(rootId, exec, 'verify.rerun', phase.rerunEval, phase.rerunExtra)
+        if (phase.rerunEval.registered > 0 && (phase.rerunEval.verdict.kind === 'deny' || phase.rerunEval.verdict.kind === 'unmeasured')) {
+          return { kind: 'deny', reason: formatBlockReason('verify.rerun', phase.rerunEval) }
         }
       }
     }
@@ -276,7 +287,7 @@ export class PreExecuteCompletionGuard {
     for (const pt of customPoints) {
       const customEval = await evaluatePointAtGeneration(this.deps.registry, pt as Point, {
         ...args, ticketId: rootId, taskType, declaredPaths, changedPaths: union,
-        sessionDiffPaths, gitDirtyPaths: effGit.gitDirtyPaths, untrackedPaths: effGit.untrackedPaths, commands: commandResults,
+        sessionDiffPaths: effectiveSessionDiffPaths, gitDirtyPaths: effGit.gitDirtyPaths, untrackedPaths: effGit.untrackedPaths, commands: commandResults,
       } as never, gen)
       this.appendGateEvent(rootId, exec, pt, customEval, { taskType, checkedCount: union.length })
       if (customEval.registered > 0 && (customEval.verdict.kind === 'deny' || customEval.verdict.kind === 'unmeasured')) {
@@ -284,31 +295,5 @@ export class PreExecuteCompletionGuard {
       }
     }
     return 'allow'
-  }
-
-  private buildSessionSandboxRunner(session: unknown): NonNullable<ExecuteVerifyRerunOptions['runCommand']> {
-    return async (command, cwd, opts) => {
-      const shell = this.deps.context.get('shell' as never) as {
-        resolve(req: Record<string, unknown>): unknown
-        execute(spec: unknown): Promise<{ result(): Promise<{ exitCode: number | null; timedOut: boolean; aborted: boolean; stdout: { text: string }; stderr: { text: string }; sandbox?: { mode: string; denied: boolean; runnerFailed?: boolean } }> }>
-      } | undefined
-      const sandboxPolicySvc = this.deps.context.get('sandboxPolicy' as never) as {
-        resolve(req?: { session?: unknown }): { mode: string; workspaceRoot: string; additionalWritableRoots?: readonly string[]; sessionId?: string }
-      } | undefined
-      if (!shell || !sandboxPolicySvc || !session) return { exitCode: null, noSandbox: true }
-      try {
-        const base = sandboxPolicySvc.resolve({ session })
-        const sandboxPolicy = base.mode === 'danger-full-access' ? { ...base, mode: 'workspace-write' } : base
-        const spec = shell.resolve({
-          command, workdir: cwd, timeoutMs: opts.timeoutMs, onExpiry: 'kill', stdoutMaxBytes: 4 * 1024 * 1024,
-          ...(opts.signal ? { signal: opts.signal } : {}), sandboxPolicy,
-        })
-        const res = await (await shell.execute(spec)).result()
-        if (!res.sandbox || res.sandbox.runnerFailed) return { exitCode: null, noSandbox: true }
-        return { exitCode: res.exitCode, timedOut: res.timedOut, aborted: res.aborted, stdout: res.stdout.text, stderr: res.stderr.text }
-      } catch {
-        return { exitCode: null, noSandbox: true }
-      }
-    }
   }
 }

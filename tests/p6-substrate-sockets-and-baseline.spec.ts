@@ -493,7 +493,13 @@ describe('P6 substrate sockets + baseline hardening', () => {
     }
     let nextCmd = { exitCode: 1, stdout: '', stderr: 'failed' }
     const ctx = new Context(), memDir = join(stateDir, 'memory')
-    const guard = new PreExecuteCompletionGuard({ context: ctx, store, registry, appender, memoryDir: memDir, runVerifyCommand: async () => nextCmd })
+    const guard = new PreExecuteCompletionGuard({
+      context: ctx, store, registry, appender, memoryDir: memDir,
+      runVerifyCommand: async (_cmd, cwd) => {
+        const src = existsSync(join(cwd, 'src/app.ts')) ? readFileSync(join(cwd, 'src/app.ts'), 'utf8') : ''
+        return src.includes('val = 1') ? { exitCode: 1, stdout: '', stderr: 'base defect red' } : nextCmd
+      },
+    })
     const pre = (id: string, wt: string, args: unknown) => ctx.waterfall('tools/pre-execute' as never,
       { callId: `c-${Math.random()}`, name: 'orchestrator_report', arguments: args, signal: new AbortController().signal,
         agent: { id: `worker-${id}`, session: { id: `worker-${id}`, header: { cwd: wt } } } } as never, (async () => 'allow') as never)

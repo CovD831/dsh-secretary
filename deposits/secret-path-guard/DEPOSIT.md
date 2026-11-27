@@ -21,8 +21,10 @@
     "forbiddenGlobs": [
       ".env",
       ".env.*",
+      ".envrc",
       "**/.env",
       "**/.env.*",
+      "**/.envrc",
       "**/secrets/**",
       "**/*.pem",
       "**/*.key",

@@ -87,16 +87,20 @@ export interface RulingQueueDeps {
   readonly onDecided?: (item: RulingItem) => void
 }
 
+const NEGATIVE_OPTION_RE = /^(?:reject|deny|veto|block|opt[-_]?deny|opt[-_]?reject)$/i
+
+/** 对沙箱审批与系统熔断裁决执行单调收口：选中否定类选项时禁止以 approve 穿透放行。 */
+export function resolveEffectiveDecision(kind: RulingOrigin, decision: RulingDecision, optionId?: string): RulingDecision {
+  if (kind !== 'secretary_ask' && decision === 'approve' && optionId && NEGATIVE_OPTION_RE.test(optionId.trim())) return 'reject'
+  return decision
+}
+
 const defaultApprovalOptions = (highRisk: boolean): readonly RulingOption[] => [
   { id: 'approve', label: '放行本次操作', consequence: '允许当前工具调用继续执行一次', recommended: !highRisk },
   { id: 'reject', label: '拒绝并要求改方案', consequence: '拦截本次工具调用并将原因退回执行会话', recommended: highRisk },
 ]
 
-const KIND_PRIORITY: Readonly<Record<RulingOrigin, number>> = {
-  dsh_approval: 0,
-  system_escalation: 1,
-  secretary_ask: 2,
-}
+const KIND_PRIORITY: Readonly<Record<RulingOrigin, number>> = { dsh_approval: 0, system_escalation: 1, secretary_ask: 2 }
 
 /** 管理单件优先呈递的持久化待裁队列，并维护进程内 DSH `approval/request` 挂起 Promise。 */
 export class RulingQueue {
@@ -121,24 +125,14 @@ export class RulingQueue {
     if (dirty) this.deps.store.set(KV.governance.rulings, updated)
   }
 
-  private readAll(): RulingItem[] {
-    return [...(this.deps.store.get(KV.governance.rulings) ?? [])]
-  }
-
+  private readAll(): RulingItem[] { return [...(this.deps.store.get(KV.governance.rulings) ?? [])] }
   private saveAll(items: readonly RulingItem[]): void {
     const pending = items.filter(i => i.status === 'pending')
     const capped = items.length <= 300 ? [...items] : [...pending, ...items.filter(i => i.status !== 'pending').slice(-Math.max(0, 300 - pending.length))]
     this.deps.store.set(KV.governance.rulings, capped)
   }
-
-  list(status?: RulingStatus): RulingItem[] {
-    const all = this.readAll()
-    return status ? all.filter(item => item.status === status) : all
-  }
-
-  get(id: string): RulingItem | undefined {
-    return this.readAll().find(item => item.id === id)
-  }
+  list(status?: RulingStatus): RulingItem[] { const all = this.readAll(); return status ? all.filter(item => item.status === status) : all }
+  get(id: string): RulingItem | undefined { return this.readAll().find(item => item.id === id) }
 
   /** 返回当前唯一呈递给老板的最高优最老待裁项及队列剩余数量。 */
   active(): { active: RulingItem | null; pendingCount: number } {
@@ -261,40 +255,32 @@ export class RulingQueue {
     if (existing.status === 'cancelled') return { ok: false, reason: 'ruling-cancelled' }
 
     const decidedAt = this.now().toISOString()
+    let effectiveDecision: RulingDecision = input.decision
     const updated = this.deps.store.atomic(() => {
       const all = this.readAll()
       const idx = all.findIndex(i => i.id === input.id)
       const cur = all[idx]!
-      if (cur.status === 'decided') return cur
+      if (cur.status === 'decided') { effectiveDecision = cur.decision ?? input.decision; return cur }
+      effectiveDecision = resolveEffectiveDecision(cur.kind, input.decision, input.optionId)
       const ruledRef = this.deps.appender.append({
-        id: `ruling:decided:${cur.id}`,
-        at: decidedAt,
-        stream: cur.ticketId ? `ticket:${cur.ticketId}` : `ruling:${cur.id}`,
-        type: 'escalation.ruled',
-        ...(cur.queuedRef ? { causationId: cur.queuedRef.id } : {}),
+        id: `ruling:decided:${cur.id}`, at: decidedAt, stream: cur.ticketId ? `ticket:${cur.ticketId}` : `ruling:${cur.id}`,
+        type: 'escalation.ruled', ...(cur.queuedRef ? { causationId: cur.queuedRef.id } : {}),
         source: { kind: 'human', ref: input.actorId, actor: { source: 'secretary-bus', id: input.actorId } },
         evidence: cur.queuedRef ? [{ kind: 'event', ref: cur.queuedRef.id }] : [],
         taint: input.note ? 'derived' : 'trusted',
         payload: {
-          escalationId: cur.id, rulingKind: cur.kind, decision: input.decision,
-          ...(cur.ticketId ? { ticketId: cur.ticketId } : {}),
-          ...(cur.workspace ? { workspace: cur.workspace } : {}),
+          escalationId: cur.id, rulingKind: cur.kind, decision: effectiveDecision,
+          ...(cur.ticketId ? { ticketId: cur.ticketId } : {}), ...(cur.workspace ? { workspace: cur.workspace } : {}),
           ...(cur.toolName ? { toolName: cur.toolName } : {}),
-          ...(cur.rawScore !== undefined ? { rawScore: cur.rawScore, groundTruth: input.decision === 'approve' ? 'clean' : 'defect' } : {}),
-          ...(input.optionId ? { optionId: input.optionId } : {}),
-          ...(input.attribution ? { attribution: input.attribution } : {}),
-          ...(input.note ? { note: input.note } : {}),
-          captureAsRule: Boolean(input.captureAsRule),
-          naturalLabel: 'L7:ruling_decided',
-          decidedAt,
+          ...(cur.rawScore !== undefined ? { rawScore: cur.rawScore, groundTruth: effectiveDecision === 'approve' ? 'clean' : 'defect' } : {}),
+          ...(input.optionId ? { optionId: input.optionId } : {}), ...(input.attribution ? { attribution: input.attribution } : {}),
+          ...(input.note ? { note: input.note } : {}), captureAsRule: Boolean(input.captureAsRule), naturalLabel: 'L7:ruling_decided', decidedAt,
         },
       })
       const next: RulingItem = {
-        ...cur, status: 'decided', decidedAt, decision: input.decision, actorId: input.actorId, ruledRef,
-        ...(input.optionId ? { selectedOptionId: input.optionId } : {}),
-        ...(input.attribution ? { attribution: input.attribution } : {}),
-        ...(input.note ? { note: input.note } : {}),
-        ...(input.captureAsRule !== undefined ? { captureAsRule: input.captureAsRule } : {}),
+        ...cur, status: 'decided', decidedAt, decision: effectiveDecision, actorId: input.actorId, ruledRef,
+        ...(input.optionId ? { selectedOptionId: input.optionId } : {}), ...(input.attribution ? { attribution: input.attribution } : {}),
+        ...(input.note ? { note: input.note } : {}), ...(input.captureAsRule !== undefined ? { captureAsRule: input.captureAsRule } : {}),
       }
       all[idx] = next
       this.saveAll(all)
@@ -304,7 +290,7 @@ export class RulingQueue {
     const resolver = this.resolvers.get(updated.id)
     if (resolver) {
       this.resolvers.delete(updated.id)
-      resolver(input.decision === 'approve' ? 'allowed-once' : 'rejected')
+      resolver(effectiveDecision === 'approve' ? 'allowed-once' : 'rejected')
     }
 
     const ledger = await this.deps.memoryRepoLock.run(() => readMemoryPage(this.deps.memoryDir, 'm6/ledger.md')).catch(() => undefined)
@@ -313,7 +299,7 @@ export class RulingQueue {
       : undefined
     if (m6Hit && m6Hit.status !== 'approved' && m6Hit.status !== 'dismissed' && m6Hit.status !== 'expired') {
       await this.deps.memory.transitionAttention(
-        { id: m6Hit.id, action: input.decision === 'approve' ? 'approve' : 'dismiss' },
+        { id: m6Hit.id, action: effectiveDecision === 'approve' ? 'approve' : 'dismiss' },
         input.actorId,
       ).catch(() => undefined)
     }

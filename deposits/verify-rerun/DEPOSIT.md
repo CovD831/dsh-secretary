@@ -28,7 +28,7 @@ params:
 1. 必须存在 `rerun` 记录且未超时/中止，否则返回 `unmeasured(no-evidence | timeout)`；
 2. 当 `require_independent_verifier=true` 时，`rerun.verifierRole` 不得等于 `builderRole`，否则返回 `deny`（严禁自报自验）；
 3. `rerun.exitCode` 必须为 `0`，否则返回 `deny`；
-4. 当 `taskType === "fix"` 且 `require_red_green=true` 时，必须提供独立验证方的 `redGreen` 记录（缺少则 `unmeasured(no-evidence)`），且 `exitCodeWithoutFix !== 0`、 `exitCodeWithFix === 0`，否则返回 `deny`。
+4. 当 `taskType === "fix"` 或 `"bugfix"` 且 `require_red_green=true` 时，必须提供独立验证方的有效 `redGreen` 记录（缺少或遇到 `noSandbox`/`sandboxDenied`/`timeout`/`exitCodeWithoutFix=127` 则返回 `unmeasured`），且 `exitCodeWithoutFix !== 0`、`exitCodeWithFix === 0`，否则返回 `deny`。
 
 ## 正反例
 见 `cases/cases.json`：包含独立重跑通过、fix 红绿双证通过、自报自验拦截、重跑失败拦截、fix 无红灯拦截及缺证据 `unmeasured` 用例。

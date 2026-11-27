@@ -133,7 +133,7 @@ export class Runtime extends Service implements SourceHost {
             }
           }
           this.sessions?.relay(`ruling-decided:${item.id}`, JSON.stringify({
-            kind: 'ruling_decided', ruling_id: item.id, decision: item.decision,
+            kind: 'ruling_decided', ruling_kind: item.kind, ruling_id: item.id, decision: item.decision,
             ...(item.ticketId ? { ticket_id: item.ticketId } : {}),
             ...(item.selectedOptionId ? { option_id: item.selectedOptionId } : {}),
             ...(item.note ? { note: item.note } : {}),
@@ -210,6 +210,9 @@ export class Runtime extends Service implements SourceHost {
               catch { /* ignore if already settled */ }
             })
           }
+        },
+        onSubagentChanged: ticketId => {
+          this.officeServer?.broadcast({ type: 'subagent', data: { ticketId } })
         } })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
       this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, lifetime: this.lifetime, sessions,

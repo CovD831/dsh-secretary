@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -208,6 +208,38 @@ describe('P0 governance closure & wired rules', () => {
       expect(res.result.trainDelta).toBeGreaterThan(0)
       expect(res.result.holdoutDelta).toBeGreaterThan(0)
     }
+    await gov.shutdown()
+  })
+
+  it('enforces fail-closed dsh_approval resolution when approving a negative optionId', async () => {
+    const { store, gov } = await setupGov()
+
+    const pending1 = gov.rulings.requestDshApproval({ id: 'rul-inv-1', ticketId: 't-1', toolName: 'write', rawScore: 0.9, question: 'allow write .env?' })
+    await vi.waitFor(() => expect(gov.rulings.get('rul-inv-1')?.status).toBe('pending'))
+    const d1 = await gov.rulings.decide({ id: 'rul-inv-1', decision: 'approve', optionId: 'reject', actorId: 'boss', attribution: 'missing_rule' })
+    expect(await pending1).toBe('rejected')
+    expect(d1.ok && d1.item.decision).toBe('reject')
+
+    const pending2 = gov.rulings.requestDshApproval({ id: 'rul-inv-2', ticketId: 't-1', toolName: 'bash', rawScore: 0.9, question: 'allow git status?' })
+    await vi.waitFor(() => expect(gov.rulings.get('rul-inv-2')?.status).toBe('pending'))
+    const d2 = await gov.rulings.decide({ id: 'rul-inv-2', decision: 'approve', optionId: 'approve', actorId: 'boss', attribution: 'wrong_rule' })
+    expect(await pending2).toBe('allowed-once')
+    expect(d2.ok && d2.item.decision).toBe('approve')
+
+    const pending3 = gov.rulings.requestDshApproval({ id: 'rul-inv-3', ticketId: 't-1', toolName: 'bash', rawScore: 0.4, question: 'allow rm?' })
+    await vi.waitFor(() => expect(gov.rulings.get('rul-inv-3')?.status).toBe('pending'))
+    const d3 = await gov.rulings.decide({ id: 'rul-inv-3', decision: 'reject', optionId: 'approve', actorId: 'boss', attribution: 'missing_rule' })
+    expect(await pending3).toBe('rejected')
+    expect(d3.ok && d3.item.decision).toBe('reject')
+
+    await gov.flush()
+    const m0 = await readM0Events({ db: store.db, memoryDir: gov.memoryDir })
+    const payloadOf = (ev: (typeof m0)[number] | undefined) => (ev?.payload ?? {}) as Record<string, unknown>
+    const ruled1 = m0.find(e => e.type === 'escalation.ruled' && payloadOf(e)['escalationId'] === 'rul-inv-1')
+    const ruled2 = m0.find(e => e.type === 'escalation.ruled' && payloadOf(e)['escalationId'] === 'rul-inv-2')
+    expect(payloadOf(ruled1)['decision']).toBe('reject')
+    expect(payloadOf(ruled1)['groundTruth']).toBe('defect')
+    expect(payloadOf(ruled2)['groundTruth']).toBe('clean')
     await gov.shutdown()
   })
 })

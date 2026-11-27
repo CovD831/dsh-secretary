@@ -24,6 +24,33 @@ const LOCATE_CMD_RE = /^(?:rg|grep|find|ls|cat|head|tail|git\s+(?:status|log|dif
 const EDIT_CMD_RE = /^(?:sed|awk|tee|mv|cp|mkdir|rm|touch|git\s+(?:add|commit|apply))\b/i
 const isRec = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === 'object' && !Array.isArray(v))
 
+function extractRawText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  const parts: string[] = []
+  for (const b of content) {
+    if (isRec(b) && b['type'] === 'text' && typeof b['text'] === 'string') parts.push(b['text'])
+  }
+  return parts.join('\n')
+}
+
+export function unwrapToolCall(data: unknown): { callId: string; name: string; arguments: unknown } {
+  const rec = isRec(data) ? data : {}
+  const callId = typeof rec['callId'] === 'string' ? rec['callId'] : typeof rec['id'] === 'string' ? rec['id'] : ''
+  const name = typeof rec['name'] === 'string' ? rec['name'] : typeof rec['toolName'] === 'string' ? rec['toolName'] : ''
+  return { callId, name, arguments: rec['arguments'] }
+}
+
+export function unwrapToolResult(data: unknown): { callId: string; text: string; isError: boolean; meta: unknown } {
+  const rec = isRec(data) ? data : {}
+  const msg = isRec(rec['message']) ? rec['message'] : undefined
+  const src = msg && isRec(msg['source']) ? msg['source'] : undefined
+  const callId = String(msg?.['toolCallId'] ?? src?.['callId'] ?? rec['callId'] ?? rec['toolCallId'] ?? rec['id'] ?? '')
+  const text = extractRawText(msg ? msg['content'] : rec['content'])
+  const isError = Boolean(msg ? msg['isError'] : rec['isError'])
+  return { callId, text, isError, meta: rec['meta'] }
+}
+
 function parseArgs(raw: unknown): unknown {
   if (typeof raw !== 'string') return redactValue(raw).value
   try { return redactValue(JSON.parse(raw)).value } catch { return redactValue(raw).value }
@@ -75,6 +102,12 @@ function classifyToolCall(tool: string, rawArgs: unknown): { phase: SessionStepP
 
 function parseToolResultOutcome(tool: string, text: string, isError: boolean, meta: unknown): { isError: boolean; exitCode?: number } {
   if (isRec(meta) && typeof meta['exitCode'] === 'number' && Number.isFinite(meta['exitCode'])) return { isError: isError || meta['exitCode'] !== 0, exitCode: meta['exitCode'] }
+  if (text.startsWith('{')) {
+    try {
+      const obj = JSON.parse(text) as { exitCode?: unknown }
+      if (typeof obj.exitCode === 'number' && Number.isFinite(obj.exitCode)) return { isError: isError || obj.exitCode !== 0, exitCode: obj.exitCode }
+    } catch { /* ignore non-json content */ }
+  }
   if (/\n?\[killed by signal: ([^\]\n]+)\]$/.test(text)) return { isError: true }
   const exit = /\n?\[exit code: (\d+)\]$/.exec(text)
   if (exit?.[1] !== undefined) { const code = Number(exit[1]); return { isError: isError || code !== 0, exitCode: code } }
@@ -88,14 +121,17 @@ export function extractSessionStepSequence(events: readonly SessionEvent[], maxS
   for (const ev of events) {
     if (ev.type === 'tool/call') {
       if (steps.length >= limit) continue
-      const { phase, skeleton } = classifyToolCall(ev.data.name, ev.data.arguments)
-      byCallId.set(String(ev.data.callId), steps.length)
-      steps.push({ stepIndex: steps.length, tool: ev.data.name, phase, skeleton, isError: false })
+      const call = unwrapToolCall(ev.data)
+      if (!call.name) continue
+      const { phase, skeleton } = classifyToolCall(call.name, call.arguments)
+      byCallId.set(call.callId, steps.length)
+      steps.push({ stepIndex: steps.length, tool: call.name, phase, skeleton, isError: false })
     } else if (ev.type === 'tool/result') {
-      const idx = byCallId.get(String(ev.data.message.toolCallId ?? ev.data.message.source?.callId ?? ''))
+      const res = unwrapToolResult(ev.data)
+      const idx = byCallId.get(res.callId)
       if (idx === undefined) continue
-      const cur = steps[idx]!, text = ev.data.message.content.filter(b => b.type === 'text').map(b => b.text).join('\n')
-      const out = parseToolResultOutcome(cur.tool, text, Boolean(ev.data.message.isError), ev.data.meta)
+      const cur = steps[idx]!
+      const out = parseToolResultOutcome(cur.tool, res.text, res.isError, res.meta)
       steps[idx] = { ...cur, isError: out.isError, ...(out.exitCode !== undefined ? { exitCode: out.exitCode } : {}) }
     }
   }

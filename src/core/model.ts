@@ -319,6 +319,7 @@ export interface Execution {
   workspace?: string
   dispatchKey?: string
   verifyCommands?: string[]
+  taskType?: 'feature' | 'bugfix' | 'refactor' | 'docs'
   executionMode?: 'solo' | 'team'
   thinkingTier?: 'low' | 'medium' | 'high'
   externalSideEffects?: string[]

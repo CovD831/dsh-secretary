@@ -26,7 +26,7 @@ function globToRegex(glob: string): RegExp {
   const body = glob.trim().replace(/\\/g, '/').replace(/^\.\//, '')
     .replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*\//g, '\0DS\0').replace(/\*\*/g, '\0DD\0')
     .replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]').replace(/\0DS\0/g, '(?:.*/)?').replace(/\0DD\0/g, '.*')
-  return new RegExp(`^${body}$`)
+  return new RegExp(`^${body}$`, 'i')
 }
 
 function normalizePath(raw: string): { ok: true; path: string } | { ok: false; reason: string } {

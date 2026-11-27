@@ -1,4 +1,5 @@
 /** 执行护栏纯规则与 Token 计量：Smart-Auto 风险分类与缓存折算有效 Token 计算。 */
+import { homedir } from 'node:os'
 import { isAbsolute, relative, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Session } from '@deepseek-ai/dsh-session'
@@ -29,13 +30,34 @@ export const HARM_SHELL_PATTERNS: readonly [RegExp, string][] = [
 ]
 
 const EXTERNAL_SIDE_EFFECT_RE = new RegExp(`(?:\\b(?:git\\s+push|lark(?:-cli)?\\s+.*(?:send|reply))\\b|${GH_WRITE_RE.source})`, 'i')
-const PROTECTED_PATH_RE = /(?:^|\/)(?:\.git|\.github|\.env(?:\.[^/]+)?|.*(?:secret|credential|private[_-]?key).*|.*\.(?:pem|key))(?=$|\/)/i
+const HARD_REDLINE_PATH_RE = /(?:^|\/)(?:\.dsh|\.env(?:\.[^/]+|rc)?)(?=$|\/)/i
+const PROTECTED_PATH_RE = /(?:^|\/)(?:\.git|\.github|\.dsh|\.env(?:\.[^/]+|rc)?|.*(?:secret|credential|private[_-]?key|id_rsa).*|.*\.(?:pem|key))(?=$|\/)/i
 
 const isRec = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === 'object' && !Array.isArray(v))
 
 function extractStringArg(args: unknown, keys: readonly string[]): string | undefined {
   if (!isRec(args)) return undefined
   for (const k of keys) if (typeof args[k] === 'string' && args[k].trim()) return args[k].trim()
+  return undefined
+}
+
+/** 校验是否触及 `.env*`/`.envrc`/`~/.dsh` 不可豁免硬红线（即使 `full-trust` 也须拦截）。 */
+export function isHardRedlineRisk(toolName: string, args: unknown, worktreeDir: string): string | undefined {
+  if (FILE_WRITE_TOOLS.has(toolName)) {
+    const rawPath = extractStringArg(args, ['file_path', 'path', 'filePath', 'target'])
+    if (!rawPath) return undefined
+    const normRaw = rawPath.trim().replace(/\\/g, '/')
+    if (HARD_REDLINE_PATH_RE.test(normRaw)) return `触碰不可豁免硬红线路径: ${rawPath}`
+    const dshHome = resolve(homedir(), '.dsh')
+    const absTarget = resolve(worktreeDir || '.', rawPath)
+    const relDsh = relative(dshHome, absTarget).replace(/\\/g, '/')
+    if (relDsh === '' || (!relDsh.startsWith('..') && !isAbsolute(relDsh))) return `禁止越权触碰生产 ~/.dsh: ${rawPath}`
+  }
+  if (SHELL_TOOLS.has(toolName)) {
+    const normCmd = (extractStringArg(args, ['command', 'cmd', 'script']) ?? '').replace(/\\\r?\n/g, ' ')
+    if (/(?:^|[\s"'=/>(<;|&])\.env(?:\.[a-zA-Z0-9_-]+|rc)?(?=$|[\s"';|&>)])/i.test(normCmd)) return `命令触碰敏感 .env* 凭据文件: ${normCmd.slice(0, 120)}`
+    if (/(?:^|[\s"'=/>(<;|&])(?:~\/|\$HOME\/|\/[^\s"']*)?\.dsh(?=$|[\s/"';|&>)])/i.test(normCmd)) return `命令触碰敏感 .dsh 目录: ${normCmd.slice(0, 120)}`
+  }
   return undefined
 }
 

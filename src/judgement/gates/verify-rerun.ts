@@ -10,6 +10,7 @@ export interface RerunRecord {
   readonly timedOut?: boolean
   readonly aborted?: boolean
   readonly noSandbox?: boolean
+  readonly sandboxDenied?: boolean
 }
 
 export interface RedGreenRecord {
@@ -17,6 +18,10 @@ export interface RedGreenRecord {
   readonly exitCodeWithoutFix: number | null
   readonly exitCodeWithFix: number | null
   readonly verifierRole: string
+  readonly timedOut?: boolean
+  readonly aborted?: boolean
+  readonly noSandbox?: boolean
+  readonly sandboxDenied?: boolean
 }
 
 export interface VerifyRerunParams {
@@ -29,8 +34,12 @@ export const DEFAULT_VERIFY_RERUN_PARAMS: VerifyRerunParams = Object.freeze({
   require_independent_verifier: true,
 })
 
+export function isFixTaskType(taskType?: string): boolean {
+  return taskType === 'fix' || taskType === 'bugfix'
+}
+
 export interface VerifyRerunCtx {
-  readonly taskType: 'feature' | 'fix' | 'refactor' | 'docs' | string
+  readonly taskType: 'feature' | 'fix' | 'bugfix' | 'refactor' | 'docs' | string
   readonly builderRole: string
   readonly claimedDone: boolean
   readonly rerun?: RerunRecord | null
@@ -59,11 +68,13 @@ export interface ExecuteVerifyRerunOptions {
   readonly maxCommands?: number
   readonly signal?: AbortSignal
   readonly cache?: Map<string, ExecuteVerifyRerunReport>
+  readonly cacheVariant?: string
   readonly runCommand?: (command: string, cwd: string, opts: { timeoutMs: number; signal?: AbortSignal }) => Promise<{
     exitCode: number | null
     timedOut?: boolean
     aborted?: boolean
     noSandbox?: boolean
+    sandboxDenied?: boolean
     stdout?: string
     stderr?: string
   }>
@@ -105,7 +116,7 @@ export function extractVerifyCommandsFromText(text?: string): string[] {
   return cmds
 }
 
-/** 反自报完成核证硬门：强制独立方重跑通过，且 fix 类任务须附撤修复红灯记录。 */
+/** 反自报完成核证硬门：强制独立方重跑通过，且 fix/bugfix 类任务须附撤修复红灯记录。 */
 export function evaluateVerifyRerun(
   ctx: VerifyRerunCtx,
   boundParams?: Partial<VerifyRerunParams>,
@@ -120,22 +131,18 @@ export function evaluateVerifyRerun(
   }
 
   const rerun = ctx.rerun
-  if (!rerun) {
-    return { kind: 'unmeasured', cause: 'no-evidence', detail: '缺少独立重跑验证记录 rerun' }
-  }
+  if (!rerun) return { kind: 'unmeasured', cause: 'no-evidence', detail: '缺少独立重跑验证记录 rerun' }
   if (typeof rerun.command !== 'string' || rerun.command.trim() === '') {
     return { kind: 'unmeasured', cause: 'no-evidence', detail: '重跑记录缺少有效 command' }
   }
-  if (rerun.noSandbox) {
-    return { kind: 'unmeasured', cause: 'no-sandbox', detail: '缺少受沙箱约束的会话 shell 执行器（ctx.shell + sandboxPolicy），禁止在宿主进程裸跑命令' }
+  if (rerun.noSandbox || rerun.sandboxDenied) {
+    return { kind: 'unmeasured', cause: 'no-sandbox', detail: '缺少受沙箱约束的会话 shell 执行器（ctx.shell + sandboxPolicy）或执行被沙箱拒绝，禁止在宿主进程裸跑命令' }
   }
   if (rerun.timedOut || rerun.aborted) {
     return { kind: 'unmeasured', cause: 'timeout', detail: `验证命令 "${rerun.command}" 超时或被中止` }
   }
   const verifier = rerun.verifierRole.trim()
-  if (verifier === '') {
-    return { kind: 'unmeasured', cause: 'no-evidence', detail: '重跑记录缺少 verifierRole' }
-  }
+  if (verifier === '') return { kind: 'unmeasured', cause: 'no-evidence', detail: '重跑记录缺少 verifierRole' }
   if (p.require_independent_verifier && verifier === builder) {
     return { kind: 'deny', blockers: [`禁止自报自验：验证方 "${verifier}" 与实现方 "${builder}" 角色相同`] }
   }
@@ -146,23 +153,29 @@ export function evaluateVerifyRerun(
     return { kind: 'deny', blockers: [`独立重跑命令 "${rerun.command}" 失败，退出码 ${rerun.exitCode}`] }
   }
 
-  if (ctx.taskType === 'fix' && p.require_red_green) {
+  const isFix = isFixTaskType(ctx.taskType)
+  if (isFix && p.require_red_green) {
     const rg = ctx.redGreen
-    if (!rg) {
-      return { kind: 'unmeasured', cause: 'no-evidence', detail: 'fix 类任务须附带撤修复红灯记录 redGreen' }
+    if (!rg) return { kind: 'unmeasured', cause: 'no-evidence', detail: 'fix/bugfix 类任务须附带撤修复红灯记录 redGreen' }
+    if (rg.noSandbox || rg.sandboxDenied) {
+      return { kind: 'unmeasured', cause: 'no-sandbox', detail: '撤修复红绿验证缺少有效沙箱或被沙箱拒绝，禁止视为有效红灯' }
+    }
+    if (rg.timedOut || rg.aborted) {
+      return { kind: 'unmeasured', cause: 'timeout', detail: `撤修复红绿验证 "${rg.command}" 超时或被中止，禁止视为有效红灯` }
     }
     if (typeof rg.command !== 'string' || rg.command.trim() === '') {
       return { kind: 'unmeasured', cause: 'no-evidence', detail: 'redGreen 记录缺少有效 command' }
     }
     const rgVerifier = rg.verifierRole.trim()
-    if (rgVerifier === '') {
-      return { kind: 'unmeasured', cause: 'no-evidence', detail: 'redGreen 记录缺少 verifierRole' }
-    }
+    if (rgVerifier === '') return { kind: 'unmeasured', cause: 'no-evidence', detail: 'redGreen 记录缺少 verifierRole' }
     if (p.require_independent_verifier && rgVerifier === builder) {
       return { kind: 'deny', blockers: [`禁止自报自验：红绿验证方 "${rgVerifier}" 与实现方 "${builder}" 角色相同`] }
     }
     if (!Number.isInteger(rg.exitCodeWithoutFix) || !Number.isInteger(rg.exitCodeWithFix)) {
       return { kind: 'unmeasured', cause: 'no-evidence', detail: 'redGreen 记录缺少有效的整数撤修复/含修复退出码' }
+    }
+    if (rg.exitCodeWithoutFix === 127) {
+      return { kind: 'unmeasured', cause: 'no-evidence', detail: '撤修复基线验证退出码 127（命令缺失或环境不可用），禁止视为有效红灯' }
     }
     if (rg.exitCodeWithoutFix === 0) {
       return { kind: 'deny', blockers: [`fix 任务红绿核证失败：撤去修复后 "${rg.command}" 仍返回 0，未证明覆盖缺陷`] }
@@ -178,12 +191,12 @@ export function evaluateVerifyRerun(
       verifiedBy: verifier,
       command: rerun.command,
       exitCode: 0,
-      ...(ctx.taskType === 'fix' && p.require_red_green ? { redGreenVerified: true } : {}),
+      ...(isFix && p.require_red_green ? { redGreenVerified: true } : {}),
     },
   }
 }
 
-/** 受控重跑验证命令集（支持超时、`ticketId+revision+cmdHash` 幂等缓存、SHA-256 摘要，要求显式提供会话沙箱 runner），并交由 `verifyRerunGate` 裁决。 */
+/** 受控重跑验证命令集（支持超时、按任务类型与参数隔离的幂等缓存、SHA-256 摘要，要求显式提供会话沙箱 runner），并交由 `verifyRerunGate` 裁决。 */
 export async function executeVerifyRerunCommands(
   commands: readonly string[],
   cwd: string,
@@ -191,7 +204,13 @@ export async function executeVerifyRerunCommands(
 ): Promise<ExecuteVerifyRerunReport> {
   const normalized = commands.map(c => c.trim()).filter(Boolean)
   const cmdHash = createHash('sha256').update(JSON.stringify(normalized)).digest('hex').slice(0, 16)
-  const cacheKey = options.ticketId !== undefined ? `${options.ticketId}:${String(options.revision ?? 0)}:${cmdHash}` : undefined
+  const builderRole = options.builderRole ?? 'worker'
+  const verifierRole = options.verifierRole ?? 'verifier'
+  const taskType = options.taskType ?? 'feature'
+  const taskKey = isFixTaskType(taskType) ? 'fix' : taskType
+  const rgParam = options.params?.require_red_green === undefined ? 'd' : String(options.params.require_red_green)
+  const variant = options.cacheVariant ? `:${options.cacheVariant}` : ''
+  const cacheKey = options.ticketId !== undefined ? `${options.ticketId}:${String(options.revision ?? 0)}:${cmdHash}:${taskKey}:${rgParam}${variant}` : undefined
   const storeKey = cacheKey ? `${resolve(cwd || '.')}|${cacheKey}` : undefined
   const cache = options.cache ?? DEFAULT_RERUN_CACHE
   if (storeKey) {
@@ -199,9 +218,6 @@ export async function executeVerifyRerunCommands(
     if (hit && hit.verdict.kind === 'allow') return { ...hit, cached: true }
   }
 
-  const builderRole = options.builderRole ?? 'worker'
-  const verifierRole = options.verifierRole ?? 'verifier'
-  const taskType = options.taskType ?? 'feature'
   const baseCtx = (rerun: RerunRecord | null): VerifyRerunCtx => ({
     taskType, builderRole, claimedDone: true, rerun,
     ...(options.redGreen !== undefined ? { redGreen: options.redGreen } : {}),
@@ -221,16 +237,10 @@ export async function executeVerifyRerunCommands(
   }
 
   const maxCmds = options.maxCommands ?? 10
-  if (normalized.length === 0 || normalized.length > maxCmds) {
-    return finalize(baseCtx(null), [])
-  }
+  if (normalized.length === 0 || normalized.length > maxCmds) return finalize(baseCtx(null), [])
   const cwdOk = await stat(cwd).then(s => s.isDirectory(), () => false)
-  if (!cwdOk) {
-    return finalize(baseCtx(null), [])
-  }
-  if (!options.runCommand) {
-    return finalize(baseCtx({ command: normalized[0]!, exitCode: null, verifierRole, noSandbox: true }), [])
-  }
+  if (!cwdOk) return finalize(baseCtx(null), [])
+  if (!options.runCommand) return finalize(baseCtx({ command: normalized[0]!, exitCode: null, verifierRole, noSandbox: true }), [])
 
   const timeoutMs = Math.min(Math.max(1000, options.timeoutMs ?? 120_000), 600_000)
   const runner = options.runCommand
@@ -240,20 +250,19 @@ export async function executeVerifyRerunCommands(
   for (const command of normalized) {
     const started = Date.now()
     const raw = await runner(command, cwd, { timeoutMs, ...(options.signal ? { signal: options.signal } : {}) })
-    const stdout = raw.stdout ?? ''
-    const stderr = raw.stderr ?? ''
-    const timedOut = Boolean(raw.timedOut)
-    const aborted = Boolean(raw.aborted)
-    const noSandbox = Boolean(raw.noSandbox)
+    const stdout = raw.stdout ?? '', stderr = raw.stderr ?? ''
+    const timedOut = Boolean(raw.timedOut), aborted = Boolean(raw.aborted)
+    const noSandbox = Boolean(raw.noSandbox), sandboxDenied = Boolean(raw.sandboxDenied)
     results.push({
       command, exitCode: raw.exitCode, durationMs: Date.now() - started, timedOut, aborted,
       stdoutSha256: createHash('sha256').update(stdout).digest('hex'),
       stdoutTail: stdout.slice(-500), stderrTail: stderr.slice(-500),
     })
-    if (noSandbox || timedOut || aborted || raw.exitCode === null || raw.exitCode !== 0) {
+    if (noSandbox || sandboxDenied || timedOut || aborted || raw.exitCode === null || raw.exitCode !== 0) {
       finalRerun = {
         command, exitCode: raw.exitCode, verifierRole,
-        ...(timedOut ? { timedOut: true } : {}), ...(aborted ? { aborted: true } : {}), ...(noSandbox ? { noSandbox: true } : {}),
+        ...(timedOut ? { timedOut: true } : {}), ...(aborted ? { aborted: true } : {}),
+        ...(noSandbox ? { noSandbox: true } : {}), ...(sandboxDenied ? { sandboxDenied: true } : {}),
       }
       break
     }
@@ -267,7 +276,7 @@ export function createVerifyRerunGate(boundParams?: Partial<VerifyRerunParams>):
     id: 'verify.rerun',
     version: 1,
     point: 'verify.rerun',
-    description: '工人声称完成时要求独立方重跑验证，fix 任务另需撤修复红灯证据',
+    description: '工人声称完成时要求独立方重跑验证，fix/bugfix 任务另需撤修复红灯证据',
     side: 'hard',
     placement: { timing: 'pre', enforce: true },
     requires: ['taskType', 'builderRole', 'claimedDone'],

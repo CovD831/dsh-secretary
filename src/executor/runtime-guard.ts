@@ -11,7 +11,7 @@ import { calibrateProbability, classifyThresholdBand } from '../rsi/index.ts'
 import type { SpineAppender } from '../spine/types.ts'
 import {
   FILE_WRITE_TOOLS, SAFE_READ_TOOLS, SHELL_TOOLS, classifySmartAutoRisk,
-  effectiveApprovalMode, effectiveUsageTokens, resolveRootTicketId,
+  effectiveApprovalMode, effectiveUsageTokens, isHardRedlineRisk, resolveRootTicketId,
 } from './runtime-guard-rules.ts'
 
 export { classifySmartAutoRisk, effectiveApprovalMode, effectiveUsageTokens, resolveRootTicketId } from './runtime-guard-rules.ts'
@@ -100,6 +100,8 @@ export class RuntimeGuard {
         },
       })
     }
+    const hardRedline = isHardRedlineRisk(exec.name, exec.arguments, ticket.execution?.directory ?? '')
+    if (hardRedline) return { kind: 'ask', reason: hardRedline }
     if (mode === 'full-trust') return next()
     if (mode === 'always-ask' && !SAFE_READ_TOOLS.has(exec.name)) return { kind: 'ask', reason: `always-ask 档位要求审批工具 ${exec.name}` }
     if (mode === 'smart-auto' && risk.needsAsk) return { kind: 'ask', reason: risk.reason ?? `smart-auto 拦截高风险工具 ${exec.name}` }

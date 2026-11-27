@@ -3,7 +3,7 @@ import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { isoTime, type DomainEvent } from '../core/index.ts'
 import type { EvidenceRef, SpineDraft, SpineEnvelope, StreamId } from '../spine/types.ts'
-import { extractSessionStepSequence } from './sop-miner.ts'
+import { extractSessionStepSequence, unwrapToolCall, unwrapToolResult } from './sop-miner.ts'
 import type {
   CommandOutcome,
   DomainEventBridgeMeta,
@@ -136,6 +136,12 @@ export function extractSessionPtr(envelope: Pick<SpineEnvelope, 'evidence' | 'pa
 
 function parseShellOutcome(callId: string, tool: string, text: string, isError: boolean, meta: unknown): CommandOutcome | undefined {
   if (isRecord(meta) && typeof meta['exitCode'] === 'number' && Number.isFinite(meta['exitCode'])) return { callId, tool, exitCode: meta['exitCode'], isError }
+  if (text.startsWith('{')) {
+    try {
+      const obj = JSON.parse(text) as { exitCode?: unknown }
+      if (typeof obj.exitCode === 'number' && Number.isFinite(obj.exitCode)) return { callId, tool, exitCode: obj.exitCode, isError: isError || obj.exitCode !== 0 }
+    } catch { /* ignore non-json content */ }
+  }
   const sig = /\n?\[killed by signal: ([^\]\n]+)\]$/.exec(text)
   if (sig?.[1] !== undefined) return { callId, tool, exitCode: undefined, signal: sig[1], isError }
   const exit = /\n?\[exit code: (\d+)\]$/.exec(text)
@@ -143,6 +149,11 @@ function parseShellOutcome(callId: string, tool: string, text: string, isError: 
   const pending = /^started background job |\[still running after \d+ms; moved to background job /.test(text)
   if (SHELL_TOOLS.has(tool) && !isError && !pending) return { callId, tool, exitCode: 0, isError: false }
   return isError ? { callId, tool, exitCode: undefined, isError: true } : undefined
+}
+
+function numToken(u: Record<string, unknown>, camel: string, snake: string): number {
+  const v = u[camel] ?? u[snake]
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0
 }
 
 function extractMetricsFromEvents(events: readonly SessionEvent[]) {
@@ -159,18 +170,20 @@ function extractMetricsFromEvents(events: readonly SessionEvent[]) {
     }
     if (ev.type === 'tool/call') {
       toolCallCount += 1
-      callNames.set(String(ev.data.callId), ev.data.name)
+      const call = unwrapToolCall(ev.data)
+      if (call.callId) callNames.set(call.callId, call.name)
     } else if (ev.type === 'tool/result') {
       toolResultCount += 1
-      const callId = String(ev.data.message.toolCallId ?? ev.data.message.source?.callId ?? '')
-      const text = ev.data.message.content.filter(b => b.type === 'text').map(b => b.text).join('\n')
-      const outcome = parseShellOutcome(callId, callNames.get(callId) ?? '', text, Boolean(ev.data.message.isError), ev.data.meta)
+      const res = unwrapToolResult(ev.data)
+      const outcome = parseShellOutcome(res.callId, callNames.get(res.callId) ?? '', res.text, res.isError, res.meta)
       if (outcome) commandExitCodes.push(outcome)
-    } else if (ev.type === 'assistant/message' && ev.data.usage) {
-      const u = ev.data.usage
-      usageCount += 1; inputTokens += u.inputTokens; outputTokens += u.outputTokens
-      cacheReadTokens += u.cacheReadTokens ?? 0; cacheWriteTokens += u.cacheWriteTokens ?? 0; reasoningTokens += u.reasoningTokens ?? 0
-      totalTokens += u.totalTokens ?? (u.inputTokens + u.outputTokens + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0))
+    } else if (ev.type === 'assistant/message' && isRecord((ev.data as { usage?: unknown } | undefined)?.usage)) {
+      const u = (ev.data as { usage?: unknown }).usage as Record<string, unknown>
+      const inp = numToken(u, 'inputTokens', 'input_tokens'), out = numToken(u, 'outputTokens', 'output_tokens')
+      const cr = numToken(u, 'cacheReadTokens', 'cache_read_tokens'), cw = numToken(u, 'cacheWriteTokens', 'cache_write_tokens')
+      const rt = numToken(u, 'reasoningTokens', 'reasoning_tokens')
+      usageCount += 1; inputTokens += inp; outputTokens += out; cacheReadTokens += cr; cacheWriteTokens += cw; reasoningTokens += rt
+      totalTokens += numToken(u, 'totalTokens', 'total_tokens') || (inp + out + cr + cw)
     }
   }
   const durationMs = timeCount >= 2 ? Math.max(0, maxTime - minTime) : undefined
