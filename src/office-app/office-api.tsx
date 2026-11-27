@@ -54,7 +54,7 @@ export interface OfficeRealtimeMessage {
   readonly data: Record<string, unknown>
 }
 
-export function subscribeOfficeStream(onMessage: (msg: OfficeRealtimeMessage) => void): () => void {
+export function subscribeOfficeStream(onMessage: (msg: OfficeRealtimeMessage) => void, onError?: () => void): () => void {
   if (typeof EventSource === 'undefined') return () => {}
   const es = new EventSource('/orchestrator/api/events/stream')
   const forward = (event: string) => (ev: MessageEvent) => {
@@ -63,6 +63,7 @@ export function subscribeOfficeStream(onMessage: (msg: OfficeRealtimeMessage) =>
   for (const name of ['ready', 'spine', 'ruling.queued', 'ruling.decided', 'domain', 'message', 'subagent']) {
     es.addEventListener(name, forward(name) as EventListener)
   }
+  es.onerror = () => { onError?.() }
   return () => { es.close() }
 }
 

@@ -9,7 +9,7 @@ import { type StatusKind } from './catalog.ts'
 import { WORLD_ASSET_CATALOG } from './diorama-catalog.ts'
 import { stepCameraTowards } from './diorama-polish.ts'
 import { type FloorSlotEntry, SEED_STORAGE_KEY, SLOT_STORAGE_KEY, readInitialSeed, readSlotRegistry, reconcileSlotRegistry } from './floor-slots.ts'
-import { GameHud, type RoomHudStat } from './game-hud.tsx'
+import { GameHud, type RoomHudStat, computeMinimapWidth } from './game-hud.tsx'
 import { HandoverSheet } from './handover-sheet.tsx'
 import type { OfficeActor, OfficeSprites } from './iso-engine.ts'
 import { CANVAS_H, CANVAS_W } from './layout-solver.ts'
@@ -127,7 +127,7 @@ export function StageApp() {
       setOnline(true); setStreamTick(t => t + 1)
       if (debounceTimer) clearTimeout(debounceTimer)
       debounceTimer = setTimeout(() => { void refreshAll() }, 120)
-    })
+    }, () => setOnline(false))
     const timer = setInterval(() => { void refreshAll() }, 8000)
     return () => { unsub(); clearInterval(timer); if (debounceTimer) clearTimeout(debounceTimer) }
   }, [refreshAll])
@@ -218,8 +218,12 @@ export function StageApp() {
   }
   const focusWing = (wing: WorldWingPlan) => { if (wing.workspaceId) setWorkspaceId(wing.workspaceId); setCamera(c => cameraForGridPoint(wing.focusPoint, world, c.zoom, viewport.w, viewport.h)) }
   const selectWorkspace = (id: string) => { setWorkspaceId(id); const w = world.wings.find(x => x.workspaceId === id); if (w) setCamera(c => cameraForGridPoint(w.focusPoint, world, c.zoom, viewport.w, viewport.h)) }
-  const zoomTo = (nz: 1 | 2) => {
+  const zoomTo = (nz: 1 | 2, anchor?: { x: number; y: number }) => {
     if (nz === 1) { setCamera(cameraForWorldFit(world, viewport.w, viewport.h)); return }
+    if (anchor) {
+      const cur = renderCamRef.current, ratio = nz / Math.max(0.1, cur.zoom)
+      setCamera({ zoom: nz, panX: Math.round(anchor.x - world.baseOrigin.x - (anchor.x - cur.panX - world.baseOrigin.x) * ratio), panY: Math.round(anchor.y - world.baseOrigin.y - (anchor.y - cur.panY - world.baseOrigin.y) * ratio) }); return
+    }
     const c = screenToWorldIso(viewport.w / 2, viewport.h / 2, world, renderCamRef.current)
     const pt = c.u >= 0 && c.v >= 0 && c.u < world.buildingCols && c.v < world.buildingRows ? { u: c.u + 0.5, v: c.v + 0.5 } : { u: world.buildingCols / 2, v: world.buildingRows / 2 }
     setCamera(cameraForGridPoint(pt, world, nz, viewport.w, viewport.h))
@@ -255,7 +259,7 @@ export function StageApp() {
   }
   const handleWheel = (e: WheelEvent<HTMLCanvasElement>) => {
     if (Math.abs(e.deltaY) < 4) return
-    const nz: 1 | 2 = e.deltaY < 0 ? 2 : 1; if (nz !== camera.zoom) zoomTo(nz)
+    const nz: 1 | 2 = e.deltaY < 0 ? 2 : 1; if (nz !== camera.zoom) zoomTo(nz, nz === 2 ? toCanvasCoords(e.clientX, e.clientY) : undefined)
   }
   const handleSendMessage = async (text: string) => {
     setDialogCollapsed(false); setPendingBoss({ text, sentAt: Date.now(), baseSayId: latestSayId })
@@ -292,11 +296,11 @@ export function StageApp() {
           onClick={e => { if (suppressClickRef.current) { suppressClickRef.current = false; return } handleCanvasClick(e.clientX, e.clientY) }}
           style={{ width: '100%', height: '100%', display: 'block', imageRendering: 'pixelated', cursor: hoverTarget ? 'pointer' : 'grab' }} />
         <NpcDialog feed={feed} activeRuling={activeRuling} pendingCount={pendingCount} avatar={avatar} hasWorkingTickets={tickets.some(t => t.stage === 'working')}
-          gateBlocked={gateBlocked} secretaryThinking={secretaryThinking} collapsed={dialogCollapsed}
+          gateBlocked={gateBlocked} secretaryThinking={secretaryThinking} collapsed={dialogCollapsed} collapsedLeft={computeMinimapWidth(world) + 28}
           pendingBossText={pendingBoss?.text ?? (latestEntry?.role === 'boss' ? latestEntry.text : null)} inputRef={inputRef} onSendMessage={handleSendMessage}
           onDecideRuling={handleDecideRuling} onOpenHandover={entry => setHandoverEntry(entry)} onExpand={() => setDialogCollapsed(false)} onCollapse={() => setDialogCollapsed(true)} />
       </div>
-      <PropsDrawer activeProp={activeProp} onClose={() => setActiveProp(null)} onChanged={() => { void refreshAll() }} />
+      <PropsDrawer activeProp={activeProp} activeWorkspaceId={workspaceId} onClose={() => setActiveProp(null)} onChanged={() => { void refreshAll() }} />
       <HandoverSheet entry={handoverEntry} onClose={() => setHandoverEntry(null)} />
       <WorkerDrawer mode={drawerMode} workspaceId={workspaceId} settings={settings} tickets={roomTickets} allTickets={tickets} selectedTicketId={selectedTicketId}
         streamTick={streamTick} onSelectWorkspace={selectWorkspace} onSelectTicket={id => setSelectedTicketId(id)} onChanged={() => { void refreshAll() }} onClose={() => setDrawerMode(null)} />

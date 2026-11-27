@@ -46,11 +46,11 @@ async function flush() {
   }
 }
 
-async function mountProp(activeProp: GovernancePropKind, onChanged = vi.fn()) {
+async function mountProp(activeProp: GovernancePropKind, onChanged = vi.fn(), activeWorkspaceId?: string) {
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
-  await act(async () => { root!.render(<PropsDrawer activeProp={activeProp} onClose={vi.fn()} onChanged={onChanged} />) })
+  await act(async () => { root!.render(<PropsDrawer activeProp={activeProp} activeWorkspaceId={activeWorkspaceId} onClose={vi.fn()} onChanged={onChanged} />) })
   await flush()
   return onChanged
 }
@@ -115,12 +115,19 @@ describe('Phase O4: 4 Diegetic Governance Prop Modals', () => {
       'POST memory/direct': () => ({ writeResult: { kind: 'accepted', revision: 1, detail: 'ok' }, sourceRef: { seq: 11, id: 'ev-11' } }),
       'POST memory/patches/0': () => ({ ok: true }),
     })
-    const onChanged = await mountProp('notebook')
+    const onChanged = await mountProp('notebook', vi.fn(), 'repo-alpha')
     const layerOpts = [...byLabel<HTMLSelectElement>('记忆层级').options].map(o => o.value)
     expect(layerOpts).toEqual(['m2', 'm1', 'm3'])
+    expect(byLabel<HTMLInputElement>('工作区键').style.display).toBe('none')
+    expect(byLabel<HTMLInputElement>('条目标识').style.display).toBe('none')
+    expect(byLabel<HTMLSelectElement>('M2 类型').style.display).toBe('')
+
+    await act(async () => { setField(byLabel<HTMLSelectElement>('记忆层级'), 'm3') })
+    expect(byLabel<HTMLInputElement>('工作区键').style.display).toBe('')
+    expect(byLabel<HTMLInputElement>('工作区键').value).toBe('repo-alpha')
+    expect(byLabel<HTMLSelectElement>('M2 类型').style.display).toBe('none')
 
     await act(async () => {
-      setField(byLabel<HTMLSelectElement>('记忆层级'), 'm3')
       setField(byLabel<HTMLInputElement>('工作区键'), 'Repo Alpha!')
       setField(byLabel<HTMLInputElement>('条目标识'), 'Build_Rule 01')
       setField(byLabel<HTMLTextAreaElement>('批注内容'), '测试必须指定临时 DSH_HOME')
@@ -164,6 +171,9 @@ describe('Phase O4: 4 Diegetic Governance Prop Modals', () => {
     await act(async () => { byText('开封密封 Holdout 验证').closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
     await flush()
     expect(reqs.find(r => r.path === 'rsi/holdout')?.body).toMatchObject({ candidateId: 'candidate-v1', point: 'verify.changed-paths' })
+    await act(async () => { byText('cand-1', 'button').click() })
+    expect(byLabel<HTMLInputElement>('候选规则 ID').value).toBe('cand-1')
+    expect(byLabel<HTMLInputElement>('挂载点').value).toBe('verify.changed-paths')
     expect(onChanged).toHaveBeenCalledTimes(1)
   })
 
@@ -180,7 +190,7 @@ describe('Phase O4: 4 Diegetic Governance Prop Modals', () => {
         sources: [],
         environment: { root: '/tmp/work', variables: [] },
       }),
-      'GET models': () => ({ default: { provider: 'deepseek', model: 'deepseek-chat' }, groups: [{ id: 'deepseek', name: 'DeepSeek', models: [] }] }),
+      'GET models': () => ({ default: { provider: 'deepseek', model: 'deepseek-chat' }, groups: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat' }] }] }),
       'GET avatars': () => ({ activeId: 'preset-walnut-01', items: [{ id: 'preset-walnut-01', name: '胡桃木默认', source: 'preset', createdAt: '2026-11-26', portraitUrls: { neutral: '/a.png', working: '/b.png', happy: '/c.png', concerned: '/d.png' }, quantized: true, outOfPaletteCount: 0, statusPixels: 0, semiTransparentCount: 0 }] }),
       'GET projection/state': () => ({ avatar: { posture: 'patrol_idle', zone: 'secretary_counter', shift: 'day', paused: false, workingCount: 0, deviation: null, bark: null, counts: { failed: 0, blocked: 0, personWaiting: 0, working: 0, pendingConflicts: 0, pendingRulings: 0, pendingVerifications: 0 } }, schedule: [], updatedAt: '2026-11-26' }),
       'PUT settings/workspaces': () => ({ revision: 3, restarting: false }),
@@ -192,11 +202,19 @@ describe('Phase O4: 4 Diegetic Governance Prop Modals', () => {
     const onChanged = await mountProp('cabinet')
     expect(document.querySelector('input[type="file"]')).toBeNull()
 
+    await act(async () => { byText('删除').click() })
+    expect(byText('确认删除？')).toBeTruthy()
+    await act(async () => { byText('取消').click() })
+    await act(async () => { setField(byLabel<HTMLInputElement>('基础分支-0'), 'develop') })
+    expect(byText('未保存')).toBeTruthy()
+
     await act(async () => { byText('保存工作区档案').closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
     await flush()
     expect(reqs.find(r => r.path === 'settings/workspaces' && r.method === 'PUT')?.body).toMatchObject({ revision: 2 })
 
     await act(async () => { byText('沙箱审批与熔断锁').click() })
+    expect(document.querySelector('#dsh-model-providers option[value="deepseek"]')).toBeTruthy()
+    expect(document.querySelector('#dsh-model-names option[value="deepseek-chat"]')).toBeTruthy()
     await act(async () => { byText('保存沙箱与熔断配置').closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
     await flush()
     expect(reqs.find(r => r.path === 'settings/executor' && r.method === 'PUT')?.body).toMatchObject({ revision: 4 })

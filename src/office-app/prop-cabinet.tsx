@@ -30,6 +30,9 @@ export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClo
   const [avSeed, setAvSeed] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
+  const [confirmDelIdx, setConfirmDelIdx] = useState<number | null>(null)
+  const [wsDirty, setWsDirty] = useState(false)
+  const [execDirty, setExecDirty] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -38,6 +41,7 @@ export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClo
       ])
       setSettings(st); setModels(md); setAvatars(av); setPaused(proj.avatar.paused)
       setWsList(st.blocks.workspaces.value ?? [])
+      setWsDirty(false); setExecDirty(false); setConfirmDelIdx(null)
       const ex = st.blocks.executor.value
       setExecDraft({
         approvalMode: ex.approvalMode ?? '', maxWorkers: String(ex.maxWorkers),
@@ -51,13 +55,20 @@ export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClo
 
   useEffect(() => { if (open) void load() }, [open, load])
 
+  const editWs = (idx: number, patch: Partial<WorkspaceItem>) => {
+    setWsDirty(true); setWsList(p => p.map((x, i) => i === idx ? { ...x, ...patch } : x))
+  }
+  const editExec = (patch: Partial<typeof execDraft>) => {
+    setExecDirty(true); setExecDraft(d => ({ ...d, ...patch }))
+  }
+
   const saveWorkspaces = async (e: FormEvent) => {
     e.preventDefault()
     if (!settings) return
     setBusy(true); setNotice('')
     try {
       await officeCall('PUT settings/:block', { block: 'workspaces', body: { value: wsList, revision: settings.blocks.workspaces.revision } })
-      setNotice('工作区档案已保存'); await load(); onChanged?.()
+      setWsDirty(false); setConfirmDelIdx(null); setNotice('工作区档案已保存'); await load(); onChanged?.()
     } catch (err) { setNotice(err instanceof Error ? err.message : String(err)) } finally { setBusy(false) }
   }
 
@@ -76,7 +87,7 @@ export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClo
         maxTurns: opt(execDraft.maxTurns), maxStallTurns: opt(execDraft.maxStallTurns), maxTokens: opt(execDraft.maxTokens),
       }
       await officeCall('PUT settings/:block', { block: 'executor', body: { value, revision: settings.blocks.executor.revision } })
-      setNotice('沙箱审批与熔断锁已保存'); await load(); onChanged?.()
+      setExecDirty(false); setNotice('沙箱审批与熔断锁已保存'); await load(); onChanged?.()
     } catch (err) { setNotice(err instanceof Error ? err.message : String(err)) } finally { setBusy(false) }
   }
 
@@ -108,13 +119,14 @@ export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClo
     } catch (err) { setNotice(err instanceof Error ? err.message : String(err)) } finally { setBusy(false) }
   }
 
-  const switchTab = (next: DrawerTab) => { setTab(next); setNotice('') }
+  const switchTab = (next: DrawerTab) => { setTab(next); setNotice(''); setConfirmDelIdx(null) }
+  const modelOptions = models?.groups.find(g => g.id === execDraft.provider)?.models ?? models?.groups.flatMap(g => g.models) ?? []
 
   return (
     <DiegeticModal open={open} title="机要文件柜" subtitle="墙角 · 工作区、沙箱熔断与秘书形象管线" variant="walnut" width={920} onClose={onClose}>
       <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <button type="button" className="dsh-px-btn" style={btnStyle(tab === 'workspaces')} onClick={() => switchTab('workspaces')}>工作区档案</button>
-        <button type="button" className="dsh-px-btn" style={btnStyle(tab === 'executor')} onClick={() => switchTab('executor')}>沙箱审批与熔断锁</button>
+        <button type="button" className="dsh-px-btn" style={btnStyle(tab === 'workspaces')} onClick={() => switchTab('workspaces')}>工作区档案{wsDirty ? ' ●' : ''}</button>
+        <button type="button" className="dsh-px-btn" style={btnStyle(tab === 'executor')} onClick={() => switchTab('executor')}>沙箱审批与熔断锁{execDirty ? ' ●' : ''}</button>
         <button type="button" className="dsh-px-btn" style={btnStyle(tab === 'avatars')} onClick={() => switchTab('avatars')}>秘书形象定制</button>
       </div>
       {notice && <p style={{ ...DIEGETIC_WALNUT_CARD, backgroundColor: '#3A2E28', margin: '0 0 10px', fontSize: 12 }}>{notice}</p>}
@@ -122,32 +134,39 @@ export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClo
       {tab === 'workspaces' && (
         <form onSubmit={e => { void saveWorkspaces(e) }} style={{ display: 'grid', gap: 10 }}>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" className="dsh-px-btn" style={btnStyle()} onClick={() => setWsList(prev => [...prev, { id: `ws-${prev.length + 1}`, repository: '/srv/repos/app', baseBranch: 'main', branchPrefix: 'agent/', isolation: 'I2' }])}>新增工作区</button>
-            <button type="submit" className="dsh-px-btn" disabled={busy} style={nineSliceButtonStyle(false, busy, 'gold')}>保存工作区档案</button>
+            <button type="button" className="dsh-px-btn" style={btnStyle()} onClick={() => { setWsDirty(true); setConfirmDelIdx(null); setWsList(prev => [...prev, { id: `ws-${prev.length + 1}`, repository: settings?.environment.root ?? '', baseBranch: 'main', branchPrefix: 'agent/', isolation: 'I2' }]) }}>新增工作区</button>
+            <button type="submit" className="dsh-px-btn" disabled={busy} style={nineSliceButtonStyle(false, busy, 'gold')}>{wsDirty ? '保存工作区档案 ● 未保存' : '保存工作区档案'}</button>
           </div>
           {wsList.map((ws, idx) => (
             <div key={idx} style={{ ...boxStyle, display: 'grid', gap: 6 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <strong>#{idx + 1} {ws.id}</strong>
-                <button type="button" className="dsh-px-btn" style={nineSliceButtonStyle(false, false, 'danger')} onClick={() => setWsList(prev => prev.filter((_, i) => i !== idx))}>删除</button>
+                {confirmDelIdx === idx ? (
+                  <span style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" className="dsh-px-btn" onClick={() => { setWsList(prev => prev.filter((_, i) => i !== idx)); setConfirmDelIdx(null); setWsDirty(true) }} style={nineSliceButtonStyle(false, false, 'danger')}>确认删除？</button>
+                    <button type="button" className="dsh-px-btn" onClick={() => setConfirmDelIdx(null)} style={btnStyle()}>取消</button>
+                  </span>
+                ) : (
+                  <button type="button" className="dsh-px-btn" onClick={() => setConfirmDelIdx(idx)} style={nineSliceButtonStyle(false, false, 'danger')}>删除</button>
+                )}
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 1fr', gap: 6 }}>
-                <input aria-label={`工作区ID-${idx}`} style={inputStyle} value={ws.id} onChange={e => setWsList(p => p.map((x, i) => i === idx ? { ...x, id: e.target.value } : x))} placeholder="id" />
-                <input aria-label={`仓库路径-${idx}`} style={inputStyle} value={ws.repository} onChange={e => setWsList(p => p.map((x, i) => i === idx ? { ...x, repository: e.target.value } : x))} placeholder="/abs/repo" />
-                <input aria-label={`基础分支-${idx}`} style={inputStyle} value={ws.baseBranch} onChange={e => setWsList(p => p.map((x, i) => i === idx ? { ...x, baseBranch: e.target.value } : x))} placeholder="main" />
-                <input aria-label={`分支前缀-${idx}`} style={inputStyle} value={ws.branchPrefix} onChange={e => setWsList(p => p.map((x, i) => i === idx ? { ...x, branchPrefix: e.target.value } : x))} placeholder="agent/" />
+                <input aria-label={`工作区ID-${idx}`} style={inputStyle} value={ws.id} onChange={e => editWs(idx, { id: e.target.value })} placeholder="id" />
+                <input aria-label={`仓库路径-${idx}`} style={inputStyle} value={ws.repository} onChange={e => editWs(idx, { repository: e.target.value })} placeholder="/abs/repo" />
+                <input aria-label={`基础分支-${idx}`} style={inputStyle} value={ws.baseBranch} onChange={e => editWs(idx, { baseBranch: e.target.value })} placeholder="main" />
+                <input aria-label={`分支前缀-${idx}`} style={inputStyle} value={ws.branchPrefix} onChange={e => editWs(idx, { branchPrefix: e.target.value })} placeholder="agent/" />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '100px 150px 1fr 1fr 1fr', gap: 6 }}>
-                <select aria-label={`隔离等级-${idx}`} style={inputStyle} value={ws.isolation} onChange={e => setWsList(p => p.map((x, i) => i === idx ? { ...x, isolation: e.target.value as IsolationTier } : x))}>
+                <select aria-label={`隔离等级-${idx}`} style={inputStyle} value={ws.isolation} onChange={e => editWs(idx, { isolation: e.target.value as IsolationTier })}>
                   {ISOLATIONS.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
-                <select aria-label={`审批模式-${idx}`} style={inputStyle} value={ws.approvalMode ?? ''} onChange={e => setWsList(p => p.map((x, i) => i === idx ? { ...x, approvalMode: (e.target.value || undefined) as ApprovalMode | undefined } : x))}>
+                <select aria-label={`审批模式-${idx}`} style={inputStyle} value={ws.approvalMode ?? ''} onChange={e => editWs(idx, { approvalMode: (e.target.value || undefined) as ApprovalMode | undefined })}>
                   <option value="">继承全局</option>
                   {APPROVAL_MODES.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
-                <input aria-label={`CoW路径-${idx}`} style={inputStyle} value={(ws.cowPaths ?? []).join(' ')} onChange={e => setWsList(p => p.map((x, i) => i === idx ? { ...x, cowPaths: e.target.value.split(/[\s,]+/).filter(Boolean) } : x))} placeholder="cowPaths" />
-                <input aria-label={`验证命令-${idx}`} style={inputStyle} value={(ws.verifyCommands ?? []).join('; ')} onChange={e => setWsList(p => p.map((x, i) => i === idx ? { ...x, verifyCommands: e.target.value.split(';').map(s => s.trim()).filter(Boolean) } : x))} placeholder="verifyCommands" />
-                <input aria-label={`准备命令-${idx}`} style={inputStyle} value={ws.prepare ?? ''} onChange={e => setWsList(p => p.map((x, i) => i === idx ? { ...x, prepare: e.target.value || undefined } : x))} placeholder="prepare" />
+                <input aria-label={`CoW路径-${idx}`} style={inputStyle} value={(ws.cowPaths ?? []).join(' ')} onChange={e => editWs(idx, { cowPaths: e.target.value.split(/[\s,]+/).filter(Boolean) })} placeholder="cowPaths" />
+                <input aria-label={`验证命令-${idx}`} style={inputStyle} value={(ws.verifyCommands ?? []).join('; ')} onChange={e => editWs(idx, { verifyCommands: e.target.value.split(';').map(s => s.trim()).filter(Boolean) })} placeholder="verifyCommands" />
+                <input aria-label={`准备命令-${idx}`} style={inputStyle} value={ws.prepare ?? ''} onChange={e => editWs(idx, { prepare: e.target.value || undefined })} placeholder="prepare" />
               </div>
             </div>
           ))}
@@ -162,30 +181,32 @@ export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClo
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
             <label style={{ fontSize: 11 }}>审批模式
-              <select aria-label="全局审批模式" style={inputStyle} value={execDraft.approvalMode} onChange={e => setExecDraft(d => ({ ...d, approvalMode: e.target.value as '' | ApprovalMode }))}>
+              <select aria-label="全局审批模式" style={inputStyle} value={execDraft.approvalMode} onChange={e => editExec({ approvalMode: e.target.value as '' | ApprovalMode })}>
                 <option value="">默认</option>{APPROVAL_MODES.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             </label>
             <label style={{ fontSize: 11 }}>并发上限 maxWorkers
-              <input aria-label="并发上限" type="number" style={inputStyle} value={execDraft.maxWorkers} onChange={e => setExecDraft(d => ({ ...d, maxWorkers: e.target.value }))} />
+              <input aria-label="并发上限" type="number" style={inputStyle} value={execDraft.maxWorkers} onChange={e => editExec({ maxWorkers: e.target.value })} />
             </label>
             <label style={{ fontSize: 11 }}>熔断轮次 maxTurns
-              <input aria-label="熔断轮次" type="number" style={inputStyle} value={execDraft.maxTurns} onChange={e => setExecDraft(d => ({ ...d, maxTurns: e.target.value }))} />
+              <input aria-label="熔断轮次" type="number" style={inputStyle} value={execDraft.maxTurns} onChange={e => editExec({ maxTurns: e.target.value })} />
             </label>
             <label style={{ fontSize: 11 }}>停滞阈值 maxStallTurns
-              <input aria-label="停滞阈值" type="number" style={inputStyle} value={execDraft.maxStallTurns} onChange={e => setExecDraft(d => ({ ...d, maxStallTurns: e.target.value }))} />
+              <input aria-label="停滞阈值" type="number" style={inputStyle} value={execDraft.maxStallTurns} onChange={e => editExec({ maxStallTurns: e.target.value })} />
             </label>
             <label style={{ fontSize: 11 }}>Token 熔断 maxTokens
-              <input aria-label="Token熔断" type="number" style={inputStyle} value={execDraft.maxTokens} onChange={e => setExecDraft(d => ({ ...d, maxTokens: e.target.value }))} />
+              <input aria-label="Token熔断" type="number" style={inputStyle} value={execDraft.maxTokens} onChange={e => editExec({ maxTokens: e.target.value })} />
             </label>
             <label style={{ fontSize: 11 }}>模型 Provider / Model ({models?.groups.length ?? 0} 组)
               <div style={{ display: 'flex', gap: 4 }}>
-                <input aria-label="模型Provider" style={inputStyle} placeholder="provider" value={execDraft.provider} onChange={e => setExecDraft(d => ({ ...d, provider: e.target.value }))} />
-                <input aria-label="模型名称" style={inputStyle} placeholder="model" value={execDraft.model} onChange={e => setExecDraft(d => ({ ...d, model: e.target.value }))} />
+                <input aria-label="模型Provider" list="dsh-model-providers" style={inputStyle} placeholder="provider" value={execDraft.provider} onChange={e => editExec({ provider: e.target.value })} />
+                <input aria-label="模型名称" list="dsh-model-names" style={inputStyle} placeholder="model" value={execDraft.model} onChange={e => editExec({ model: e.target.value })} />
               </div>
             </label>
           </div>
-          <div><button type="submit" className="dsh-px-btn" disabled={busy} style={nineSliceButtonStyle(false, busy, 'gold')}>保存沙箱与熔断配置</button></div>
+          <datalist id="dsh-model-providers">{models?.groups.map(g => <option key={g.id} value={g.id} label={g.name} />)}</datalist>
+          <datalist id="dsh-model-names">{modelOptions.map(m => <option key={m.id} value={m.id} label={m.name} />)}</datalist>
+          <div><button type="submit" className="dsh-px-btn" disabled={busy} style={nineSliceButtonStyle(false, busy, 'gold')}>{execDirty ? '保存沙箱与熔断配置 ● 未保存' : '保存沙箱与熔断配置'}</button></div>
         </form>
       )}
 
@@ -212,7 +233,7 @@ export function PropCabinet({ open, onClose, onChanged }: { open: boolean; onClo
                     <div style={{ fontSize: 11, opacity: 0.8 }}>outOfPalette: {pack.outOfPaletteCount}</div>
                   </div>
                 </div>
-                <button type="button" disabled={busy || avatars.activeId === pack.id} style={btnStyle(avatars.activeId === pack.id)} onClick={() => { void selectAvatar(pack.id) }}>
+                <button type="button" className="dsh-px-btn" disabled={busy || avatars.activeId === pack.id} style={btnStyle(avatars.activeId === pack.id)} onClick={() => { void selectAvatar(pack.id) }}>
                   {avatars.activeId === pack.id ? '当前启用' : '启用此形象'}
                 </button>
               </div>

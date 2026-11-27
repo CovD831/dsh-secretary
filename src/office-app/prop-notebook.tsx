@@ -15,7 +15,7 @@ const inputStyle: CSSProperties = DIEGETIC_LIGHT_INPUT
 const btnStyle = (primary = false): CSSProperties => nineSliceButtonStyle(primary)
 
 /** 秘书手边《皮质备忘手账》：双栏羊皮纸手账，严禁直写 M4。 */
-export function PropNotebook({ open, onClose, onChanged }: { open: boolean; onClose: () => void; onChanged?: () => void }) {
+export function PropNotebook({ open, activeWorkspaceId, onClose, onChanged }: { open: boolean; activeWorkspaceId?: string; onClose: () => void; onChanged?: () => void }) {
   const [data, setData] = useState<{ studio: MemoryStudioView; notebook: NotebookProjectionView } | null>(null)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -90,19 +90,23 @@ export function PropNotebook({ open, onClose, onChanged }: { open: boolean; onCl
             <strong style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>左页 · M1–M3 记忆条与手写批注纠偏</strong>
             <form onSubmit={e => { void submitDirect(e) }} style={{ display: 'grid', gap: 6, marginBottom: 10, paddingBottom: 10, borderBottom: `1px dashed ${OFFICE_THEME.woodMid}` }}>
               <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr 1fr', gap: 6 }}>
-                <select aria-label="记忆层级" style={inputStyle} value={layer} onChange={e => setLayer(e.target.value as 'm1' | 'm2' | 'm3')}>
+                <select aria-label="记忆层级" style={inputStyle} value={layer} onChange={e => {
+                  const next = e.target.value as 'm1' | 'm2' | 'm3'
+                  setLayer(next)
+                  if (next === 'm3' && !workspaceKey.trim() && activeWorkspaceId) setWorkspaceKey(activeWorkspaceId)
+                }}>
                   <option value="m2">m2</option><option value="m1">m1</option><option value="m3">m3</option>
                 </select>
                 <input aria-label="主题键" style={inputStyle} placeholder="topicKey" value={topicKey} onChange={e => setTopicKey(e.target.value)} />
-                <select aria-label="M2 类型" style={inputStyle} value={m2Kind} onChange={e => setM2Kind(e.target.value as M2Kind | '')}>
+                <select aria-label="M2 类型" style={{ ...inputStyle, display: layer === 'm2' ? undefined : 'none' }} value={m2Kind} onChange={e => setM2Kind(e.target.value as M2Kind | '')}>
                   <option value="">m2Kind (可选)</option>
                   {M2_KINDS.map(k => <option key={k} value={k}>{k}</option>)}
                 </select>
               </div>
               <textarea aria-label="批注内容" required rows={2} style={inputStyle} placeholder="手写批注纠偏内容…" value={statement} onChange={e => setStatement(e.target.value)} />
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                <input aria-label="工作区键" style={inputStyle} placeholder="workspaceKey (m3)" value={workspaceKey} onChange={e => setWorkspaceKey(e.target.value)} />
-                <input aria-label="条目标识" style={inputStyle} placeholder="slug (m1/m3)" value={slug} onChange={e => setSlug(e.target.value)} />
+              <div style={{ display: layer === 'm2' ? 'none' : 'grid', gridTemplateColumns: layer === 'm3' ? '1fr 1fr' : '1fr', gap: 6 }}>
+                <input aria-label="工作区键" style={{ ...inputStyle, display: layer === 'm3' ? undefined : 'none' }} placeholder="workspaceKey (m3)" value={workspaceKey} onChange={e => setWorkspaceKey(e.target.value)} />
+                <input aria-label="条目标识" style={{ ...inputStyle, display: layer === 'm1' || layer === 'm3' ? undefined : 'none' }} placeholder="slug (m1/m3)" value={slug} onChange={e => setSlug(e.target.value)} />
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', fontSize: 11 }}>
                 <label><input type="checkbox" checked={resident} onChange={e => setResident(e.target.checked)} /> 常驻 resident</label>
@@ -145,7 +149,7 @@ export function PropNotebook({ open, onClose, onChanged }: { open: boolean; onCl
               pending {data.notebook.counts.pending} · asked {data.notebook.counts.asked} · resolved {data.notebook.counts.resolved} · 到期 {data.notebook.counts.dueReminders}
             </div>
             <div style={{ maxHeight: 160, overflowY: 'auto', display: 'grid', gap: 4 }}>
-              {nbItems.map(item => (
+              {nbItems.length === 0 ? <span style={{ fontSize: 11, opacity: 0.75 }}>暂无 M6 待办或到期提醒。</span> : nbItems.map(item => (
                 <div key={item.id} style={{ ...DIEGETIC_PARCHMENT_CARD, backgroundColor: OFFICE_THEME.parchment, padding: 6, fontSize: 11 }}>
                   <span>[{item.status}/{item.kind}] {item.question}</span>
                   {item.due && <strong style={{ marginLeft: 6, color: '#9E2F2C' }}>已到期</strong>}

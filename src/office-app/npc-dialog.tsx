@@ -16,6 +16,7 @@ export interface NpcDialogProps {
   readonly secretaryThinking?: boolean
   readonly pendingBossText?: string | null
   readonly collapsed?: boolean
+  readonly collapsedLeft?: number
   readonly inputRef?: RefObject<HTMLInputElement>
   readonly onSendMessage: (text: string) => Promise<void>
   readonly onDecideRuling: (input: {
@@ -62,7 +63,7 @@ export function resolveSecretaryMood(
 
 export function NpcDialog({
   feed, activeRuling, pendingCount, avatar, hasWorkingTickets, gateBlocked,
-  secretaryThinking = false, pendingBossText = null, collapsed = false, inputRef,
+  secretaryThinking = false, pendingBossText = null, collapsed = false, collapsedLeft = 244, inputRef,
   onSendMessage, onDecideRuling, onOpenHandover, onExpand, onCollapse,
 }: NpcDialogProps) {
   const [draft, setDraft] = useState('')
@@ -97,6 +98,10 @@ export function NpcDialog({
     const t = setInterval(() => setDots(d => (d % 3) + 1), 380)
     return () => clearInterval(t)
   }, [secretaryThinking])
+
+  useEffect(() => {
+    if (historyOpen && historyRef.current) historyRef.current.scrollTop = historyRef.current.scrollHeight
+  }, [historyOpen, feed.length])
 
   const mood = resolveSecretaryMood(activeRuling, gateBlocked, hasWorkingTickets, feed, secretaryThinking)
   const portraitSrc = avatar?.portraitUrls[mood] ?? `/assets/f1-proof/portrait_${mood}.png`
@@ -153,14 +158,14 @@ export function NpcDialog({
   const btnDanger = nineSliceButtonStyle(false, busy, 'danger')
 
   return (
-    <div style={isCollapsed ? { position: 'absolute', left: 244, right: 298, bottom: 12, zIndex: 20 } : { position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 20 }}>
+    <div style={isCollapsed ? { position: 'absolute', left: collapsedLeft, right: 298, bottom: 12, zIndex: 20 } : { position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 20 }}>
       {historyOpen && (
         <div ref={historyRef} role="region" aria-label="对话历史" style={{
           ...NINE_SLICE_PANEL, position: 'absolute', right: 24, bottom: '100%', marginBottom: 8, width: 520,
           maxHeight: 232, overflowY: 'auto', padding: 12, zIndex: 25,
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <strong style={{ color: OFFICE_THEME.borderGold }}>历史回看 ({feed.length})</strong>
+            <strong style={{ color: OFFICE_THEME.borderGold }}>历史回看 ({feed.length > 20 ? `最近 20 / 共 ${feed.length}` : feed.length})</strong>
             <button type="button" className="dsh-px-btn" onClick={() => setHistoryOpen(false)} style={btnIdle}>收起</button>
           </div>
           {feed.length === 0 ? <p style={{ opacity: 0.7 }}>暂无对话记录。</p> : feed.slice(-20).map(item => (
@@ -182,7 +187,7 @@ export function NpcDialog({
           </button>
           <div style={{ flex: '0 1 190px', minWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }}>{latestText}</div>
           <input ref={inputRef} className="dsh-px-input" type="text" aria-label="向秘书发话" placeholder="直接吩咐秘书调度或询问进度…（按 / 快速输入）" value={draft}
-            onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void handleSend() }}
+            onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) void handleSend() }}
             style={{ ...inputBox, minWidth: 100, fontSize: 12 }} />
           <button type="button" className="dsh-px-btn" disabled={busy || !draft.trim()} onClick={() => void handleSend()} style={{ ...btnGold, fontSize: 12, padding: '5px 12px', flexShrink: 0 }}>发送</button>
           {latestHandover && <button type="button" className="dsh-px-btn" onClick={() => onOpenHandover(latestHandover)} style={{ ...btnPaper, fontSize: 11, flexShrink: 0 }}>展开三段式公文纸</button>}
@@ -246,7 +251,7 @@ export function NpcDialog({
                       <button type="button" className="dsh-px-btn" disabled={busy} onClick={() => void handleDecide('approve')} style={{ ...btnApprove, fontSize: 13, padding: '6px 14px' }}>批准</button>
                     )}
                     <button type="button" className="dsh-px-btn" disabled={busy} onClick={() => void handleDecide('revise')} style={{ ...btnWarn, fontSize: 13, padding: '6px 14px' }}>打回修改</button>
-                    <button type="button" className="dsh-px-btn" disabled={busy} onClick={() => void handleDecide('reject')} style={{ ...btnDanger, fontSize: 13, padding: '6px 14px' }}>否决</button>
+                    {!isNegativeApprovalOption && <button type="button" className="dsh-px-btn" disabled={busy} onClick={() => void handleDecide('reject')} style={{ ...btnDanger, fontSize: 13, padding: '6px 14px' }}>否决</button>}
                   </div>
                   <button type="button" data-history-toggle="1" className="dsh-px-btn" onClick={() => setHistoryOpen(v => !v)} style={nineSliceButtonStyle(historyOpen)}>历史回看 ({feed.length})</button>
                 </div>
@@ -273,7 +278,7 @@ export function NpcDialog({
                 <div style={{ fontSize: 17, lineHeight: 1.55, minHeight: 46, opacity: secretaryThinking ? 0.72 : 1 }}>{latestText}</div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 'auto' }}>
                   <input ref={inputRef} className="dsh-px-input" type="text" aria-label="向秘书发话" placeholder="直接吩咐秘书调度或询问进度…（按 / 快速输入）" value={draft}
-                    onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void handleSend() }}
+                    onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) void handleSend() }}
                     style={{ ...inputBox, minWidth: 240, fontSize: 13 }} />
                   <button type="button" className="dsh-px-btn" disabled={busy || !draft.trim()} onClick={() => void handleSend()} style={{ ...btnGold, fontSize: 13, padding: '6px 16px' }}>发送</button>
                   {latestHandover && (

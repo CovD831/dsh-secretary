@@ -44,6 +44,9 @@ const STATUS_ZH: Record<StatusKind | 'idle', string> = {
 }
 
 interface RowRun { readonly v: number; readonly u0: number; readonly u1: number }
+export function computeMinimapWidth(world: Pick<OfficeWorldPlan, 'buildingCols' | 'buildingRows'>): number {
+  return Math.min(320, Math.max(220, Math.round(148 * (world.buildingCols / Math.max(1, world.buildingRows)))))
+}
 function mergeRowRuns(cells: readonly { u: number; v: number }[]): RowRun[] {
   const byV = new Map<number, number[]>()
   for (const c of cells) { const list = byV.get(c.v) ?? []; list.push(c.u); byV.set(c.v, list) }
@@ -82,6 +85,7 @@ export function GameHud({
     else { const w = world.wings.find(x => x.workspaceId === roomId); if (w) onSelectWing(w) }
   }
   const attentionRooms = rosterWorkspaces.filter(ws => roomStats[ws.id]?.status === 'needsDecision' || roomStats[ws.id]?.status === 'stuck')
+  const nextAttention = attentionRooms.length > 0 ? attentionRooms[(attentionRooms.findIndex(w => w.id === activeWorkspaceId) + 1) % attentionRooms.length]! : null
   const secStatus: StatusKind = gateBlocked ? 'needsDecision' : secretaryMood === 'working' ? 'working' : 'done'
   const vpRect = viewport && viewport.w > 0 && viewport.h > 0 ? (() => {
     const pts = [[0, 0], [viewport.w, 0], [viewport.w, viewport.h], [0, viewport.h]].map(([x, y]) => screenToWorldIso(x!, y!, world, camera))
@@ -90,7 +94,7 @@ export function GameHud({
     return u1 > u0 && v1 > v0 ? { u0, u1, v0, v1 } : null
   })() : null
 
-  const mapW = Math.min(320, Math.max(220, Math.round(148 * (world.buildingCols / Math.max(1, world.buildingRows)))))
+  const mapW = computeMinimapWidth(world)
 
   return (
     <>
@@ -121,9 +125,9 @@ export function GameHud({
           <span style={{ fontSize: 11 }}>{workingCount > 0 ? `${workingCount} 工作中${subagentTotal > 0 ? ` · +${subagentTotal} 子代理` : ''}` : `${rosterWorkspaces.length} 房待命`}</span>
         </div>
 
-        {attentionRooms.length > 0 && (
-          <NineSliceButton variant="danger" ariaLabel="跳至待处理房间" title={`点击定位待处理房间：${attentionRooms[0]!.id}`}
-            onClick={() => jumpToRoom(attentionRooms[0]!.id)} style={{ padding: '5px 9px', fontSize: 11 }}>
+        {nextAttention && (
+          <NineSliceButton variant="danger" ariaLabel="跳至待处理房间" title={`点击轮巡待处理房间：${nextAttention.id}`}
+            onClick={() => jumpToRoom(nextAttention.id)} style={{ padding: '5px 9px', fontSize: 11 }}>
             {attentionRooms.length} 待处理
           </NineSliceButton>
         )}
@@ -137,7 +141,7 @@ export function GameHud({
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, color: OFFICE_THEME.parchmentSoft }}>
             <span style={{ fontFamily: PIXEL_MONO_FONT }}>#</span>
             <input className="dsh-px-input" aria-label="布局种子编号" title="输入正整数种子 (1-999999) 回车切换" value={seedDraft}
-              onChange={(e) => setSeedDraft(e.target.value)} onBlur={commitSeed} onKeyDown={(e) => { if (e.key === 'Enter') commitSeed() }}
+              onChange={(e) => setSeedDraft(e.target.value)} onBlur={commitSeed} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) commitSeed() }}
               style={{ width: 42, padding: '2px 4px', fontSize: 11, fontFamily: PIXEL_MONO_FONT, textAlign: 'center', background: OFFICE_THEME.bgDeep, color: OFFICE_THEME.inkCream, border: `1px solid ${OFFICE_THEME.borderWood}`, borderRadius: 2 }} />
           </label>
           <NineSliceButton variant="ghost" ariaLabel="切换布局种子" title="随机生成新肉鸽房型与家居布局" onClick={onRerollSeed} style={{ padding: '3px 8px', fontSize: 11 }}>随机</NineSliceButton>

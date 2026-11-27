@@ -23,7 +23,7 @@ export function useStageHotkeys(handlers: StageHotkeyHandlers): void {
         if (!handlers.hasModal && handlers.dialogCanCollapse) { e.preventDefault(); handlers.onCollapseDialog() }
         return
       }
-      if (inField || e.metaKey || e.ctrlKey || e.altKey) return
+      if (handlers.hasModal || inField || e.metaKey || e.ctrlKey || e.altKey) return
       if (e.key === '/') { e.preventDefault(); handlers.onFocusInput() }
       else if (e.key === '1') handlers.onZoom(1)
       else if (e.key === '2') handlers.onZoom(2)

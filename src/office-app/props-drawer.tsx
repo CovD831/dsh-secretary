@@ -8,15 +8,16 @@ export type GovernancePropKind = 'ledger' | 'notebook' | 'corkboard' | 'cabinet'
 
 export interface PropsDrawerProps {
   readonly activeProp: GovernancePropKind | null
+  readonly activeWorkspaceId?: string
   readonly onClose: () => void
   readonly onChanged?: () => void
 }
 
 /** 调度对应器物浮层并在写操作成功后通知宿主刷新投影。 */
-export function PropsDrawer({ activeProp, onClose, onChanged }: PropsDrawerProps) {
+export function PropsDrawer({ activeProp, activeWorkspaceId, onClose, onChanged }: PropsDrawerProps) {
   if (!activeProp) return null
   if (activeProp === 'ledger') return <PropLedger open onClose={onClose} onChanged={onChanged} />
-  if (activeProp === 'notebook') return <PropNotebook open onClose={onClose} onChanged={onChanged} />
+  if (activeProp === 'notebook') return <PropNotebook open activeWorkspaceId={activeWorkspaceId} onClose={onClose} onChanged={onChanged} />
   if (activeProp === 'corkboard') return <PropCorkboard open onClose={onClose} onChanged={onChanged} />
   return <PropCabinet open onClose={onClose} onChanged={onChanged} />
 }

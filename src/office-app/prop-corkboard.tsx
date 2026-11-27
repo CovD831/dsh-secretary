@@ -93,7 +93,7 @@ export function PropCorkboard({ open, onClose, onChanged }: { open: boolean; onC
           <div style={pinCard}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
               <strong style={{ fontSize: 13 }}>钉卡 3 · 根因前筛 · 候选草案 &amp; ECE</strong>
-              <button type="button" style={{ ...btnStyle, fontSize: 10, padding: '2px 6px' }} onClick={() => { void load(wb.collectionMode === 'production' ? 'e2e' : 'production') }}>
+              <button type="button" className="dsh-px-btn" style={{ ...btnStyle, fontSize: 10, padding: '2px 6px' }} onClick={() => { void load(wb.collectionMode === 'production' ? 'e2e' : 'production') }}>
                 {wb.collectionMode === 'production' ? '切至 E2E 前筛' : '切至 3日生产档'}
               </button>
             </div>
@@ -121,9 +121,11 @@ export function PropCorkboard({ open, onClose, onChanged }: { open: boolean; onC
             )}
             <div style={{ display: 'grid', gap: 4 }}>
               {wb.snapshot.candidateDrafts.length === 0 ? <span style={{ fontSize: 11, opacity: 0.75 }}>暂无 Seen&gt;=3 候选草案。</span> : wb.snapshot.candidateDrafts.map(d => (
-                <div key={d.id} style={{ background: OFFICE_THEME.parchment, border: `1px solid ${OFFICE_THEME.borderGold}`, padding: '4px 6px', fontSize: 11 }}>
+                <button key={d.id} type="button" className="dsh-px-btn" title="点击带入右侧 Holdout 验证"
+                  onClick={() => { setCandidateId(d.id); setPoint(d.point) }}
+                  style={{ background: OFFICE_THEME.parchment, border: `1px solid ${OFFICE_THEME.borderGold}`, padding: '4px 6px', fontSize: 11, textAlign: 'left', color: OFFICE_THEME.inkDark, cursor: 'pointer', width: '100%' }}>
                   <strong>{d.id}</strong> [{d.point}] ({d.stage ?? 'shadow'}): {d.intent}
-                </div>
+                </button>
               ))}
             </div>
           </div>

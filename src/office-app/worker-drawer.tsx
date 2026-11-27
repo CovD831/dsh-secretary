@@ -28,8 +28,15 @@ function matchesRoom(t: TicketItem, roomId: string, repo?: string): boolean {
   return t.workspace === roomId || (!t.workspace && Boolean(repo) && Boolean(t.directory?.startsWith(repo!)))
 }
 
-function countRoomTickets(pool: readonly TicketItem[], roomId: string, repo?: string): number {
-  return pool.filter(t => matchesRoom(t, roomId, repo)).length
+function summarizeRoom(pool: readonly TicketItem[], roomId: string, repo?: string) {
+  const list = pool.filter(t => matchesRoom(t, roomId, repo))
+  const subagents = list.reduce((sum, t) => sum + (t.subagents?.length ?? 0), 0)
+  const needs = list.some(t => t.stage === 'person' && t.action !== 'blocked' && t.action !== 'failed')
+  const stuck = list.some(t => t.stage === 'person' || t.action === 'blocked' || t.action === 'failed')
+  const working = list.some(t => t.stage === 'working')
+  const label = needs ? '待拍板' : stuck ? '受阻' : working ? '执行中' : '空闲'
+  const color = needs ? OFFICE_THEME.needsDecision : stuck ? OFFICE_THEME.stuck : working ? OFFICE_THEME.working : OFFICE_THEME.parchmentSoft
+  return { count: list.length, subagents, label, color }
 }
 
 const KIND_COLOR: Record<string, string> = {
@@ -50,6 +57,9 @@ export function WorkerDrawer({
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pinnedToBottom, setPinnedToBottom] = useState(true)
+  const [confirmStopId, setConfirmStopId] = useState<string | null>(null)
+  const pinnedRef = useRef(true)
   const logRef = useRef<HTMLDivElement | null>(null)
 
   const roomRepo = workspaceId === 'default'
@@ -71,6 +81,10 @@ export function WorkerDrawer({
   const stageText = activeTicket ? ('action' in activeTicket ? `${activeTicket.stage}/${activeTicket.action}` : activeTicket.stage) : ''
 
   useEffect(() => {
+    pinnedRef.current = true; setPinnedToBottom(true); setConfirmStopId(null)
+  }, [mode, activeId])
+
+  useEffect(() => {
     if (mode !== 'worker' || !activeId) { setTranscript(null); return }
     let cancelled = false
     setLoading(true); setError(null)
@@ -82,7 +96,7 @@ export function WorkerDrawer({
   }, [mode, activeId, streamTick])
 
   useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+    if (pinnedRef.current && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [transcript])
 
   if (!mode) return null
@@ -99,7 +113,7 @@ export function WorkerDrawer({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {rooms.map(room => {
             const current = room.id === workspaceId
-            const roomCount = countRoomTickets(allTickets ?? tickets, room.id, room.repository)
+            const roomStat = summarizeRoom(allTickets ?? tickets, room.id, room.repository)
             return (
               <button key={room.id} type="button" className="dsh-px-btn" onClick={() => { onSelectWorkspace(room.id); onClose() }} style={{
                 ...DIEGETIC_WALNUT_CARD,
@@ -112,11 +126,13 @@ export function WorkerDrawer({
                   <div style={{ fontSize: 15, fontWeight: 700 }}>{room.id}</div>
                   <div style={{ fontSize: 12, opacity: 0.78, marginTop: 2 }}>{room.repository}</div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <span style={{ color: roomStat.color, background: OFFICE_THEME.bgDeep, border: `1px solid ${roomStat.color}`, padding: '2px 7px', borderRadius: 3, fontSize: 11, fontWeight: 700 }}>{roomStat.label}</span>
+                  {roomStat.subagents > 0 && <span style={{ background: OFFICE_THEME.bgPanel, border: `1px solid ${OFFICE_THEME.borderGold}`, color: OFFICE_THEME.borderGold, padding: '2px 7px', borderRadius: 3, fontSize: 11 }}>+{roomStat.subagents} 子代理</span>}
                   <span style={{
                     background: OFFICE_THEME.bgPanel, border: `1px solid ${OFFICE_THEME.borderWood}`,
                     padding: '2px 8px', borderRadius: 3, fontSize: 12,
-                  }}>{roomCount} 工单</span>
+                  }}>{roomStat.count} 工单</span>
                   <span style={{
                     background: OFFICE_THEME.woodDark, border: `1px solid ${OFFICE_THEME.borderGold}`,
                     padding: '2px 8px', borderRadius: 3, fontSize: 12,
@@ -158,7 +174,8 @@ export function WorkerDrawer({
             {mergedTickets.map(t => (
               <button key={t.id} type="button" className="dsh-px-btn" onClick={() => onSelectTicket(t.id)} style={{
                 ...nineSliceButtonStyle(t.id === activeTicket?.id), padding: '4px 10px', fontSize: 12,
-              }}>{t.title || t.id}{(t.subagents?.length ?? 0) > 0 ? ` (+${t.subagents!.length})` : ''}</button>
+                opacity: t.state === 'ended' && t.id !== activeTicket?.id ? 0.78 : 1,
+              }}>{t.title || t.id}{(t.subagents?.length ?? 0) > 0 ? ` (+${t.subagents!.length})` : ''}{t.state === 'ended' ? ' · 已结束' : ''}</button>
             ))}
           </div>
         )}
@@ -182,7 +199,14 @@ export function WorkerDrawer({
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button type="button" className="dsh-px-btn" disabled={busy || !activeTicket.actions.retry} onClick={() => void runAction('retry')} style={nineSliceButtonStyle(false, busy || !activeTicket.actions.retry, 'warn')}>重试</button>
-              <button type="button" className="dsh-px-btn" disabled={busy || !activeTicket.actions.stop} onClick={() => void runAction('stop')} style={nineSliceButtonStyle(false, busy || !activeTicket.actions.stop, 'danger')}>停止</button>
+              {confirmStopId === activeTicket.id ? (
+                <>
+                  <button type="button" className="dsh-px-btn" disabled={busy} onClick={() => { setConfirmStopId(null); void runAction('stop') }} style={nineSliceButtonStyle(false, busy, 'danger')}>确认停止？</button>
+                  <button type="button" className="dsh-px-btn" disabled={busy} onClick={() => setConfirmStopId(null)} style={nineSliceButtonStyle(false, busy)}>取消</button>
+                </>
+              ) : (
+                <button type="button" className="dsh-px-btn" disabled={busy || !activeTicket.actions.stop} onClick={() => setConfirmStopId(activeTicket.id)} style={nineSliceButtonStyle(false, busy || !activeTicket.actions.stop, 'danger')}>停止</button>
+              )}
             </div>
           </div>
         ) : <p style={{ opacity: 0.75 }}>当前工作区暂无工单。</p>}
@@ -192,7 +216,7 @@ export function WorkerDrawer({
             <div style={{ fontSize: 12, fontWeight: 700, color: OFFICE_THEME.borderGold }}>活跃嵌套子代理 ({activeTicket.subagents!.length})</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {activeTicket.subagents!.map(sub => (
-                <span key={sub.id} style={{
+                <span key={sub.id} title={`${sub.id} · parent=${sub.parentSessionId} · L${sub.depth}${sub.preset ? ` · ${sub.preset}` : ''}`} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 3, fontSize: 11,
                   fontFamily: PIXEL_MONO_FONT, background: OFFICE_THEME.bgDeep, border: `1px solid ${OFFICE_THEME.borderWood}`, color: OFFICE_THEME.inkCream,
                 }}>
@@ -206,26 +230,37 @@ export function WorkerDrawer({
           </div>
         )}
 
-        <div ref={logRef} aria-label="现场终端卷宗" style={{
-          ...NINE_SLICE_SLOT, color: OFFICE_THEME.inkCream,
-          padding: 12, height: 320, overflowY: 'auto', fontSize: 12, lineHeight: 1.5,
-          fontFamily: PIXEL_MONO_FONT,
-        }}>
-          {loading && !transcript && <div>读取现场终端卷宗中…</div>}
-          {error && <div style={{ color: OFFICE_THEME.needsDecision }}>{error}</div>}
-          {transcript && (transcript.entries?.length ?? 0) === 0 && <div style={{ opacity: 0.7 }}>暂无脱敏终端轨迹。</div>}
-          {transcript?.entries.map(entry => (
-            <div key={entry.id} style={{ padding: '4px 0', borderBottom: `1px solid ${OFFICE_THEME.borderWood}` }}>
-              <span style={{ opacity: 0.6, marginRight: 8 }}>{entry.at}</span>
-              <span style={{ color: KIND_COLOR[entry.kind] ?? OFFICE_THEME.inkCream, fontWeight: 700, marginRight: 8 }}>
-                [{entry.kind}]
-              </span>
-              <span>{entry.summary}</span>
-              {entry.detail && (
-                <pre style={{ margin: '4px 0 0 16px', opacity: 0.8, whiteSpace: 'pre-wrap', fontSize: 11 }}>{entry.detail}</pre>
-              )}
-            </div>
-          ))}
+        <div style={{ position: 'relative' }}>
+          <div ref={logRef} aria-label="现场终端卷宗"
+            onScroll={e => { const el = e.currentTarget, near = el.scrollHeight - el.scrollTop - el.clientHeight < 48; pinnedRef.current = near; if (near !== pinnedToBottom) setPinnedToBottom(near) }}
+            style={{
+              ...NINE_SLICE_SLOT, color: OFFICE_THEME.inkCream,
+              padding: 12, height: 320, overflowY: 'auto', fontSize: 12, lineHeight: 1.5,
+              fontFamily: PIXEL_MONO_FONT,
+            }}>
+            {loading && !transcript && <div>读取现场终端卷宗中…</div>}
+            {error && <div style={{ color: OFFICE_THEME.needsDecision }}>{error}</div>}
+            {transcript && (transcript.entries?.length ?? 0) === 0 && <div style={{ opacity: 0.7 }}>暂无脱敏终端轨迹。</div>}
+            {transcript?.entries.map(entry => (
+              <div key={entry.id} style={{ padding: '4px 0', borderBottom: `1px solid ${OFFICE_THEME.borderWood}` }}>
+                <span style={{ opacity: 0.6, marginRight: 8 }}>{entry.at}</span>
+                <span style={{ color: KIND_COLOR[entry.kind] ?? OFFICE_THEME.inkCream, fontWeight: 700, marginRight: 8 }}>
+                  [{entry.kind}]
+                </span>
+                <span>{entry.summary}</span>
+                {entry.detail && (
+                  <pre style={{ margin: '4px 0 0 16px', opacity: 0.8, whiteSpace: 'pre-wrap', fontSize: 11 }}>{entry.detail}</pre>
+                )}
+              </div>
+            ))}
+          </div>
+          {!pinnedToBottom && (transcript?.entries.length ?? 0) > 0 && (
+            <button type="button" className="dsh-px-btn" aria-label="滚回日志底部"
+              onClick={() => { pinnedRef.current = true; setPinnedToBottom(true); if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }}
+              style={{ ...nineSliceButtonStyle(true), position: 'absolute', right: 16, bottom: 12, padding: '3px 10px', fontSize: 11 }}>
+              ↓ 回到底部
+            </button>
+          )}
         </div>
       </div>
     </DiegeticModal>

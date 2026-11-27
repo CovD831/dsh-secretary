@@ -13,6 +13,7 @@ interface RecordedCall { method: string; path: string; body?: unknown }
 
 class MockEventSource {
   static instances: MockEventSource[] = []
+  onerror: (() => void) | null = null
   private readonly listeners = new Map<string, ((ev: MessageEvent) => void)[]>()
   constructor(public readonly url: string) { MockEventSource.instances.push(this) }
   addEventListener(name: string, fn: (ev: MessageEvent) => void) {
@@ -204,9 +205,11 @@ describe('Phase O3 Pixel Office Stage', () => {
     expect(byText('待办 2')).toBeTruthy()
     expect(byText('确认拦截')).toBeTruthy()
     expect(byText('批准')).toBeUndefined()
+    expect(byText('否决')).toBeUndefined()
 
     await act(async () => { byText('仅放行本次')!.click() })
     expect(byText('批准')).toBeTruthy()
+    expect(byText('否决')).toBeTruthy()
     const sel = document.querySelector<HTMLSelectElement>('select[aria-label="四分类归因"]')!
     await act(async () => { setInputValue(sel, 'wrong_rule') })
     await act(async () => { byText('批准')!.click() })
@@ -530,5 +533,100 @@ describe('Phase O3 Pixel Office Stage', () => {
     await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
     expect(document.querySelector('img[width="384"]')).toBeNull()
     expect(document.querySelector('[aria-label="园区小地图"]')).toBeTruthy()
+  })
+
+  it('guards IME Enter, locks modal hotkeys, cycles multi-room alerts, avoids 5-room minimap overlap, and pauses worker log autoscroll when scrolled up', async () => {
+    const origFetch = globalThis.fetch
+    let seq = 1
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('/settings')) {
+        return new Response(JSON.stringify({
+          policyVersion: 'v1',
+          blocks: {
+            policy: { value: {}, revision: 1 }, eval: { value: {}, revision: 1 }, executor: { value: {}, revision: 1 },
+            workspaces: {
+              value: [
+                { id: 'repo-alpha', repository: '/srv/alpha', baseBranch: 'main', branchPrefix: 'bot/', isolation: 'I3' },
+                { id: 'w3', repository: '/srv/3', baseBranch: 'main', branchPrefix: 'b/', isolation: 'I2' },
+                { id: 'w4', repository: '/srv/4', baseBranch: 'main', branchPrefix: 'b/', isolation: 'I2' },
+              ],
+              revision: 1,
+            },
+          },
+          sources: [], environment: { root: '/srv/default', variables: [] },
+        }), { status: 200 })
+      }
+      if (u.includes('tickets?state=open')) {
+        return new Response(JSON.stringify({
+          items: [
+            { id: 't-def', title: '主室阻塞', state: 'open', stage: 'person', action: 'blocked', actions: { retry: true, stop: false }, strength: 'high', assignments: 1, inputs: 0, undelivered: 0, sessionId: 'worker-t-def', summary: '主室待处理', createdAt: '2026-11-26T08:00:00Z', updatedAt: '2026-11-26T08:01:00Z', threads: [] },
+            { id: 't-al', title: 'Alpha审批', state: 'open', stage: 'person', action: 'answer', workspace: 'repo-alpha', actions: { retry: false, stop: false }, strength: 'high', assignments: 1, inputs: 0, undelivered: 0, sessionId: 'worker-t-al', summary: 'Alpha 待拍板', createdAt: '2026-11-26T08:00:00Z', updatedAt: '2026-11-26T08:02:00Z', threads: [] },
+          ],
+          next_offset: null,
+        }), { status: 200 })
+      }
+      if (u.includes('/transcript')) {
+        return new Response(JSON.stringify({
+          ticketId: 't-def', sessionId: 'worker-t-def', headSeq: ++seq, truncated: false,
+          entries: [{ id: `e-${seq}`, at: '08:01:00', kind: 'assistant', summary: `日志行 ${seq}` }],
+        }), { status: 200 })
+      }
+      return origFetch(url, init)
+    }))
+    await act(async () => { root!.render(<StageApp />) })
+    const alertBtn = await waitText('2 待处理')
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="向秘书发话"]')!
+    expect(Number.parseInt(input.closest('[style*="bottom: 12px"]')?.getAttribute('style')?.match(/left:\s*(\d+)px/)?.[1] ?? '0', 10)).toBeGreaterThanOrEqual(275)
+
+    await act(async () => { setInputValue(input, 'nihao') })
+    await act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, keyCode: 229, bubbles: true })) })
+    expect(calls.some(c => c.method === 'POST' && c.path === 'secretary/messages')).toBe(false)
+
+    await act(async () => { alertBtn.click() })
+    await waitText('repo-alpha')
+    await act(async () => { alertBtn.click() })
+    expect(document.querySelector('strong')?.textContent).toBe('default')
+
+    const zoom2Btn = document.querySelector<HTMLButtonElement>('button[aria-label="近景视角"]')!
+    const zoom1Btn = document.querySelector<HTMLButtonElement>('button[aria-label="全楼视角"]')!
+    const bgBefore = zoom1Btn.style.background
+    await act(async () => { byText('门牌簿')!.click() })
+    await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: '2', bubbles: true })) })
+    expect(zoom1Btn.style.background).toBe(bgBefore)
+    expect(zoom2Btn.style.background).not.toBe(bgBefore)
+    await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="关闭器物面板"]')!.click() })
+
+    await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="查看房间卷宗-default"]')!.click() })
+    await waitText('日志行 2')
+    const logEl = document.querySelector<HTMLDivElement>('[aria-label="现场终端卷宗"]')!
+    Object.defineProperty(logEl, 'scrollHeight', { value: 600, configurable: true })
+    Object.defineProperty(logEl, 'clientHeight', { value: 320, configurable: true })
+    logEl.scrollTop = 40
+    await act(async () => { logEl.dispatchEvent(new Event('scroll', { bubbles: true })) })
+    expect(document.querySelector('button[aria-label="滚回日志底部"]')).toBeTruthy()
+    await act(async () => { MockEventSource.instances[0]!.emit('domain', {}) })
+    await waitText('日志行 3')
+    expect(logEl.scrollTop).toBe(40)
+    await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="滚回日志底部"]')!.click() })
+    expect(logEl.scrollTop).toBe(600)
+  })
+
+  it('requires two-step confirmation before stopping a worker and flags SSE offline on error', async () => {
+    await act(async () => { root!.render(<StageApp />) })
+    await waitText('已整理交接公文。')
+    expect(document.querySelector('[title="SSE 在线"]')).toBeTruthy()
+    await act(async () => { MockEventSource.instances[0]!.onerror?.() })
+    expect(document.querySelector('[title="连接中"]')).toBeTruthy()
+    await act(async () => { MockEventSource.instances[0]!.emit('ready', {}) })
+    expect(document.querySelector('[title="SSE 在线"]')).toBeTruthy()
+
+    await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="查看房间卷宗-default"]')!.click() })
+    await waitText('运行 vitest 幂等校验')
+    await act(async () => { byText('停止')!.click() })
+    expect(byText('确认停止？')).toBeTruthy()
+    expect(calls.some(c => c.method === 'POST' && c.path === 'tickets/t-101/stop')).toBe(false)
+    await act(async () => { byText('确认停止？')!.click() })
+    await vi.waitFor(() => { expect(calls.some(c => c.method === 'POST' && c.path === 'tickets/t-101/stop')).toBe(true) })
   })
 })
