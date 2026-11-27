@@ -7,7 +7,7 @@
 **Personal Agent Secretary, Workflow-Deposit Layer & Evaluator-First RSI Runtime built atop [DeepSeek Harness (DSH)](https://www.deepseek.com/en/harness/)** — turning one developer's scattered operational habits into versioned, empirically evaluable modules orchestrated by an always-responsive, zero-execution secretary.
 
 > *"Orchestration is a commodity; the hard problem is firing the right judgement at the right lifecycle boundary — and making personal workflows depositable, replayable, and improvable without letting the system persuade itself."*
-> — Synthesized from [`docs/design/01-ORIGIN-AND-EVOLUTION.md`](docs/design/01-ORIGIN-AND-EVOLUTION.md) & [`docs/design/NEW-REPO-BRIEF.md`](docs/design/NEW-REPO-BRIEF.md) (`238` TypeScript/TSX modules · `94` Vitest suites / `505` tests · `10` executable `DEPOSIT.md` packages · MIT)
+> — Synthesized from [`docs/design/01-ORIGIN-AND-EVOLUTION.md`](docs/design/01-ORIGIN-AND-EVOLUTION.md) & [`docs/design/NEW-REPO-BRIEF.md`](docs/design/NEW-REPO-BRIEF.md) (`246` TypeScript/TSX modules · `95` Vitest suites / `1,002` tests · `14` executable `DEPOSIT.md` packages · MIT)
 
 <p align="center">
   <img src="./docs/screenshots/office-overview.png" width="820" alt="dsh-secretary 5-workspace single-plane 2:1 isometric pixel office" />
@@ -72,12 +72,17 @@ Rather than stuffing user workflows into `src/` (which turns a general substrate
 - **One Package, Three Readers (`deposits/<id>/`)**: machines validate & execute frontmatter (`point`, `requires`, `params`, `verdict`); human reviewers & rubric judges read markdown intent/exceptions; evaluators run paired positive/negative + falsification fixtures in `cases/cases.json`; the system projects read-only track records to `LEDGER.md`.
 - **Three-State Verdict Honesty (`allow | deny(blockers) | unmeasured`)**: missing inputs (`missing-input`), `bash`/`str_replace_editor` writes lacking structured diffs (`shell-blind`), or probe timeouts return explicit `unmeasured` — never washed into `allow`.
 - **Dual-Channel Entry**: Channel (a) lets the engineer deposit habits directly (e.g., modeling R5 red-green fix verification as [`verify.rerun`](deposits/verify-rerun/DEPOSIT.md) rather than a hardcoded dogma); Channel (b) lets observed workflow friction propose shadow drafts that **never auto-enforce** without human opt-in (**Constitutional D5**).
+- **Dual-Speed Risk Triage & Host-Initiated Adversarial Review**: [`workflow-risk.ts`](src/executor/workflow-risk.ts) classifies tickets into `fast` vs. `elevated` tiers. On `elevated` changes, [`adversarial-review.ts`](src/executor/adversarial-review.ts) runs host-initiated isolated LLM critiques — [`ticket.plan-review`](deposits/ticket-plan-review/DEPOSIT.md) before coding and [`verify.diff-review`](deposits/verify-diff-review/DEPOSIT.md) after deterministic gates ([`verify.command-contract`](deposits/verify-command-contract/DEPOSIT.md), [`verify.change-test-coverage`](deposits/verify-change-test-coverage/DEPOSIT.md), `verify.changed-paths`, `verify.rerun`) — strictly forbidding worker self-evaluation, dropping findings not anchored to modified files, escalating at `max_review_rounds`, and keeping `fast` tickets at zero extra LLM cost.
 
 <details>
-<summary><b>Inspect all 10 committed executable <code>DEPOSIT.md</code> packages (<code>deposits/</code>)</b></summary>
+<summary><b>Inspect all 14 committed executable <code>DEPOSIT.md</code> packages (<code>deposits/</code>)</b></summary>
 
 | Package ID | Kind / Stage | Workflow & Lifecycle Role | Source |
 | :--- | :--- | :--- | :--- |
+| `ticket.plan-review` | Gate (`observe`) | Host-initiated isolated critique on `elevated` tickets to surface counterexamples & contract risks before coding (`fast` skipped at 0 cost) | [`ticket-plan-review`](deposits/ticket-plan-review/DEPOSIT.md) |
+| `verify.command-contract` | Gate (`observe`) | Rejects empty `verifyCommands`, `true`/`echo` placeholders, and `\|\| true` exit-swallowing on code changes | [`verify-command-contract`](deposits/verify-command-contract/DEPOSIT.md) |
+| `verify.change-test-coverage` | Gate (`observe`) | Catches non-trivial (`>= 30` lines) feature/refactor changes landed with zero modified/added tests (`docs` exempt) | [`verify-change-test-coverage`](deposits/verify-change-test-coverage/DEPOSIT.md) |
+| `verify.diff-review` | Gate (`observe`) | Host-initiated adversarial diff audit after deterministic gates pass; blocks only file-anchored `critical`/`high` findings (`max_review_rounds` escalate + revision waiver) | [`verify-diff-review`](deposits/verify-diff-review/DEPOSIT.md) |
 | `verify.rerun` | Gate (`enforce`) | Anti-self-attestation: requires independent verifier rerun (`exitCode === 0`) and R5 shadow red-green evidence on `fix`/`bugfix` | [`verify-rerun`](deposits/verify-rerun/DEPOSIT.md) |
 | `verify.changed-paths` | Gate (`enforce`) | Reconciles `sessionDiffs ∪ gitDirtyPaths` vs. `allowedPaths`; flags `shell-blind` rather than faking compliance | [`verify-changed-paths`](deposits/verify-changed-paths/DEPOSIT.md) |
 | `verify.secret-path-guard` | Gate (`enforce`) | Zero-code `path_rules` blocking `.env*`, `secrets/**`, `*.pem/*.key`, `id_rsa*`, `.dsh/**`, and traversal | [`secret-path-guard`](deposits/secret-path-guard/DEPOSIT.md) |
@@ -119,13 +124,13 @@ Born directly from developer anxiety over *"not seeing what background subagents
 | Path | Role |
 | :--- | :--- |
 | [`docs/design/`](docs/design/01-ORIGIN-AND-EVOLUTION.md) | Architectural origins ([`01-ORIGIN-AND-EVOLUTION.md`](docs/design/01-ORIGIN-AND-EVOLUTION.md)), [`NEW-REPO-BRIEF.md`](docs/design/NEW-REPO-BRIEF.md) & [`memory-brain-inspired.md`](docs/design/memory-brain-inspired.md) |
-| [`src/judgement/`](src/judgement/registry.ts) & [`deposits/`](deposits/verify-rerun/DEPOSIT.md) | Registry contract, 3-state gate engine & `10` executable `DEPOSIT.md` packages (`cases/cases.json`) |
+| [`src/judgement/`](src/judgement/registry.ts) & [`deposits/`](deposits/verify-rerun/DEPOSIT.md) | Registry contract, 3-state gate engine & `14` executable `DEPOSIT.md` packages (`cases/cases.json`) |
 | [`src/rsi/`](src/rsi/index.ts) | Online `L1–L13` collector, `M0` trace bridge, 1-hop clustering, Chow router, SOP miner, Pareto sweep & calibration |
 | [`src/spine/`](src/spine/store.ts) & [`src/memory/`](src/memory/types.ts) | Append-only `M0` spine (redacted pre-clip) & bitemporal `M1–M6` git-backed entity pages |
-| [`src/executor/`](src/executor/pre-execute-gates.ts) & [`src/workspaces/`](src/workspaces/worktree.ts) | Pre-execute guards, R5 red-green probe, snapshot digest audit & serialized CoW worktrees |
+| [`src/executor/`](src/executor/pre-execute-gates.ts) & [`src/workspaces/`](src/workspaces/worktree.ts) | Pre-execute guards, risk triage, host adversarial plan/diff review ([`adversarial-review.ts`](src/executor/adversarial-review.ts)), R5 red-green probe, snapshot audit & CoW worktrees |
 | [`src/app/`](src/app/sessions.ts) & [`src/infra/`](src/infra/github-app.ts) | Zero-exec secretary (`allow: []`), ruling queue, governance patrol, GitHub App & Feishu adapters |
 | [`src/projection/`](src/projection/reader.ts) & [`src/office-app/`](src/office-app/stage-app.tsx) | Read-only FTS5 projection & 5-workspace 2:1 isometric PixiJS v8 cockpit |
-| `tests/` | `94` Vitest suites (`505` tests) run against isolated temporary `DSH_HOME` |
+| `tests/` | `95` Vitest suites (`1,002` tests) run against isolated temporary `DSH_HOME` |
 
 ## Isolated Verification & Development
 

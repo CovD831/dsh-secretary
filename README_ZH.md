@@ -7,7 +7,7 @@
 **构建在 [DeepSeek Harness (DSH)](https://www.deepseek.com/en/harness/) 之上的个人秘书、工作流沉淀层与评估器驱动 RSI 底座** —— 将开发者个人的工程习惯与风控经验沉淀为“可插拔、可回放、可消融、可评测”的标准化模块，由物理零执行、时刻在线的个人秘书统一调度。
 
 > **“编排本身已经成了基础设施，真正难的是在生命周期的正确时刻做出正确判断 —— 并让个人工作流既能被任何人轻易沉淀进来，又能经由独立评估器用收敛收益证明自己配不配留下，而不是靠系统自己说服自己。”**
-> —— 核心脉络见 [项目缘起与演变](docs/design/01-ORIGIN-AND-EVOLUTION.md) 与 [新仓架构简报](docs/design/NEW-REPO-BRIEF.md)（`238` 个 TS/TSX 模块 · `94` 套 Vitest 测试集 / `505` 用例 · `10` 套可执行 `DEPOSIT.md` 沉淀包 · MIT）
+> —— 核心脉络见 [项目缘起与演变](docs/design/01-ORIGIN-AND-EVOLUTION.md) 与 [新仓架构简报](docs/design/NEW-REPO-BRIEF.md)（`246` 个 TS/TSX 模块 · `95` 套 Vitest 测试集 / `1,002` 用例 · `14` 套可执行 `DEPOSIT.md` 沉淀包 · MIT）
 
 <p align="center">
   <img src="./docs/screenshots/office-overview.png" width="820" alt="dsh-secretary 5 工作区单平面 2:1 等轴测像素办公室" />
@@ -72,12 +72,17 @@ flowchart TB
 - **一包三读者（`deposits/<id>/`）**：机器解析 frontmatter（`point` / `requires` / `params` / `verdict`）；人类与语义裁判读 Markdown 正文中的立法意图与例外；评估器跑 `cases/cases.json` 中的正反例与构造证伪对；系统侧向 `LEDGER.md` 单向投影只读战绩。
 - **三态诚实红线（`allow | deny(blockers) | unmeasured`）**：面对缺乏结构化 Diff 记录的 `bash` / `str_replace_editor` 写操作（`shell-blind`）、缺必填输入字段（`missing-input`）或超时，门禁必须老实吐出 `unmeasured`，**严禁静默洗白为 `allow`**。
 - **双通道沉淀**：通道 (a) 由开发者主动把个人工程习惯（如把“修缺陷必附 R5 撤修复必红测试”封装为 [`verify.rerun`](deposits/verify-rerun/DEPOSIT.md)）沉淀进注册表；通道 (b) 由真实摩擦孵化影子提案，恪守 **宪法 D5**，永不未经人批自行升级为强阻断。
+- **双速风险分档与宿主独立对抗审查**：[`workflow-risk.ts`](src/executor/workflow-risk.ts) 按变更特征分流 `fast / elevated` 档位；对 `elevated` 高危变更，由宿主 [`adversarial-review.ts`](src/executor/adversarial-review.ts) 发起零上下文独立对抗审视——动代码前走 [`ticket.plan-review`](deposits/ticket-plan-review/DEPOSIT.md) 抓最硬反例，在 [`verify.command-contract`](deposits/verify-command-contract/DEPOSIT.md)、[`verify.change-test-coverage`](deposits/verify-change-test-coverage/DEPOSIT.md)、`verify.changed-paths` 与 `verify.rerun` 全绿后走 [`verify.diff-review`](deposits/verify-diff-review/DEPOSIT.md) 复核逻辑漏洞（严禁 Worker 自评、过滤无改动文件锚点的幻觉挑刺、达最大轮次自动升级老板裁决，`fast` 工单零额外 LLM 开销）。
 
 <details>
-<summary><b>展开查看已沉淀的全部 10 套可执行 <code>DEPOSIT.md</code> 包（<code>deposits/</code>）</b></summary>
+<summary><b>展开查看已沉淀的全部 14 套可执行 <code>DEPOSIT.md</code> 包（<code>deposits/</code>）</b></summary>
 
 | 规则包 ID | 形态 / 阶段 | 承载的工程工作流与核心判据 | 源码入口 |
 | :--- | :--- | :--- | :--- |
+| `ticket.plan-review` | 观测闸（`observe`） | `elevated` 高危工单动代码前由宿主发起隔离对抗审视，抓出最硬反例与契约破坏（`fast` 零开销跳过） | [`ticket-plan-review`](deposits/ticket-plan-review/DEPOSIT.md) |
+| `verify.command-contract` | 观测闸（`observe`） | 禁绝空验证命令、`true`/`echo` 占位命令及 `\|\| true` 吞退出码，保底后续重跑可真实证伪 | [`verify-command-contract`](deposits/verify-command-contract/DEPOSIT.md) |
+| `verify.change-test-coverage` | 观测闸（`observe`） | 填补 `feature`/`refactor` 大改动（`>= 30` 行）零测试盲区，强制补充对应单测/回归（纯文档豁免） | [`verify-change-test-coverage`](deposits/verify-change-test-coverage/DEPOSIT.md) |
+| `verify.diff-review` | 观测闸（`observe`） | 确定性硬闸全过后的独立对抗 Diff 复核：只拦截锚定改动文件的 `critical`/`high` 风险，支持精确修订号人工豁免 | [`verify-diff-review`](deposits/verify-diff-review/DEPOSIT.md) |
 | `verify.rerun` | 硬闸（`enforce`） | 反自报完成：强制独立验证方重跑通过（`exitCode === 0`），`fix/bugfix` 工单必须附带 R5 影子基线撤修复必红证据 | [`verify-rerun`](deposits/verify-rerun/DEPOSIT.md) |
 | `verify.changed-paths` | 硬闸（`enforce`） | 核对 `sessionDiffs ∪ gitDirtyPaths` 与 `allowedPaths` 边界；遇无 Diff 写入诚实返回 `shell-blind` | [`verify-changed-paths`](deposits/verify-changed-paths/DEPOSIT.md) |
 | `verify.secret-path-guard` | 硬闸（`enforce`） | 零代码 `path_rules` 封锁 `.env*`、`secrets/**`、`*.pem/*.key`、`id_rsa*`、`.dsh/**` 及路径穿越 | [`secret-path-guard`](deposits/secret-path-guard/DEPOSIT.md) |
@@ -119,13 +124,13 @@ flowchart TB
 | 目录 | 核心职责 |
 | :--- | :--- |
 | [`docs/design/`](docs/design/01-ORIGIN-AND-EVOLUTION.md) | 设计源起与转折实录（[`01-ORIGIN-AND-EVOLUTION.md`](docs/design/01-ORIGIN-AND-EVOLUTION.md)、[`NEW-REPO-BRIEF.md`](docs/design/NEW-REPO-BRIEF.md)、[`memory-brain-inspired.md`](docs/design/memory-brain-inspired.md)） |
-| [`src/judgement/`](src/judgement/registry.ts) & [`deposits/`](deposits/verify-rerun/DEPOSIT.md) | 判局注册表契约、三态判定核与 `10` 套可执行 `DEPOSIT.md` 沉淀包 |
+| [`src/judgement/`](src/judgement/registry.ts) & [`deposits/`](deposits/verify-rerun/DEPOSIT.md) | 判局注册表契约、三态判定核与 `14` 套可执行 `DEPOSIT.md` 沉淀包 |
 | [`src/rsi/`](src/rsi/index.ts) | `L1–L13` 在线采集、`M0` 指针桥、1-Hop 聚类、Chow 路由、SOP 挖掘、Pareto 寻优与统计校准 |
 | [`src/spine/`](src/spine/store.ts) & [`src/memory/`](src/memory/types.ts) | 追加式 `M0` 事件脊（截断前脱敏）与 Git 托管 `M1–M6` 双时态记忆页 |
-| [`src/executor/`](src/executor/pre-execute-gates.ts) & [`src/workspaces/`](src/workspaces/worktree.ts) | 事前硬闸、R5 影子基线红绿探针、快照摘要核验与串行 CoW Worktree |
+| [`src/executor/`](src/executor/pre-execute-gates.ts) & [`src/workspaces/`](src/workspaces/worktree.ts) | 事前硬闸、双速风险分档、宿主对抗审查（[`adversarial-review.ts`](src/executor/adversarial-review.ts)）、R5 红绿探针、快照核验与 CoW Worktree |
 | [`src/app/`](src/app/sessions.ts) & [`src/infra/`](src/infra/github-app.ts) | 零执行秘书（`allow: []`）、待裁队列、巡检闭环、GitHub App 与飞书通道 |
 | [`src/projection/`](src/projection/reader.ts) & [`src/office-app/`](src/office-app/stage-app.tsx) | 只读 FTS5 投影与 5 工作区 2:1 等轴测 PixiJS v8 驾驶舱 |
-| `tests/` | `94` 套 Vitest 测试（`505` 用例），全部在独立临时 `DSH_HOME` 下隔离验证 |
+| `tests/` | `95` 套 Vitest 测试（`1,002` 用例），全部在独立临时 `DSH_HOME` 下隔离验证 |
 
 ## 隔离验证与开发
 
